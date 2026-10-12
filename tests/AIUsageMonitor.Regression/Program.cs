@@ -7,7 +7,7 @@ using AIUsageMonitor.UI;
 
 namespace AIUsageMonitor.Regression;
 
-internal static class Program
+internal static partial class Program
 {
     static int s_assertions;
     static int s_failures;
@@ -19,6 +19,8 @@ internal static class Program
         Run("Claude WebView initialization recovery", TestClaudeInitializationRecovery);
         Run("Codex local activity timestamps and incremental reads", TestCodexLocalReader);
         Run("Session identity and current click target", TestSessionIdentityAndViewModel);
+        Run("Claude app conversations from claude.ai", TestClaudeChats);
+        Run("Claude Desktop authentication and usage isolation", TestClaudeDesktop);
 
         Console.WriteLine($"Totals: {s_assertions} assertions, {s_failures} failures.");
         return s_failures == 0 ? 0 : 1;
@@ -356,6 +358,91 @@ internal static class Program
     }) + "\n";
 
     static string Stamp(DateTime timestamp) => DateTime.SpecifyKind(timestamp, DateTimeKind.Utc).ToString("o");
+
+    static void TestClaudeChats()
+    {
+        var now = DateTimeOffset.UtcNow;
+        const string runningId = "11111111-1111-1111-1111-111111111111";
+        const string recentId = "22222222-2222-2222-2222-222222222222";
+        const string oldId = "33333333-3333-3333-3333-333333333333";
+        const string waitingId = "44444444-4444-4444-4444-444444444444";
+        const string duplicateId = "55555555-5555-5555-5555-555555555555";
+
+        // chat_conversations_v2 에서 스크립트가 골라 넘기는 필드와 같은 모양
+        var json = JsonSerializer.Serialize(new object[]
+        {
+            Chat(runningId, "실행 중 대화", now.AddSeconds(-5), "running", now.AddMinutes(-2), null, null, null, "cse_running"),
+            Chat(recentId, "", now.AddHours(-1), null, null, null, null, "게임", null),
+            Chat(oldId, "오래된 대화", now.AddDays(-2), null, null, null, null, null, null),
+            Chat(waitingId, "승인 필요", now.AddDays(-2), null, null, true, "tool_permission", null, null),
+            Chat(duplicateId, "로컬과 같은 세션", now.AddMinutes(-1), "running", now.AddMinutes(-1), null, null, null, "cse_local"),
+            new { name = "uuid 없음", updated_at = Iso(now) },
+        });
+        using var doc = JsonDocument.Parse(json);
+        var chats = ClaudeWebClient.ParseChats(doc.RootElement, now.AddHours(-12));
+
+        SessionInfo? ChatOf(string id) => chats.FirstOrDefault(c => c.Id == "chat:" + id);
+        var running = ChatOf(runningId);
+        Check("running chat is working since live_status_started_at",
+            running is { State: SessionState.Working, StateText: "작업 중", ActivityIsStateChange: true } &&
+            running.LastActivity == JsonUtil.Iso(Iso(now.AddMinutes(-2))),
+            $"{running?.State}/{running?.StateText}/{running?.LastActivity:o}");
+        Check("chat opens in the Claude app", running?.OpenUri == $"claude://claude.ai/chat/{runningId}" && running.AltId == "cse_running",
+            $"uri={running?.OpenUri}, alt={running?.AltId}");
+
+        var recent = ChatOf(recentId);
+        Check("untitled recent chat gets fallback title and project", recent is { Title: "새 대화", Subtitle: "게임 · 앱 대화", State: SessionState.Idle, StateText: "완료" },
+            $"{recent?.Title}/{recent?.Subtitle}/{recent?.StateText}");
+        Check("old finished chat is excluded", ChatOf(oldId) == null, "old chat present");
+        var waiting = ChatOf(waitingId);
+        Check("old chat waiting for approval stays visible", waiting is { State: SessionState.NeedsInput, StateText: "승인 대기" },
+            $"{waiting?.State}/{waiting?.StateText}");
+        Check("chat without uuid is skipped", chats.Count == 4, $"count={chats.Count}");
+
+        var local = new ClaudeLocalState
+        {
+            Sessions = [new SessionInfo("local-1", "터미널 세션", "repo · 터미널", SessionState.Working, "작업 중", now, true)],
+            KnownIds = new(StringComparer.OrdinalIgnoreCase) { "local-1", "cse_local" },
+        };
+        var monitor = new MonitorService(new AppSettings());
+        SetProperty(monitor, nameof(MonitorService.ClaudeLocal), local);
+        SetProperty(monitor, nameof(MonitorService.ClaudeChats), chats);
+        SetProperty(monitor, nameof(MonitorService.ClaudeChatsAt), (DateTimeOffset?)DateTimeOffset.Now);
+
+        var merged = Presenter.ClaudeSessions(monitor);
+        Check("local session and app chats are merged without duplicates",
+            merged.Count == 4 && merged.Any(s => s.Id == "local-1") && merged.All(s => s.Id != "chat:" + duplicateId),
+            string.Join(",", merged.Select(s => s.Id)));
+
+        var card = Presenter.Claude(monitor, new AppSettings { ClaudeWebEnabled = true }, () => { });
+        Check("card counts working and waiting app chats",
+            card.SessionsHeader == "세션 4 · 작업 중 2 · 대기 1" && card.Sessions.FirstOrDefault()?.Title == "승인 필요",
+            $"header={card.SessionsHeader}, first={card.Sessions.FirstOrDefault()?.Title}");
+
+        SetProperty(monitor, nameof(MonitorService.ClaudeChatsAt), (DateTimeOffset?)DateTimeOffset.Now.AddMinutes(-30));
+        var stale = Presenter.ClaudeSessions(monitor);
+        var staleRunning = stale.FirstOrDefault(s => s.Id == "chat:" + runningId);
+        Check("old chat data does not claim a chat is still running",
+            staleRunning is { State: SessionState.Stale, StateText: "갱신 안 됨" } &&
+            stale.First(s => s.Id == "local-1").State == SessionState.Working,
+            $"{staleRunning?.State}/{staleRunning?.StateText}");
+
+        static object Chat(string uuid, string name, DateTimeOffset updated, string? live, DateTimeOffset? started,
+            bool? needsInput, string? needsKind, string? project, string? workspace) => new
+        {
+            uuid,
+            name,
+            updated_at = Iso(updated),
+            live_status = live,
+            live_status_started_at = started is { } s ? Iso(s) : null,
+            needs_input = needsInput,
+            needs_input_kind = needsKind,
+            project,
+            workspace_session_id = workspace,
+        };
+
+        static string Iso(DateTimeOffset t) => t.UtcDateTime.ToString("yyyy-MM-ddTHH:mm:ss.ffffffZ", System.Globalization.CultureInfo.InvariantCulture);
+    }
 
     static void TestSessionIdentityAndViewModel()
     {

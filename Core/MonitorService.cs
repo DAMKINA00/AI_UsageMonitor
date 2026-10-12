@@ -14,10 +14,47 @@ public sealed class MonitorService : IDisposable
     bool _localBusy;
     DateTime _nextCodex = DateTime.MinValue;
     DateTime _nextClaude = DateTime.MinValue;
+    DateTime _nextClaudeChats = DateTime.MinValue;
+    bool _chatsBusy;
+    int _claudeGeneration;
 
-    public MonitorService(AppSettings settings) => _settings = settings;
+    public MonitorService(AppSettings settings)
+    {
+        _settings = settings;
+        ClaudeDesktop.AccountChanged += () =>
+        {
+            if (!_settings.ClaudeDesktopEnabled) return;
+            ClearClaudeState();
+            if (!ClaudeWebBusy) _nextClaude = DateTime.MinValue;
+            Changed?.Invoke();
+        };
+    }
 
     public ClaudeWebClient ClaudeWeb { get; } = new();
+    public ClaudeWebClient ClaudeDesktop { get; } = new(desktopSession: true);
+    ClaudeWebClient ClaudeClient => _settings.ClaudeDesktopEnabled ? ClaudeDesktop : ClaudeWeb;
+    public bool ClaudeEnabled => _settings.ClaudeDesktopEnabled || _settings.ClaudeWebEnabled;
+
+    public void SetClaudeDesktopEnabled(bool enabled)
+    {
+        if (_settings.ClaudeDesktopEnabled == enabled) return;
+        _claudeGeneration++;
+        _settings.ClaudeDesktopEnabled = enabled;
+        _settings.Save();
+        ClaudeWeb.KeepAlive = ClaudeDesktop.KeepAlive = false;
+        ClearClaudeState();
+        _nextClaude = DateTime.MinValue;
+        Changed?.Invoke();
+        if (ClaudeEnabled) _ = RefreshClaudeWebAsync();
+    }
+
+    void ClearClaudeState()
+    {
+        ClaudeWebGood = null;
+        ClaudeWebLast = null;
+        ClaudeChats = [];
+        ClaudeChatsAt = null;
+    }
 
     public ClaudeLocalState? ClaudeLocal { get; private set; }
     public CodexLocalState? CodexLocal { get; private set; }
@@ -28,6 +65,11 @@ public sealed class MonitorService : IDisposable
     public ClaudeWebResult? ClaudeWebGood { get; private set; }
     public CodexRemoteResult? CodexRemoteLast { get; private set; }
     public CodexRemoteResult? CodexRemoteGood { get; private set; }
+
+    /// <summary>claude.ai 앱 대화 중 진행 중이거나 최근 활동한 것 (사용량 조회 때 함께, 앱이 켜져 있으면 더 자주 갱신).</summary>
+    public List<SessionInfo> ClaudeChats { get; private set; } = [];
+    /// <summary>ClaudeChats 를 마지막으로 읽은 시각. 오래되면 진행 중 표시를 믿지 않는다.</summary>
+    public DateTimeOffset? ClaudeChatsAt { get; private set; }
 
     public bool ClaudeWebBusy { get; private set; }
     public bool CodexRemoteBusy { get; private set; }
@@ -53,14 +95,61 @@ public sealed class MonitorService : IDisposable
     {
         _ = RefreshLocalAsync();
         if (DateTime.UtcNow >= _nextCodex) _ = RefreshCodexRemoteAsync();
-        if (_settings.ClaudeWebEnabled && DateTime.UtcNow >= _nextClaude) _ = RefreshClaudeWebAsync();
+
+        bool fastChats = ClaudeEnabled && FastChatPolling;
+        ClaudeClient.KeepAlive = fastChats;
+        if (ClaudeEnabled && DateTime.UtcNow >= _nextClaude) _ = RefreshClaudeWebAsync();
+        else if (fastChats && DateTime.UtcNow >= _nextClaudeChats) _ = RefreshClaudeChatsAsync();
+    }
+
+    /// <summary>Claude 앱이 켜져 있거나 진행 중인 대화가 있으면 대화 목록을 사용량보다 자주 확인한다.</summary>
+    bool FastChatPolling =>
+        ClaudeLocal is { DesktopRunning: true } ||
+        ClaudeChats.Any(c => c.State is SessionState.Working or SessionState.NeedsInput);
+
+    DateTimeOffset ChatCutoff => DateTimeOffset.UtcNow.AddHours(-Math.Max(1, _settings.ClaudeChatActiveHours));
+
+    void SetChats(ClaudeWebResult result)
+    {
+        if (result.State == ClaudeWebState.LoginRequired)
+        {
+            ClearClaudeState();
+            ClaudeWebLast = result;
+        }
+        else if (result.Chats is { } chats)
+        {
+            ClaudeChats = chats;
+            ClaudeChatsAt = result.At;
+            _nextClaudeChats = DateTime.UtcNow.AddSeconds(Math.Max(15, _settings.ClaudeChatPollSeconds));
+        }
+    }
+
+    public async Task RefreshClaudeChatsAsync()
+    {
+        if (_chatsBusy || ClaudeWebBusy || ClaudeClient.LoginWindowOpen) return;
+        _chatsBusy = true;
+        int generation = _claudeGeneration;
+        // 실패해도 다음 확인까지는 간격을 둔다
+        _nextClaudeChats = DateTime.UtcNow.AddSeconds(Math.Max(15, _settings.ClaudeChatPollSeconds));
+        try
+        {
+            var result = await ClaudeClient.FetchChatsAsync(ChatCutoff);
+            if (generation != _claudeGeneration) return;
+            SetChats(result);
+            if (result.State == ClaudeWebState.Error) Log.Write($"claude chats: {result.Error}");
+        }
+        finally
+        {
+            _chatsBusy = false;
+            Changed?.Invoke();
+        }
     }
 
     public void RefreshAll()
     {
         _ = RefreshLocalAsync();
         _ = RefreshCodexRemoteAsync();
-        if (_settings.ClaudeWebEnabled) _ = RefreshClaudeWebAsync();
+        if (ClaudeEnabled) _ = RefreshClaudeWebAsync(); // 대화 목록도 함께 읽는다
     }
 
     async Task RefreshLocalAsync()
@@ -107,16 +196,19 @@ public sealed class MonitorService : IDisposable
 
     public async Task RefreshClaudeWebAsync()
     {
-        if (ClaudeWebBusy || ClaudeWeb.LoginWindowOpen) return;
+        if (ClaudeWebBusy || ClaudeClient.LoginWindowOpen) return;
         ClaudeWebBusy = true;
+        int generation = _claudeGeneration;
         _nextClaude = DateTime.UtcNow.AddSeconds(Math.Max(60, _settings.ClaudeWebPollSeconds));
         Changed?.Invoke();
         try
         {
-            var result = await ClaudeWeb.FetchAsync(); // WebView2는 UI 스레드에서 다뤄야 한다
+            var result = await ClaudeClient.FetchAsync(ChatCutoff); // WebView2는 UI 스레드에서 다뤄야 한다
+            if (generation != _claudeGeneration) return;
             ClaudeWebLast = result;
             if (result.State == ClaudeWebState.Ok) ClaudeWebGood = result;
             if (result.State == ClaudeWebState.LoginRequired) ClaudeWebGood = null;
+            SetChats(result);
         }
         finally
         {
@@ -127,10 +219,14 @@ public sealed class MonitorService : IDisposable
 
     public async Task LogoutClaudeAsync()
     {
+        _claudeGeneration++;
         _settings.ClaudeWebEnabled = false;
         _settings.Save();
         ClaudeWebGood = null;
         ClaudeWebLast = null;
+        ClaudeChats = [];
+        ClaudeChatsAt = null;
+        ClaudeWeb.KeepAlive = false;
         try { await ClaudeWeb.LogoutAsync(); } catch (Exception ex) { Log.Write($"logout failed: {ex.Message}"); }
         Changed?.Invoke();
     }
@@ -139,5 +235,6 @@ public sealed class MonitorService : IDisposable
     {
         _timer?.Stop();
         ClaudeWeb.Dispose();
+        ClaudeDesktop.Dispose();
     }
 }

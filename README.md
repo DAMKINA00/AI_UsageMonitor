@@ -11,31 +11,52 @@
 | | Claude | Codex |
 |---|---|---|
 | 앱 실행 여부 | `claude.exe` 프로세스 | Store판 `ChatGPT.exe`(OpenAI.Codex) / 직접 설치판 `Codex.exe` |
-| 세션·스레드 상태 | `~/.claude/sessions/<pid>.json` (작업 중 / 승인 대기 / 대기) | `~/.codex/sessions/**/rollout-*.jsonl` 의 `task_started`/`task_complete` |
-| 사용률 | claude.ai 로그인 후 사용량 화면과 같은 데이터 (+ 터미널 CLI 상태줄) | `codex app-server` 의 `account/rateLimits/read` (+ 로그의 `rate_limits`) |
+| 세션·스레드 상태 | `~/.claude/sessions/<pid>.json` (작업 중 / 승인 대기 / 대기) + claude.ai 앱 대화 목록 (작업 중 / 입력 대기 / 완료) | `~/.codex/sessions/**/rollout-*.jsonl` 의 `task_started`/`task_complete` |
+| 사용률 | Claude 데스크톱의 기존 로그인으로 사용량 화면과 같은 데이터 자동 조회 | `codex app-server` 의 `account/rateLimits/read` (+ 로그의 `rate_limits`) |
 | 기타 | 플랜(Max 5x/20x) | 플랜(Pro 5x/20x), 크레딧 잔액, 무료 리셋권 |
-| 세션 클릭 | Claude 앱에서 그 세션 열기 (`claude://`) | Codex 앱에서 그 스레드 열기 (`codex://threads/…`, Store판으로 연결) |
+| 세션 클릭 | Claude 앱에서 그 세션·대화 열기 (`claude://`) | Codex 앱에서 그 스레드 열기 (`codex://threads/…`, Store판으로 연결) |
 
 - 카드에는 한도를 하나만 보여 줍니다: 평소엔 **주간 한도**, 5시간 한도가 90% 이상이면 그 자리에 5시간 한도.
 - 창 크기는 고정이고, 세션이 많아지면 카드 안 목록만 스크롤됩니다.
 - Codex 스레드 상태는 실제 작업 이벤트 시각으로 판단합니다. Codex 앱이 켜질 때 모든 스레드 로그에 덧붙이는
   `thread_settings_applied` 는 활동으로 치지 않습니다.
 - 로컬 파일은 3초마다, Codex 서버 조회는 2분마다, claude.ai 조회는 3분마다 갱신합니다.
+  claude.ai 앱 대화 목록은 사용량과 함께 읽고, Claude 앱이 켜져 있거나 진행 중인 대화가 있으면 30초마다 따로 확인합니다.
+
+## Claude 앱 대화 표시
+
+Claude 카드의 세션 목록에는 이 PC의 Claude Code 세션과 함께 **Claude 앱(claude.ai)에서 진행 중이거나 최근 12시간 안에 활동한 대화**가
+"앱 대화"로 표시됩니다. 앱에서 보내는 대화는 대부분 Anthropic 클라우드에서 실행되어 이 PC에 프로세스나 세션 파일이 없기 때문에,
+Claude 데스크톱의 기존 로그인으로 사이드바와 같은 대화 목록을 읽어 상태를 판단합니다. 모니터에서 다시 로그인할 필요가 없습니다.
+
+- 읽는 값은 대화 제목, 프로젝트 이름, 마지막 활동 시각, 진행 상태(`live_status`, `needs_input`)뿐이고 대화 내용은 읽지 않습니다.
+- 진행 중(답변 생성·작업 중)이면 "작업 중", 입력이나 승인을 기다리면 "입력 대기"/"승인 대기", 끝났으면 "완료"입니다.
+- 대화 목록을 10분 넘게 못 읽으면 진행 중 표시를 "갱신 안 됨"으로 바꿉니다.
+- 같은 세션이 로컬 세션 파일에도 있으면 로컬 쪽만 보여 줍니다.
+- 대화를 누르면 Claude 앱에서 그 대화(`claude://claude.ai/chat/…`)를 엽니다.
+- 30초 간격으로 확인하는 동안에는 WebView2를 닫지 않고 유지합니다(Claude 앱을 끄면 다시 조회 뒤 닫음).
+- 설정 파일(`settings.json`)의 `ClaudeChatPollSeconds`(기본 30), `ClaudeChatActiveHours`(기본 12)로 조절할 수 있습니다.
+- claude.ai 공개 API가 아니라 웹 화면이 쓰는 내부 데이터라서, claude.ai가 바뀌면 동작하지 않을 수 있습니다.
 - 트레이 아이콘의 두 막대(왼쪽 Claude, 오른쪽 Codex)는 가장 많이 쓴 한도의 사용률입니다.
 - 사용률이 80%·95%를 넘으면 알림을 띄웁니다(리셋 주기마다 한 번).
 
 ## Claude 사용량 보기
 
-Claude 카드의 **claude.ai 로그인** 버튼(또는 트레이 메뉴)을 누르면 앱 전용 브라우저 창이 열립니다.
-한 번 로그인하면 창이 자동으로 닫히고 이후 계속 사용량을 읽습니다.
+기본값은 **Claude 데스크톱 로그인 자동 연결**입니다. Claude 데스크톱에 로그인해 두면 모니터에서 추가 로그인 없이
+같은 계정의 5시간·주간·모델별 사용량과 재설정 시간을 읽습니다. Codex도 기존 앱/CLI 인증을 그대로 사용합니다.
 
-- 세션은 `%LOCALAPPDATA%\AIUsageMonitor\WebView2` 프로필 안에만 저장되며, 앱이 쿠키를 꺼내 쓰지 않습니다.
-- 구글 로그인은 내장 브라우저를 막는 경우가 있어 **이메일 로그인**을 권장합니다.
-- 트레이 메뉴 **Claude 로그아웃**으로 이 프로필의 세션을 지울 수 있습니다.
+- `%APPDATA%\Claude`의 로그인 저장소를 읽기 전용으로 열고, 현재 Windows 사용자에게 허용된 Claude 인증만 읽습니다.
+- 인증은 숨겨진 InPrivate WebView에서 사용하며, 인증값을 설정·로그·소스에 기록하지 않습니다. 앱 설치 파일은 변경하지 않습니다.
+- 데스크톱의 계정 변경·로그아웃은 다음 조회 때 반영되며 이전 계정의 사용량과 앱 대화 목록을 지웁니다.
+- 사용량 출처는 카드 하단에 **Claude 데스크톱**으로 표시됩니다. 이 연결은 데스크톱 화면을 캡처하는 방식이 아니라
+  동일한 인증으로 서버 데이터를 조회하는 방식이므로 네트워크가 필요합니다.
+- 데스크톱 로그인 저장 형식이나 claude.ai 내부 조회 경로가 변경되면 연결 수정이 필요할 수 있습니다.
+- 필요할 때 트레이에서 자동 연결을 끄고 **Claude 웹 로그인 (보조 연결)**을 사용할 수 있습니다.
+  보조 웹 로그인은 모니터 전용 프로필에 저장되며, **Claude 웹 연결 로그아웃**은 데스크톱 로그인에 영향을 주지 않습니다.
 
-데스크톱 앱 세션은 상태줄(statusLine)을 실행하지 않아서 이 방식을 씁니다.
 터미널에서 `claude` CLI를 쓸 때는 `helpers\claude_statusline.py` 가 공식 `rate_limits` 값을
-`%LOCALAPPDATA%\AIUsageMonitor\claude\rate_limits.json` 에 남기고, 앱이 더 최신 값을 골라 씁니다.
+`%LOCALAPPDATA%\AIUsageMonitor\claude\rate_limits.json` 에 남깁니다. 데스크톱 자동 연결에서는 다른 계정의 값이 섞이지 않도록
+CLI 사용량을 합치지 않으며, 로컬 작업 상태는 계속 표시합니다. CLI 사용량은 보조 연결 모드에서 사용합니다.
 (`~/.claude/settings.json` 의 `statusLine` 항목. 원래 설정은 `settings.json.bak-usage-monitor` 에 백업)
 
 ## 캐릭터 연출
@@ -85,5 +106,6 @@ dotnet run --project tests/AIUsageMonitor.Regression/AIUsageMonitor.Regression.c
 ```
 
 실제 계정이나 서버에 접속하지 않고 합성 데이터로 한도 병합, 조회 실패 안내, 초기화 실패 후 재시도,
-세션 클릭 대상 갱신, 로그 증분 읽기와 오래된 스레드 제외를 검사합니다. 임시 로그는 별도 폴더에 만들며
+데스크톱 인증 데이터의 암호화·도메인 검증, 계정 전환 시 이전 데이터 제거, CLI 계정과 사용량 분리,
+세션 클릭 대상 갱신, 로그 증분 읽기와 오래된 스레드 제외, claude.ai 앱 대화 상태 판단과 로컬 세션과의 중복 제거를 검사합니다. 임시 로그는 별도 폴더에 만들며
 사용자의 세션 파일과 로그인 프로필은 변경하지 않습니다.

@@ -151,6 +151,7 @@ public partial class App : Application
         _tray.UsageAlertsChanged += v => { _settings.UsageAlerts = v; _settings.Save(); };
         _tray.ActivityAlertsChanged += v => { _settings.ActivityAlerts = v; _settings.Save(); };
         _tray.LoginRequested += () => _monitor.ClaudeWeb.ShowLogin();
+        _tray.ClaudeDesktopChanged += value => _monitor.SetClaudeDesktopEnabled(value);
         _tray.LogoutRequested += async () =>
         {
             await _monitor.LogoutClaudeAsync();
@@ -169,7 +170,15 @@ public partial class App : Application
 
     void Render()
     {
-        var claude = Presenter.Claude(_monitor, _settings, () => _monitor.ClaudeWeb.ShowLogin());
+        var claude = Presenter.Claude(_monitor, _settings, () =>
+        {
+            if (_settings.ClaudeDesktopEnabled)
+            {
+                try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("claude://") { UseShellExecute = true }); }
+                catch (Exception ex) { Log.Write($"Claude Desktop open failed: {ex.Message}"); }
+            }
+            else _monitor.ClaudeWeb.ShowLogin();
+        });
         var codex = Presenter.Codex(_monitor);
         var footer = _monitor.LastLocalRefresh is { } t ? $"자동 갱신 중 · {t:HH:mm} 기준" : "불러오는 중…";
         _vm.Update(claude, codex, footer);
@@ -185,7 +194,7 @@ public partial class App : Application
 
         _alerts.CheckUsage("Claude", claude.RawWindows);
         _alerts.CheckUsage("Codex", codex.RawWindows);
-        if (_monitor.ClaudeLocal is { } cl) _alerts.CheckActivity("Claude", cl.Sessions);
+        if (_monitor.ClaudeLocal != null) _alerts.CheckActivity("Claude", Presenter.ClaudeSessions(_monitor));
         if (_monitor.CodexLocal is { } xl) _alerts.CheckActivity("Codex", xl.Threads);
         if (_firstUpdate && _monitor.ClaudeLocal != null && _monitor.CodexLocal != null)
         {

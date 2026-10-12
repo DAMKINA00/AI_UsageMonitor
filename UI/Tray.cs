@@ -9,12 +9,14 @@ namespace AIUsageMonitor.UI;
 public sealed class Tray : IDisposable
 {
     readonly WinForms.NotifyIcon _icon;
-    readonly WinForms.ToolStripMenuItem _topmost, _characters, _startup, _usageAlerts, _activityAlerts, _login, _logout;
+    readonly WinForms.ToolStripMenuItem _topmost, _characters, _startup, _usageAlerts, _activityAlerts, _login, _logout, _desktop;
+    bool _webLoggedIn;
     IntPtr _hIcon;
     string _iconSig = "";
 
     public event Action? OpenRequested, RefreshRequested, ExitRequested, LoginRequested, LogoutRequested;
     public event Action<bool>? TopmostChanged, CharactersChanged, StartupChanged, UsageAlertsChanged, ActivityAlertsChanged;
+    public event Action<bool>? ClaudeDesktopChanged;
 
     public Tray(AppSettings s)
     {
@@ -28,7 +30,13 @@ public sealed class Tray : IDisposable
         _usageAlerts = Check("사용량 경고 알림 (" + string.Join("/", s.AlertThresholds) + "%)", s.UsageAlerts, v => UsageAlertsChanged?.Invoke(v));
         _activityAlerts = Check("작업 완료·승인 대기 알림", s.ActivityAlerts, v => ActivityAlertsChanged?.Invoke(v));
         menu.Items.AddRange([_topmost, _characters, _startup, _usageAlerts, _activityAlerts, new WinForms.ToolStripSeparator()]);
-        _login = new WinForms.ToolStripMenuItem("Claude 로그인 (claude.ai)…", null, (_, _) => LoginRequested?.Invoke());
+        _desktop = Check("Claude 데스크톱 로그인 자동 연결", s.ClaudeDesktopEnabled, value =>
+        {
+            ClaudeDesktopChanged?.Invoke(value);
+            SetLoggedIn(_webLoggedIn);
+        });
+        menu.Items.Add(_desktop);
+        _login = new WinForms.ToolStripMenuItem("Claude 웹 로그인 (보조 연결)…", null, (_, _) => LoginRequested?.Invoke());
         _logout = new WinForms.ToolStripMenuItem("Claude 로그아웃", null, (_, _) => LogoutRequested?.Invoke());
         menu.Items.AddRange([_login, _logout]);
         menu.Items.Add("데이터 폴더 열기", null, (_, _) => OpenFolder(Paths.AppData));
@@ -52,8 +60,11 @@ public sealed class Tray : IDisposable
 
     public void SetLoggedIn(bool v)
     {
-        _login.Text = v ? "Claude 다시 로그인 (claude.ai)…" : "Claude 로그인 (claude.ai)…";
-        _logout.Enabled = v;
+        _webLoggedIn = v;
+        _login.Text = v ? "Claude 웹 다시 로그인 (보조 연결)…" : "Claude 웹 로그인 (보조 연결)…";
+        _login.Enabled = !_desktop.Checked;
+        _logout.Text = "Claude 웹 연결 로그아웃";
+        _logout.Enabled = !_desktop.Checked && v;
     }
 
     public void SetTooltip(string text) => _icon.Text = text.Length > 127 ? text[..127] : text;

@@ -66,7 +66,12 @@ public sealed class AppSettings
     public int CodexPollSeconds { get; set; } = 120;
     public int ClaudeWebPollSeconds { get; set; } = 180;
     public int CodexActiveHours { get; set; } = 12;
+    /// <summary>Claude 앱이 켜져 있거나 진행 중인 대화가 있을 때 claude.ai 대화 목록을 확인하는 간격.</summary>
+    public int ClaudeChatPollSeconds { get; set; } = 30;
+    /// <summary>진행 중이 아닌 claude.ai 대화를 카드에 남겨 두는 시간.</summary>
+    public int ClaudeChatActiveHours { get; set; } = 12;
     public bool ClaudeWebEnabled { get; set; }
+    public bool ClaudeDesktopEnabled { get; set; } = true;
     public string? CodexExePath { get; set; }
     public double? WindowLeft { get; set; }
     public double? WindowTop { get; set; }
@@ -197,7 +202,9 @@ public sealed record SessionInfo(
     string StateText,
     DateTimeOffset? LastActivity,
     bool ActivityIsStateChange = false,
-    string? OpenUri = null);
+    string? OpenUri = null,
+    /// <summary>같은 세션을 가리키는 다른 ID (claude.ai 대화의 workspace_session_id 등). 중복 제거용.</summary>
+    string? AltId = null);
 
 public static class JsonUtil
 {

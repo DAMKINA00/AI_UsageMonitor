@@ -8,6 +8,8 @@ public sealed class ClaudeLocalState
     public bool DesktopRunning { get; init; }
     public int CliProcessCount { get; init; }
     public List<SessionInfo> Sessions { get; init; } = [];
+    /// <summary>실행 중인 세션의 sessionId·hostSessionId·bridgeSessionId. claude.ai 대화 목록과 겹치는 항목을 빼는 데 쓴다.</summary>
+    public HashSet<string> KnownIds { get; init; } = new(StringComparer.OrdinalIgnoreCase);
     /// <summary>터미널 CLI의 statusLine 헬퍼가 남긴 공식 rate_limits (있을 때만).</summary>
     public UsageSnapshot? StatusLineUsage { get; init; }
 }
@@ -22,16 +24,18 @@ public sealed class ClaudeLocalReader
         var paths = ProcessUtil.ImagePathsByName("claude");
         bool IsCode(string p) => p.Contains(@"\claude-code\", StringComparison.OrdinalIgnoreCase);
 
+        var known = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         return new ClaudeLocalState
         {
             DesktopRunning = paths.Any(p => !IsCode(p)),
             CliProcessCount = paths.Count(IsCode),
-            Sessions = ReadSessions(),
+            Sessions = ReadSessions(known),
+            KnownIds = known,
             StatusLineUsage = ReadStatusLine(),
         };
     }
 
-    static List<SessionInfo> ReadSessions()
+    static List<SessionInfo> ReadSessions(HashSet<string> known)
     {
         var list = new List<SessionInfo>();
         var dir = Path.Combine(Paths.ClaudeHome, "sessions");
@@ -46,6 +50,8 @@ public sealed class ClaudeLocalReader
                 if (r.Num("pid") is not double pidD) continue;
                 long? procStart = long.TryParse(r.Str("procStart"), out var ps) ? ps : null;
                 if (!ProcessUtil.IsAlive((int)pidD, procStart)) continue;
+                foreach (var key in new[] { "sessionId", "hostSessionId", "bridgeSessionId" })
+                    if (r.Str(key) is { Length: > 0 } id) known.Add(id);
 
                 var cwd = r.Str("cwd") ?? "";
                 var folder = string.IsNullOrEmpty(cwd) ? "" : Path.GetFileName(cwd.TrimEnd('\\', '/'));

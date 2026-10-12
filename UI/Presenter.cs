@@ -191,6 +191,27 @@ public static class Presenter
 {
     // 카드 크기는 고정이고 목록은 스크롤되므로 넉넉하게
     const int MaxSessions = 30;
+    // 이보다 오래 대화 목록을 못 읽었으면 "작업 중"·"대기" 표시를 믿지 않는다
+    static readonly TimeSpan ChatStaleAfter = TimeSpan.FromMinutes(10);
+
+    /// <summary>
+    /// 이 PC에서 실행 중인 Claude Code 세션과 claude.ai 앱 대화(클라우드에서 실행되는 대화 포함)를 합친 목록.
+    /// 같은 세션이 양쪽에 있으면 로컬 세션만 남긴다.
+    /// </summary>
+    public static List<SessionInfo> ClaudeSessions(MonitorService m)
+    {
+        var local = m.ClaudeLocal?.Sessions ?? [];
+        var known = m.ClaudeLocal?.KnownIds ?? [];
+        bool stale = m.ClaudeChatsAt is not { } at || DateTimeOffset.Now - at > ChatStaleAfter;
+
+        var chats = m.ClaudeChats
+            .Where(c => !known.Contains(c.Id.StartsWith("chat:", StringComparison.Ordinal) ? c.Id[5..] : c.Id) &&
+                        (c.AltId == null || !known.Contains(c.AltId)))
+            .Select(c => stale && c.State is SessionState.Working or SessionState.NeedsInput
+                ? c with { State = SessionState.Stale, StateText = "갱신 안 됨" }
+                : c);
+        return local.Concat(chats).ToList();
+    }
 
     static bool IsFiveHour(UsageWindow w) => w.Key is "five_hour" || w.Key.EndsWith(":w300", StringComparison.Ordinal);
     static bool IsWeekly(UsageWindow w) => w.Key is "seven_day" || w.Key.EndsWith(":w10080", StringComparison.Ordinal);
@@ -215,10 +236,21 @@ public static class Presenter
         var local = m.ClaudeLocal;
         var good = m.ClaudeWebGood;
         var last = m.ClaudeWebLast;
-        var usage = Merge(good?.Usage, local?.StatusLineUsage);
+        // Desktop과 CLI가 서로 다른 계정일 수 있으므로 Desktop 사용량에 CLI 값을 섞지 않는다.
+        var usage = s.ClaudeDesktopEnabled ? good?.Usage : Merge(good?.Usage, local?.StatusLineUsage);
 
         string? notice = null, action = null, empty = null;
-        if (!s.ClaudeWebEnabled)
+        if (s.ClaudeDesktopEnabled)
+        {
+            if (last?.State == ClaudeWebState.LoginRequired)
+            {
+                empty = "Claude 데스크톱에서 로그인하면 자동으로 연결됩니다.";
+                action = "Claude 데스크톱 열기";
+            }
+            else if (last?.State == ClaudeWebState.Error)
+                notice = $"데스크톱 연결 확인: {last.Error}";
+        }
+        else if (!s.ClaudeWebEnabled)
         {
             if (usage == null) empty = "주간 사용량은 claude.ai 로그인 후 표시됩니다.";
             action = "claude.ai 로그인";
@@ -243,10 +275,11 @@ public static class Presenter
             _ => ("실행 안 됨", Palette.Muted),
         };
 
-        var sessions = local?.Sessions ?? [];
+        var sessions = ClaudeSessions(m);
         return Build("Claude", Palette.Claude, usage, local is { DesktopRunning: true } or { CliProcessCount: > 0 }, app, appBrush, good?.OrgName, notice, action,
             action != null ? new RelayCommand(login) : null, empty,
-            Footnote(usage, m.ClaudeWebBusy), sessions, "실행 중인 Claude Code 세션 없음");
+            Footnote(usage, m.ClaudeWebBusy), sessions,
+            m.ClaudeEnabled ? "최근 대화·세션 없음" : "실행 중인 Claude Code 세션 없음 (앱 대화는 연결 후 표시)");
     }
 
     public static ProviderCard Codex(MonitorService m)
