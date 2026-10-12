@@ -1,0 +1,250 @@
+using System.Windows;
+using System.Windows.Threading;
+using AIUsageMonitor.Core;
+using AIUsageMonitor.UI;
+using Microsoft.Win32;
+
+namespace AIUsageMonitor;
+
+public partial class App : Application
+{
+    const string MutexName = @"Local\AIUsageMonitor.SingleInstance";
+    const string ShowEventName = @"Local\AIUsageMonitor.Show";
+    const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
+    const string RunValue = "AIUsageMonitor";
+
+    Mutex? _mutex;
+    EventWaitHandle? _showEvent;
+    AppSettings _settings = null!;
+    MonitorService _monitor = null!;
+    MainViewModel _vm = null!;
+    MainWindow _window = null!;
+    Tray _tray = null!;
+    Alerts _alerts = null!;
+    readonly MoodTracker _claudeMood = new("claude");
+    readonly MoodTracker _codexMood = new("codex");
+    bool _firstUpdate = true;
+    bool _demo;
+
+    protected override void OnStartup(StartupEventArgs e)
+    {
+        base.OnStartup(e);
+
+        _mutex = new Mutex(true, MutexName, out bool createdNew);
+        if (!createdNew)
+        {
+            // 이미 실행 중이면 기존 창을 띄우고 종료
+            try { EventWaitHandle.OpenExisting(ShowEventName).Set(); } catch { }
+            Shutdown();
+            return;
+        }
+
+        DispatcherUnhandledException += (_, ex) =>
+        {
+            Log.Write($"unhandled: {ex.Exception}");
+            ex.Handled = true;
+        };
+
+        _settings = AppSettings.Load();
+        _vm = new MainViewModel();
+        _monitor = new MonitorService(_settings);
+        _window = new MainWindow(_vm, _settings);
+        _tray = new Tray(_settings);
+        _alerts = new Alerts(_settings, _tray);
+
+        WireUp();
+        SyncStartupRegistration();
+
+        _showEvent = new EventWaitHandle(false, EventResetMode.AutoReset, ShowEventName);
+        new Thread(() =>
+        {
+            while (_showEvent.WaitOne())
+                Dispatcher.BeginInvoke(() => _window.ShowAndActivate());
+        }) { IsBackground = true }.Start();
+
+        _monitor.Start();
+        if (!e.Args.Contains("--minimized")) _window.ShowAndActivate();
+
+        // 진단용: 캐릭터 상태를 하나씩 띄워 PNG로 저장하고 종료
+        var moodsIdx = Array.IndexOf(e.Args, "--render-moods");
+        if (moodsIdx >= 0 && moodsIdx + 1 < e.Args.Length) _ = RenderMoodsAsync(e.Args[moodsIdx + 1]);
+
+        // 진단용: 데이터를 잠시 모은 뒤 창을 PNG로 저장하고 종료
+        var renderIdx = Array.IndexOf(e.Args, "--render-png");
+        if (renderIdx >= 0 && renderIdx + 1 < e.Args.Length)
+        {
+            var path = e.Args[renderIdx + 1];
+            var timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(12) };
+            timer.Tick += (_, _) =>
+            {
+                timer.Stop();
+                SaveWindowPng(path);
+                ExitApp();
+            };
+            timer.Start();
+        }
+    }
+
+    async Task RenderMoodsAsync(string dir)
+    {
+        System.IO.Directory.CreateDirectory(dir);
+        await Task.Delay(6000);
+        _demo = true;
+        foreach (var mood in Enum.GetValues<Mood>())
+        {
+            _window.Claude.SetMood(mood, [$"[{mood}] 말풍선 테스트"]);
+            _window.Codex.SetMood(mood, [$"[{mood}] 말풍선"]);
+            await Task.Delay(1500);
+            if (mood == Mood.Working) { _window.Claude.PopText("+3%", System.Windows.Media.Color.FromRgb(0x9B, 0xF0, 0xC0)); _window.Codex.PopText("+1%", System.Windows.Media.Color.FromRgb(0xFF, 0xC8, 0x6B)); await Task.Delay(500); }
+            if (mood == Mood.Happy) { _window.Claude.Celebrate(); _window.Codex.Celebrate(); await Task.Delay(300); }
+            SaveWindowPng(System.IO.Path.Combine(dir, $"mood_{(int)mood}_{mood}.png"));
+        }
+        ExitApp();
+    }
+
+    void SaveWindowPng(string path)
+    {
+        if (_window.Content is not FrameworkElement root) return;
+        var dpi = System.Windows.Media.VisualTreeHelper.GetDpi(root);
+        var bmp = new System.Windows.Media.Imaging.RenderTargetBitmap(
+            (int)(root.ActualWidth * dpi.DpiScaleX), (int)(root.ActualHeight * dpi.DpiScaleY),
+            dpi.PixelsPerInchX, dpi.PixelsPerInchY, System.Windows.Media.PixelFormats.Pbgra32);
+        bmp.Render(root);
+        var enc = new System.Windows.Media.Imaging.PngBitmapEncoder();
+        enc.Frames.Add(System.Windows.Media.Imaging.BitmapFrame.Create(bmp));
+        using var fs = System.IO.File.Create(path);
+        enc.Save(fs);
+    }
+
+    void WireUp()
+    {
+        _monitor.Changed += Render;
+
+        _window.RefreshRequested += () => _monitor.RefreshAll();
+        _window.TopmostToggled += SetTopmost;
+        _window.IsVisibleChanged += (_, _) =>
+        {
+            if (!_window.IsVisible && !_settings.TrayHintShown && !_window.AllowClose)
+            {
+                _settings.TrayHintShown = true;
+                _settings.Save();
+                _tray.Balloon("AI 사용량 모니터", "트레이에서 계속 실행됩니다. 아이콘을 클릭하면 다시 열립니다.", false);
+            }
+        };
+
+        _tray.OpenRequested += () => _window.ShowAndActivate();
+        _tray.RefreshRequested += () => _monitor.RefreshAll();
+        _tray.ExitRequested += ExitApp;
+        _tray.TopmostChanged += SetTopmost;
+        _tray.CharactersChanged += v =>
+        {
+            _settings.ShowCharacters = v;
+            _settings.Save();
+            _window.ApplyCharacters(v);
+        };
+        _tray.StartupChanged += v =>
+        {
+            _settings.StartWithWindows = v;
+            _settings.Save();
+            SyncStartupRegistration();
+        };
+        _tray.UsageAlertsChanged += v => { _settings.UsageAlerts = v; _settings.Save(); };
+        _tray.ActivityAlertsChanged += v => { _settings.ActivityAlerts = v; _settings.Save(); };
+        _tray.LoginRequested += () => _monitor.ClaudeWeb.ShowLogin();
+        _tray.LogoutRequested += async () =>
+        {
+            await _monitor.LogoutClaudeAsync();
+            _tray.SetLoggedIn(false);
+        };
+        _monitor.ClaudeWeb.LoginWindowClosed += () => _tray.SetLoggedIn(true);
+    }
+
+    void SetTopmost(bool on)
+    {
+        _settings.Topmost = on;
+        _settings.Save();
+        _window.ApplyTopmost(on);
+        _tray.SetTopmost(on);
+    }
+
+    void Render()
+    {
+        var claude = Presenter.Claude(_monitor, _settings, () => _monitor.ClaudeWeb.ShowLogin());
+        var codex = Presenter.Codex(_monitor);
+        var footer = _monitor.LastLocalRefresh is { } t ? $"자동 갱신 중 · {t:HH:mm} 기준" : "불러오는 중…";
+        _vm.Update(claude, codex, footer);
+
+        if (!_demo)
+        {
+            Animate(_window.Claude, _claudeMood.Update(claude));
+            Animate(_window.Codex, _codexMood.Update(codex));
+        }
+
+        _tray.UpdateIcon(claude.MaxUsed, codex.MaxUsed);
+        _tray.SetTooltip(Tooltip(claude, codex));
+
+        _alerts.CheckUsage("Claude", claude.RawWindows);
+        _alerts.CheckUsage("Codex", codex.RawWindows);
+        if (_monitor.ClaudeLocal is { } cl) _alerts.CheckActivity("Claude", cl.Sessions);
+        if (_monitor.CodexLocal is { } xl) _alerts.CheckActivity("Codex", xl.Threads);
+        if (_firstUpdate && _monitor.ClaudeLocal != null && _monitor.CodexLocal != null)
+        {
+            _firstUpdate = false;
+            _alerts.MarkBaseline();
+        }
+    }
+
+    static void Animate(CharacterStage stage, MoodTracker.Result r)
+    {
+        stage.SetMood(r.Mood, r.Lines);
+        if (r.Reset) stage.Celebrate();
+        else if (r.UsageDelta is double d) stage.PopText($"+{Fmt.Pct(d)}", r.DeltaColor);
+    }
+
+    static string Tooltip(ProviderCard claude, ProviderCard codex)
+    {
+        static string Line(ProviderCard c)
+        {
+            var parts = c.RawWindows.Select(w => $"{Short(w.Label)} {Fmt.Pct(w.UsedPercent)}").Take(2).ToList();
+            var usage = parts.Count > 0 ? string.Join(" · ", parts) : "사용량 미확인";
+            var work = c.WorkingCount > 0 ? $" · 작업 {c.WorkingCount}" : "";
+            var wait = c.NeedsInputCount > 0 ? $" · 대기 {c.NeedsInputCount}" : "";
+            return $"{c.Name}: {usage}{work}{wait}";
+        }
+        static string Short(string label) => label.Replace(" 한도", "").Replace(" (전체)", "");
+        return $"{Line(claude)}\n{Line(codex)}";
+    }
+
+    void SyncStartupRegistration()
+    {
+        try
+        {
+            using var key = Registry.CurrentUser.OpenSubKey(RunKey, writable: true);
+            if (key == null) return;
+            if (_settings.StartWithWindows && Environment.ProcessPath is { } exe)
+                key.SetValue(RunValue, $"\"{exe}\" --minimized");
+            else if (key.GetValue(RunValue) != null)
+                key.DeleteValue(RunValue, false);
+        }
+        catch (Exception ex)
+        {
+            Log.Write($"startup registration failed: {ex.Message}");
+        }
+    }
+
+    void ExitApp()
+    {
+        _window.AllowClose = true;
+        _settings.Save();
+        _monitor.Dispose();
+        _tray.Dispose();
+        _window.Close();
+        Shutdown();
+    }
+
+    protected override void OnExit(ExitEventArgs e)
+    {
+        try { _mutex?.ReleaseMutex(); } catch { }
+        base.OnExit(e);
+    }
+}

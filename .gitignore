@@ -1,0 +1,13 @@
+bin/
+obj/
+publish/
+.vs/
+*.user
+*.suo
+*.log
+__pycache__/
+*.py[cod]
+
+# Local image-generation drafts and archived designs
+/art/old/
+/art/out/
