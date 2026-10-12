@@ -21,6 +21,7 @@ internal static partial class Program
         Run("Session identity and current click target", TestSessionIdentityAndViewModel);
         Run("Claude app conversations from claude.ai", TestClaudeChats);
         Run("Claude Desktop authentication and usage isolation", TestClaudeDesktop);
+        Run("Claude project thread status and mood transitions", TestClaudeProjectThreads);
 
         Console.WriteLine($"Totals: {s_assertions} assertions, {s_failures} failures.");
         return s_failures == 0 ? 0 : 1;

@@ -18,6 +18,7 @@ public sealed class ClaudeWebResult
     public string? OrgName { get; init; }
     /// <summary>claude.ai 앱 대화 중 진행 중이거나 최근 활동한 것. 대화 목록을 못 읽었으면 null.</summary>
     public List<SessionInfo>? Chats { get; init; }
+    public string? ChatsError { get; init; }
     public string? Error { get; init; }
     public DateTimeOffset At { get; init; } = DateTimeOffset.Now;
 }
@@ -45,23 +46,64 @@ public sealed class ClaudeWebClient : IDisposable
     public event Action? LoginWindowClosed;
     public bool LoginWindowOpen { get; private set; }
 
-    // claude.ai 사이드바와 같은 대화 목록에서 모니터에 필요한 필드만 골라 넘긴다 (대화 내용은 읽지 않는다)
+    // 서버 응답에서 제목·상태만 골라 넘긴다. 프로젝트 타임라인의 본문은 사용하거나 저장하지 않는다.
     const string Prelude = """
-          const get = async (u) => {
-            const r = await fetch(u, { credentials: 'include', headers: { accept: 'application/json' } });
+          const get = async (u, headers = {}, signal = AbortSignal.timeout(12000)) => {
+            const r = await fetch(u, { credentials: 'include', headers: { accept: 'application/json', ...headers }, signal });
             const t = await r.text(); let j = null; try { j = JSON.parse(t); } catch (e) {}
             return { status: r.status, json: j };
           };
+          const projectThreadsOf = async (orgId, signal) => {
+            const headers = { 'x-organization-uuid': orgId, 'anthropic-version': '2023-06-01',
+              'anthropic-beta': 'ccr-byoc-2025-07-29', 'anthropic-client-feature': 'ccr' };
+            const pages = async (url) => {
+              const rows = []; const seen = new Set(); let cursor = null;
+              for (let page = 0; page < 20; page++) {
+                const r = await get(url + (cursor ? '&cursor=' + encodeURIComponent(cursor) : ''), headers, signal);
+                if (r.status !== 200 || !Array.isArray(r.json?.data))
+                  throw new Error('프로젝트 작업 조회 실패 (HTTP ' + r.status + ')');
+                rows.push(...r.json.data);
+                cursor = r.json.next_cursor;
+                if (!cursor) return rows;
+                if (typeof cursor !== 'string' || seen.has(cursor)) break;
+                seen.add(cursor);
+              }
+              throw new Error('프로젝트 작업 목록을 끝까지 읽지 못했습니다.');
+            };
+            const projects = (await pages('/v1/code/channels?scope=joined&limit=200')).filter(p => !p.archived_at);
+            const result = []; let next = 0;
+            await Promise.all(Array.from({ length: Math.min(4, projects.length) }, async () => {
+              while (next < projects.length) {
+                const project = projects[next++];
+                if (typeof project.id !== 'string' || !project.id) throw new Error('프로젝트 ID가 없습니다.');
+                const rows = await pages('/v1/code/channels/' + encodeURIComponent(project.id) +
+                  '/timeline?limit=200&bound_only=true&thread_roots_only=true');
+                for (const row of rows) {
+                  const session = row.bound_sessions?.find(s => s.title) || row.bound_sessions?.[0];
+                  if (!session || !row.id) continue;
+                  result.push({ source_kind: 'project_thread', uuid: row.id, name: session.title || '프로젝트 작업',
+                    project: project.name || '', project_uuid: project.id, thread_status: row.thread_status ?? null,
+                    updated_at: row.last_reply_at || row.created_at || null,
+                    workspace_session_id: typeof session.id === 'string' ? session.id.replace(/^cse_/, 'session_') : null });
+                }
+              }
+            }));
+            return result;
+          };
           const chatsOf = async (orgId) => {
-            const c = await get('/api/organizations/' + orgId + '/chat_conversations_v2?limit=20&offset=0&archived=false&consistency=strong');
+            const signal = AbortSignal.timeout(25000);
+            const [c, projects] = await Promise.all([
+              get('/api/organizations/' + orgId + '/chat_conversations_v2?limit=20&offset=0&archived=false&consistency=strong', {}, signal),
+              projectThreadsOf(orgId, signal)
+            ]);
             const list = c.json && Array.isArray(c.json.data) ? c.json.data : (Array.isArray(c.json) ? c.json : null);
             if (!list) return { status: c.status, chats: null };
-            return { status: c.status, chats: list.map(x => ({
+            return { status: c.status, chats: [...list.map(x => ({
               uuid: x.uuid, name: x.name || '', updated_at: x.updated_at || null,
               live_status: x.live_status || null, live_status_started_at: x.live_status_started_at || null,
               needs_input: x.needs_input ?? null, needs_input_kind: x.needs_input_kind || null,
               project: (x.project && x.project.name) || null, workspace_session_id: x.workspace_session_id || null,
-            })) };
+            })), ...projects] };
           };
         """;
 
@@ -87,9 +129,12 @@ public sealed class ClaudeWebClient : IDisposable
             for (const org of orgs) {
               const u = await get('/api/organizations/' + org.uuid + '/usage');
               if (u.status === 200 && u.json && typeof u.json === 'object') {
-                let chats = null;
-                try { chats = (await chatsOf(org.uuid)).chats; } catch (e) {}
-                return JSON.stringify({ state: 'ok', org: { uuid: org.uuid, name: org.name, capabilities: org.capabilities || [], tier: org.rate_limit_tier || null }, usage: u.json, chats });
+                let chats = null, chats_error = null;
+                try {
+                  const c = await chatsOf(org.uuid); chats = c.chats;
+                  if (!chats) chats_error = '대화 목록 조회 실패 (HTTP ' + c.status + ')';
+                } catch (e) { chats_error = String(e); }
+                return JSON.stringify({ state: 'ok', org: { uuid: org.uuid, name: org.name, capabilities: org.capabilities || [], tier: org.rate_limit_tier || null }, usage: u.json, chats, chats_error });
               }
             }
             return JSON.stringify({ state: 'error', detail: 'usage endpoint unavailable (' + orgs.length + ' orgs)' });
@@ -300,6 +345,7 @@ public sealed class ClaudeWebClient : IDisposable
                         Chats = root.TryGetProperty("chats", out var chats) && chats.ValueKind == JsonValueKind.Array
                             ? ParseChats(chats, chatCutoff ?? DefaultCutoff())
                             : null,
+                        ChatsError = root.Str("chats_error"),
                     };
                 case "challenge":
                     _originReady = false;
@@ -424,6 +470,33 @@ public sealed class ClaudeWebClient : IDisposable
         foreach (var c in chats.EnumerateArray())
         {
             if (c.ValueKind != JsonValueKind.Object || c.Str("uuid") is not { Length: > 0 } uuid) continue;
+            if (c.Str("source_kind") == "project_thread")
+            {
+                var status = c.Str("thread_status")?.ToLowerInvariant().Replace("thread_status_", "");
+                if (c.Num("thread_status") is { } number)
+                    status = number switch { 1 => "resolved", 2 => "failed", 3 => "working", 4 => "needs_input", 5 => "archived", 6 => "idle", _ => null };
+                if (status == "archived") continue;
+                var activity = JsonUtil.Iso(c.Str("updated_at"));
+                var (taskState, taskText) = status switch
+                {
+                    "working" => (SessionState.Working, "작업 중"),
+                    "needs_input" => (SessionState.NeedsInput, "입력 대기"),
+                    "resolved" => (SessionState.Idle, "완료"),
+                    "failed" => (SessionState.Idle, "실패"),
+                    "idle" => (SessionState.Idle, "대기"),
+                    _ => (SessionState.Stale, "상태 확인 필요"),
+                };
+                if (taskState is not (SessionState.Working or SessionState.NeedsInput) &&
+                    (activity is not { } taskAt || taskAt < cutoff)) continue;
+                var projectName = c.Str("project");
+                var sessionId = c.Str("workspace_session_id");
+                list.Add(new SessionInfo($"chat:{uuid}", c.Str("name") is { Length: > 0 } projectTitle ? projectTitle : "프로젝트 작업",
+                    string.IsNullOrEmpty(projectName) ? "프로젝트 작업" : $"{projectName} · 프로젝트 작업",
+                    taskState, taskText, activity, false,
+                    OpenUri: sessionId is { Length: > 0 } ? $"claude://claude.ai/cowork/{Uri.EscapeDataString(sessionId)}" : null,
+                    AltId: sessionId));
+                continue;
+            }
 
             var live = c.Str("live_status");
             bool needs = IsSet(c, "needs_input");

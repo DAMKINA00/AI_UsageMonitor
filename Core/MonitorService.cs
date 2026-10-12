@@ -54,6 +54,7 @@ public sealed class MonitorService : IDisposable
         ClaudeWebLast = null;
         ClaudeChats = [];
         ClaudeChatsAt = null;
+        ClaudeChatsError = null;
     }
 
     public ClaudeLocalState? ClaudeLocal { get; private set; }
@@ -70,6 +71,7 @@ public sealed class MonitorService : IDisposable
     public List<SessionInfo> ClaudeChats { get; private set; } = [];
     /// <summary>ClaudeChats 를 마지막으로 읽은 시각. 오래되면 진행 중 표시를 믿지 않는다.</summary>
     public DateTimeOffset? ClaudeChatsAt { get; private set; }
+    public string? ClaudeChatsError { get; private set; }
 
     public bool ClaudeWebBusy { get; private set; }
     public bool CodexRemoteBusy { get; private set; }
@@ -120,8 +122,11 @@ public sealed class MonitorService : IDisposable
         {
             ClaudeChats = chats;
             ClaudeChatsAt = result.At;
+            ClaudeChatsError = null;
             _nextClaudeChats = DateTime.UtcNow.AddSeconds(Math.Max(15, _settings.ClaudeChatPollSeconds));
         }
+        else
+            ClaudeChatsError = result.ChatsError ?? result.Error ?? "작업 목록을 읽지 못했습니다.";
     }
 
     public async Task RefreshClaudeChatsAsync()
@@ -222,10 +227,7 @@ public sealed class MonitorService : IDisposable
         _claudeGeneration++;
         _settings.ClaudeWebEnabled = false;
         _settings.Save();
-        ClaudeWebGood = null;
-        ClaudeWebLast = null;
-        ClaudeChats = [];
-        ClaudeChatsAt = null;
+        ClearClaudeState();
         ClaudeWeb.KeepAlive = false;
         try { await ClaudeWeb.LogoutAsync(); } catch (Exception ex) { Log.Write($"logout failed: {ex.Message}"); }
         Changed?.Invoke();

@@ -11,7 +11,7 @@
 | | Claude | Codex |
 |---|---|---|
 | 앱 실행 여부 | `claude.exe` 프로세스 | Store판 `ChatGPT.exe`(OpenAI.Codex) / 직접 설치판 `Codex.exe` |
-| 세션·스레드 상태 | `~/.claude/sessions/<pid>.json` (작업 중 / 승인 대기 / 대기) + claude.ai 앱 대화 목록 (작업 중 / 입력 대기 / 완료) | `~/.codex/sessions/**/rollout-*.jsonl` 의 `task_started`/`task_complete` |
+| 세션·스레드 상태 | `~/.claude/sessions/<pid>.json` + claude.ai 앱 대화·프로젝트 스레드 (작업 중 / 입력·승인 대기 / 완료) | `~/.codex/sessions/**/rollout-*.jsonl` 의 `task_started`/`task_complete` |
 | 사용률 | Claude 데스크톱의 기존 로그인으로 사용량 화면과 같은 데이터 자동 조회 | `codex app-server` 의 `account/rateLimits/read` (+ 로그의 `rate_limits`) |
 | 기타 | 플랜(Max 5x/20x) | 플랜(Pro 5x/20x), 크레딧 잔액, 무료 리셋권 |
 | 세션 클릭 | Claude 앱에서 그 세션·대화 열기 (`claude://`) | Codex 앱에서 그 스레드 열기 (`codex://threads/…`, Store판으로 연결) |
@@ -26,14 +26,15 @@
 ## Claude 앱 대화 표시
 
 Claude 카드의 세션 목록에는 이 PC의 Claude Code 세션과 함께 **Claude 앱(claude.ai)에서 진행 중이거나 최근 12시간 안에 활동한 대화**가
-"앱 대화"로 표시됩니다. 앱에서 보내는 대화는 대부분 Anthropic 클라우드에서 실행되어 이 PC에 프로세스나 세션 파일이 없기 때문에,
+"앱 대화" 또는 "프로젝트 작업"으로 표시됩니다. 앱에서 보내는 대화는 대부분 Anthropic 클라우드에서 실행되어 이 PC에 프로세스나 세션 파일이 없기 때문에,
 Claude 데스크톱의 기존 로그인으로 사이드바와 같은 대화 목록을 읽어 상태를 판단합니다. 모니터에서 다시 로그인할 필요가 없습니다.
 
-- 읽는 값은 대화 제목, 프로젝트 이름, 마지막 활동 시각, 진행 상태(`live_status`, `needs_input`)뿐이고 대화 내용은 읽지 않습니다.
+- 일반 대화 목록과 참여 중인 프로젝트의 스레드 목록을 함께 조회합니다. 제목, 프로젝트 이름, 활동 시각, 진행 상태, 열기용 ID만 표시 데이터로 넘깁니다. 서버 응답에 포함된 본문은 표시하거나 저장하지 않습니다.
+- 프로젝트 스레드는 `thread_status`의 `working` / `needs_input` / `resolved` / `failed` / `idle`을 각각 작업 중 / 입력 대기 / 완료 / 실패 / 대기로 표시합니다. 보관된 프로젝트·스레드는 제외합니다.
 - 진행 중(답변 생성·작업 중)이면 "작업 중", 입력이나 승인을 기다리면 "입력 대기"/"승인 대기", 끝났으면 "완료"입니다.
-- 대화 목록을 10분 넘게 못 읽으면 진행 중 표시를 "갱신 안 됨"으로 바꿉니다.
+- 조회 실패 시 안내를 표시하고 이전 목록의 진행 중 표시를 "갱신 안 됨"으로 바꿉니다. 마지막 성공 조회가 10분을 넘어도 동일하게 처리합니다.
 - 같은 세션이 로컬 세션 파일에도 있으면 로컬 쪽만 보여 줍니다.
-- 대화를 누르면 Claude 앱에서 그 대화(`claude://claude.ai/chat/…`)를 엽니다.
+- 대화를 누르면 Claude 앱에서 그 대화(`claude://claude.ai/chat/…`) 또는 프로젝트 작업 세션(`claude://claude.ai/cowork/…`)을 엽니다.
 - 30초 간격으로 확인하는 동안에는 WebView2를 닫지 않고 유지합니다(Claude 앱을 끄면 다시 조회 뒤 닫음).
 - 설정 파일(`settings.json`)의 `ClaudeChatPollSeconds`(기본 30), `ClaudeChatActiveHours`(기본 12)로 조절할 수 있습니다.
 - claude.ai 공개 API가 아니라 웹 화면이 쓰는 내부 데이터라서, claude.ai가 바뀌면 동작하지 않을 수 있습니다.
@@ -103,9 +104,11 @@ dotnet publish -c Release -r win-x64 --self-contained false -p:PublishSingleFile
 
 ```bash
 dotnet run --project tests/AIUsageMonitor.Regression/AIUsageMonitor.Regression.csproj -c Release
+node --test tests/claude-project-queries.test.cjs
 ```
 
 실제 계정이나 서버에 접속하지 않고 합성 데이터로 한도 병합, 조회 실패 안내, 초기화 실패 후 재시도,
 데스크톱 인증 데이터의 암호화·도메인 검증, 계정 전환 시 이전 데이터 제거, CLI 계정과 사용량 분리,
-세션 클릭 대상 갱신, 로그 증분 읽기와 오래된 스레드 제외, claude.ai 앱 대화 상태 판단과 로컬 세션과의 중복 제거를 검사합니다. 임시 로그는 별도 폴더에 만들며
+세션 클릭 대상 갱신, 로그 증분 읽기와 오래된 스레드 제외, claude.ai 앱 대화·프로젝트 상태와 캐릭터 전환, 로컬 세션과의 중복 제거를 검사합니다.
+Node.js 검사는 모의 응답으로 프로젝트·스레드 페이지 처리, 본문 제외, 조회 오류를 검증합니다. 임시 로그는 별도 폴더에 만들며
 사용자의 세션 파일과 로그인 프로필은 변경하지 않습니다.

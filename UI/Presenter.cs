@@ -202,7 +202,7 @@ public static class Presenter
     {
         var local = m.ClaudeLocal?.Sessions ?? [];
         var known = m.ClaudeLocal?.KnownIds ?? [];
-        bool stale = m.ClaudeChatsAt is not { } at || DateTimeOffset.Now - at > ChatStaleAfter;
+        bool stale = m.ClaudeChatsError != null || m.ClaudeChatsAt is not { } at || DateTimeOffset.Now - at > ChatStaleAfter;
 
         var chats = m.ClaudeChats
             .Where(c => !known.Contains(c.Id.StartsWith("chat:", StringComparison.Ordinal) ? c.Id[5..] : c.Id) &&
@@ -264,6 +264,8 @@ public static class Presenter
         {
             notice = $"사용량 조회 실패: {last.Error}";
         }
+        if (m.ClaudeChatsError is { } chatsError)
+            notice ??= $"작업 상태 갱신 실패: {chatsError}";
         if (usage == null && empty == null)
             empty = m.ClaudeWebBusy ? "사용량을 불러오는 중…" : "사용량 데이터 없음";
 
@@ -433,7 +435,8 @@ public static class Presenter
             WorkingCount = working,
             NeedsInputCount = needs,
             FreshNeedsInputCount = ordered.Count(x => x.State == SessionState.NeedsInput &&
-                (x.LastActivity is not { } la || now - la < TimeSpan.FromMinutes(30))),
+                (x.Id.StartsWith("chat:", StringComparison.Ordinal) ||
+                 x.LastActivity is not { } la || now - la < TimeSpan.FromMinutes(30))),
             AppRunning = appRunning,
             LimitReached = usage?.Warning?.Contains("도달") == true,
             LastActivity = ordered.Count > 0 ? ordered.Max(x => x.LastActivity) : null,
