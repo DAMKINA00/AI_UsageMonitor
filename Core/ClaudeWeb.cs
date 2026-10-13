@@ -38,9 +38,14 @@ public sealed class ClaudeWebClient : IDisposable
     bool _originReady;
     Task? _init;
     readonly bool _desktopSession;
+    readonly string _webViewData;
     string? _desktopIdentity;
 
-    public ClaudeWebClient(bool desktopSession = false) => _desktopSession = desktopSession;
+    public ClaudeWebClient(bool desktopSession = false, string? profileDirectory = null)
+    {
+        _desktopSession = desktopSession;
+        _webViewData = profileDirectory ?? Paths.WebViewData;
+    }
     public event Action? AccountChanged;
 
     public event Action? LoginWindowClosed;
@@ -130,7 +135,7 @@ public sealed class ClaudeWebClient : IDisposable
               const u = await get('/api/organizations/' + org.uuid + '/usage');
               if (u.status === 200 && u.json && typeof u.json === 'object') {
                 let chats = null, chats_error = null;
-                try {
+                if (__INCLUDE_CHATS__) try {
                   const c = await chatsOf(org.uuid); chats = c.chats;
                   if (!chats) chats_error = '대화 목록 조회 실패 (HTTP ' + c.status + ')';
                 } catch (e) { chats_error = String(e); }
@@ -222,7 +227,7 @@ public sealed class ClaudeWebClient : IDisposable
     async Task InitAsync()
     {
         if (_host == null) CreateHost();
-        var env = await CoreWebView2Environment.CreateAsync(null, Paths.WebViewData);
+        var env = await CoreWebView2Environment.CreateAsync(null, _webViewData);
         CoreWebView2Controller controller;
         if (_desktopSession)
         {
@@ -277,20 +282,46 @@ public sealed class ClaudeWebClient : IDisposable
     static bool IsSignedInPage(string url) =>
         Uri.TryCreate(url, UriKind.Absolute, out var u) && u.Host == "claude.ai" &&
         (u.AbsolutePath.StartsWith("/new") || u.AbsolutePath.StartsWith("/chat") ||
-         u.AbsolutePath.StartsWith("/recents") || u.AbsolutePath.StartsWith("/project"));
+         u.AbsolutePath.StartsWith("/recents") || u.AbsolutePath.StartsWith("/project") ||
+         u.AbsolutePath.StartsWith("/cowork"));
+
+    public async Task LoginAsync(CancellationToken ct)
+    {
+        await _gate.WaitAsync(ct);
+        var closed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        void OnClosed() => closed.TrySetResult();
+        LoginWindowClosed += OnClosed;
+        try
+        {
+            await OpenLoginAsync();
+            await closed.Task.WaitAsync(ct);
+        }
+        finally
+        {
+            LoginWindowClosed -= OnClosed;
+            if (LoginWindowOpen) HideLogin();
+            _gate.Release();
+            ReleaseSoon();
+        }
+    }
+
+    async Task OpenLoginAsync()
+    {
+        await EnsureInitAsync();
+        _originReady = false;
+        LoginWindowOpen = true;
+        _host!.Show();
+        _host.Activate();
+        _controller!.IsVisible = true;
+        UpdateBounds();
+        _controller.CoreWebView2.Navigate(Origin + "/login");
+    }
 
     public async void ShowLogin()
     {
         try
         {
-            await EnsureInitAsync();
-            _originReady = false;
-            LoginWindowOpen = true;
-            _host!.Show();
-            _host.Activate();
-            _controller!.IsVisible = true;
-            UpdateBounds();
-            _controller.CoreWebView2.Navigate(Origin + "/login");
+            await OpenLoginAsync();
         }
         catch (Exception ex)
         {
@@ -319,12 +350,12 @@ public sealed class ClaudeWebClient : IDisposable
     }
 
     /// <summary>사용량과 앱 대화 목록을 함께 읽는다. chatCutoff 이전에 끝난 대화는 뺀다.</summary>
-    public async Task<ClaudeWebResult> FetchAsync(DateTimeOffset? chatCutoff = null)
+    public async Task<ClaudeWebResult> FetchAsync(DateTimeOffset? chatCutoff = null, bool includeChats = true)
     {
         await _gate.WaitAsync();
         try
         {
-            var r = await RunAsync(FetchScript);
+            var r = await RunAsync(FetchScript, includeChats);
             if (r.Error is { } error) return error;
             var root = r.Root;
             switch (root.Str("state"))
@@ -407,7 +438,7 @@ public sealed class ClaudeWebClient : IDisposable
     sealed record ScriptRun(JsonElement Root, ClaudeWebResult? Error);
 
     /// <summary>claude.ai 페이지를 준비하고 스크립트를 실행한다. 결과 JSON은 호출자가 쓰는 동안 살아 있어야 해서 Clone 한다.</summary>
-    async Task<ScriptRun> RunAsync(string script)
+    async Task<ScriptRun> RunAsync(string script, bool includeChats = true)
     {
         if (_desktopSession)
         {
@@ -450,7 +481,8 @@ public sealed class ClaudeWebClient : IDisposable
             _originReady = true;
         }
 
-        var raw = await EvaluateAsync(script.Replace("__DESKTOP__", _desktopSession ? "true" : "false"), TimeSpan.FromSeconds(40));
+        var raw = await EvaluateAsync(script.Replace("__DESKTOP__", _desktopSession ? "true" : "false")
+            .Replace("__INCLUDE_CHATS__", includeChats ? "true" : "false"), TimeSpan.FromSeconds(40));
         if (raw == null) return new ScriptRun(default, new ClaudeWebResult { State = ClaudeWebState.Error, Error = "응답 없음" });
         using var doc = JsonDocument.Parse(raw);
         return new ScriptRun(doc.RootElement.Clone(), null);

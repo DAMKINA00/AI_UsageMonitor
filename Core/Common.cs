@@ -78,6 +78,7 @@ public sealed class AppSettings
     public bool TrayHintShown { get; set; }
     public bool ShowCharacters { get; set; } = true;
     public Dictionary<string, int> AlertState { get; set; } = new();
+    public List<SecondaryAccountSettings> SecondaryAccounts { get; set; } = [];
 
     static readonly JsonSerializerOptions Json = new() { WriteIndented = true };
 

@@ -8,6 +8,7 @@ namespace AIUsageMonitor.Core;
 public sealed class CodexRemoteResult
 {
     public bool Ok { get; init; }
+    public bool LoginRequired { get; init; }
     public string? Error { get; init; }
     public string? Email { get; init; }
     public UsageSnapshot? Usage { get; init; }
@@ -62,88 +63,168 @@ public static class CodexAppServer
             .FirstOrDefault(p => Path.GetFileName(Path.GetDirectoryName(p) ?? "").Equals("resources", StringComparison.OrdinalIgnoreCase));
     }
 
-    public static async Task<CodexRemoteResult> QueryAsync(string? exeOverride, CancellationToken ct = default)
+    public static async Task<CodexRemoteResult> QueryAsync(string? exeOverride, CancellationToken ct = default, string? codexHome = null)
     {
-        var exe = FindExecutable(exeOverride);
-        if (exe == null) return new CodexRemoteResult { Error = "codex.exe를 찾지 못함" };
-
-        var psi = new ProcessStartInfo(exe, "app-server")
-        {
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            RedirectStandardInput = true,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            StandardOutputEncoding = Encoding.UTF8,
-            StandardErrorEncoding = Encoding.UTF8,
-            StandardInputEncoding = new UTF8Encoding(false),
-        };
-
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
         timeout.CancelAfter(TimeSpan.FromSeconds(30));
-        Process? p = null;
         try
         {
-            p = Process.Start(psi) ?? throw new InvalidOperationException("프로세스 시작 실패");
-            _ = p.StandardError.ReadToEndAsync(timeout.Token);
-
-            async Task Send(object msg)
-            {
-                await p.StandardInput.WriteLineAsync(JsonSerializer.Serialize(msg));
-                await p.StandardInput.FlushAsync();
-            }
-
-            var responses = new Dictionary<int, JsonElement>();
-
-            async Task WaitFor(params int[] ids)
-            {
-                while (!ids.All(responses.ContainsKey))
-                {
-                    var line = await p.StandardOutput.ReadLineAsync(timeout.Token)
-                               ?? throw new IOException("codex app-server가 응답 없이 종료됨");
-                    if (line.Length == 0 || line[0] != '{') continue;
-                    using var doc = JsonDocument.Parse(line);
-                    if (doc.RootElement.TryGetProperty("id", out var idEl) && idEl.ValueKind == JsonValueKind.Number)
-                        responses[idEl.GetInt32()] = doc.RootElement.Clone();
-                }
-            }
-
-            await Send(new { method = "initialize", id = 0, @params = new { clientInfo = new { name = "ai_usage_monitor", title = "AI Usage Monitor", version = "1.0.0" } } });
-            await WaitFor(0);
-            await Send(new { method = "initialized" });
-            await Send(new { method = "account/read", id = 1, @params = new { } });
-            await Send(new { method = "account/rateLimits/read", id = 2 });
-            await WaitFor(1, 2);
-
-            if (responses[2].Obj("error") is { } err)
-                return new CodexRemoteResult { Error = err.Str("message") ?? "rate limit 조회 실패" };
-
-            var account = responses[1].Obj("result")?.Obj("account");
-            var result = responses[2].Obj("result");
+            using var connection = new Connection(exeOverride, codexHome);
+            await connection.InitializeAsync(timeout.Token);
+            var account = (await connection.RequestAsync("account/read", new { }, timeout.Token)).Obj("account");
+            if (account == null)
+                return new CodexRemoteResult { LoginRequired = true, Error = "브라우저 로그인이 필요합니다." };
+            var result = await connection.RequestAsync("account/rateLimits/read", new { }, timeout.Token);
             return new CodexRemoteResult
             {
-                Ok = result != null,
+                Ok = true,
                 Email = account?.Str("email"),
-                Usage = result is { } r ? ParseRateLimits(r, account?.Str("planType")) : null,
-                Error = result == null ? "rate limit 응답 없음" : null,
+                Usage = ParseRateLimits(result, account?.Str("planType")),
             };
         }
         catch (OperationCanceledException)
         {
-            return new CodexRemoteResult { Error = "codex app-server 응답 시간 초과" };
+            return new CodexRemoteResult { Error = ct.IsCancellationRequested ? "조회 취소됨" : "codex app-server 응답 시간 초과" };
         }
         catch (Exception ex)
         {
-            Log.Write($"codex app-server failed: {ex.Message}");
             return new CodexRemoteResult { Error = ex.Message };
+        }
+    }
+
+    public static async Task LoginAsync(string? exeOverride, string codexHome, Action<string> openBrowser, CancellationToken ct)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(codexHome);
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeout.CancelAfter(TimeSpan.FromMinutes(10));
+        using var connection = new Connection(exeOverride, codexHome);
+        string? loginId = null;
+        bool loggedIn = false;
+        try
+        {
+            await connection.InitializeAsync(timeout.Token);
+            var result = await connection.RequestAsync("account/login/start", new { type = "chatgpt" }, timeout.Token);
+            loginId = result.Str("loginId") ?? throw new IOException("로그인 ID가 없습니다.");
+            var url = result.Str("authUrl");
+            if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) || uri.Scheme != "https" ||
+                uri.Host is not ("auth.openai.com" or "auth0.openai.com" or "chatgpt.com" or "auth.chatgpt.com"))
+                throw new IOException("로그인 주소를 확인할 수 없습니다.");
+            openBrowser(uri.AbsoluteUri);
+            while (true)
+            {
+                var completed = await connection.WaitForLoginAsync(timeout.Token);
+                if (completed.Str("loginId") != loginId) continue;
+                if (completed.Bool("success") != true) throw new IOException("로그인이 완료되지 않았습니다. 다시 시도해 주세요.");
+                loggedIn = true;
+                return;
+            }
         }
         finally
         {
-            if (p != null)
+            if (loginId != null && !loggedIn)
             {
-                try { if (!p.HasExited) p.Kill(entireProcessTree: true); } catch { }
-                p.Dispose();
+                using var cancel = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+                try { await connection.RequestAsync("account/login/cancel", new { loginId }, cancel.Token); } catch { }
             }
+        }
+    }
+
+    public static async Task LogoutAsync(string? exeOverride, string codexHome)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(codexHome);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        using var connection = new Connection(exeOverride, codexHome);
+        await connection.InitializeAsync(timeout.Token);
+        await connection.RequestAsync("account/logout", new { }, timeout.Token);
+    }
+
+    internal static ProcessStartInfo StartInfo(string exe, string? codexHome)
+    {
+        var psi = new ProcessStartInfo(exe)
+        {
+            UseShellExecute = false, CreateNoWindow = true,
+            RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true,
+            StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8,
+            StandardInputEncoding = new UTF8Encoding(false),
+        };
+        psi.ArgumentList.Add("app-server");
+        if (codexHome != null)
+        {
+            psi.WorkingDirectory = codexHome;
+            psi.Environment["CODEX_HOME"] = codexHome;
+            foreach (var key in new[] { "OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_ACCESS_TOKEN", "OPENAI_BASE_URL" })
+                psi.Environment.Remove(key);
+            psi.ArgumentList.Add("-c");
+            psi.ArgumentList.Add("cli_auth_credentials_store=\"file\"");
+        }
+        return psi;
+    }
+
+    sealed class Connection : IDisposable
+    {
+        readonly Process _process;
+        readonly Queue<JsonElement> _logins = new();
+        int _id;
+
+        public Connection(string? exeOverride, string? codexHome)
+        {
+            var exe = FindExecutable(exeOverride) ?? throw new IOException("codex.exe를 찾지 못함");
+            _process = Process.Start(StartInfo(exe, codexHome)) ?? throw new IOException("프로세스 시작 실패");
+            // stderr may contain authentication diagnostics; drain it without persisting it.
+            _process.ErrorDataReceived += (_, _) => { };
+            _process.BeginErrorReadLine();
+        }
+
+        public async Task InitializeAsync(CancellationToken ct)
+        {
+            await RequestAsync("initialize", new { clientInfo = new { name = "ai_usage_monitor", title = "AI Usage Monitor", version = "1.0.0" } }, ct);
+            await SendAsync(new { method = "initialized" }, ct);
+        }
+
+        async Task SendAsync(object message, CancellationToken ct)
+        {
+            await _process.StandardInput.WriteLineAsync(JsonSerializer.Serialize(message).AsMemory(), ct);
+            await _process.StandardInput.FlushAsync(ct);
+        }
+
+        public async Task<JsonElement> RequestAsync(string method, object parameters, CancellationToken ct)
+        {
+            int id = ++_id;
+            await SendAsync(new { method, id, @params = parameters }, ct);
+            while (true)
+            {
+                var message = await ReadAsync(ct);
+                if (message.Num("id") != id) continue;
+                if (message.Obj("error") is { } error)
+                    throw new IOException(error.Str("message") ?? "Codex 요청 실패");
+                return message.Obj("result") ?? throw new IOException("Codex 응답 형식 오류");
+            }
+        }
+
+        async Task<JsonElement> ReadAsync(CancellationToken ct)
+        {
+            while (true)
+            {
+                var line = await _process.StandardOutput.ReadLineAsync(ct) ?? throw new IOException("codex app-server가 응답 없이 종료됨");
+                if (line.Length == 0 || line[0] != '{') continue;
+                using var doc = JsonDocument.Parse(line);
+                var message = doc.RootElement.Clone();
+                if (message.Str("method") == "account/login/completed" && message.Obj("params") is { } login)
+                    _logins.Enqueue(login);
+                return message;
+            }
+        }
+
+        public async Task<JsonElement> WaitForLoginAsync(CancellationToken ct)
+        {
+            while (_logins.Count == 0) await ReadAsync(ct);
+            return _logins.Dequeue();
+        }
+
+        public void Dispose()
+        {
+            try { if (!_process.HasExited) { _process.Kill(entireProcessTree: true); _process.WaitForExit(3000); } } catch { }
+            _process.Dispose();
         }
     }
 

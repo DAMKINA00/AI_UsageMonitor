@@ -80,3 +80,22 @@ test('repeating pagination cursor is rejected', async () => {
   await assert.rejects(query(f.fetch), /끝까지 읽지 못했습니다/);
   assert.equal(f.calls.filter(x => x.startsWith(channels)).length, 2);
 });
+
+test('secondary Claude accounts request usage without conversations or projects', async () => {
+  const body = source.match(/const string FetchScript = [^\r\n]+"""\r?\n([\s\S]*?)\r?\n\s*""";/)[1];
+  const script = ('return (async () => {\n' + prelude + '\n' + body)
+    .replaceAll('__DESKTOP__', 'false').replaceAll('__INCLUDE_CHATS__', 'false');
+  const calls = [];
+  const fetch = async url => {
+    calls.push(url);
+    const json = url === '/api/organizations' ? [{ uuid: 'org', name: 'secondary@example.test', capabilities: ['claude_pro'] }]
+      : url === '/api/organizations/org/usage' ? { seven_day: { utilization: 25 } } : assert.fail('Unexpected request ' + url);
+    return { status: 200, text: async () => JSON.stringify(json) };
+  };
+  const result = JSON.parse(await new AsyncFunction('fetch', 'document', script)(fetch, { cookie: '' }));
+  assert.equal(result.state, 'ok');
+  assert.equal(result.usage.seven_day.utilization, 25);
+  assert.equal(result.chats, null);
+  assert.equal(result.chats_error, null);
+  assert.equal(calls.length, 2);
+});

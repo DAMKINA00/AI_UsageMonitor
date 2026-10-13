@@ -13,8 +13,9 @@ internal static partial class Program
     static int s_failures;
 
     [STAThread]
-    static int Main()
+    static int Main(string[] args)
     {
+        if (args.Contains("app-server")) return FakeCodexServer();
         Run("Presenter Codex usage merge and failure notice", TestPresenterCodex);
         Run("Claude WebView initialization recovery", TestClaudeInitializationRecovery);
         Run("Codex local activity timestamps and incremental reads", TestCodexLocalReader);
@@ -22,6 +23,8 @@ internal static partial class Program
         Run("Claude app conversations from claude.ai", TestClaudeChats);
         Run("Claude Desktop authentication and usage isolation", TestClaudeDesktop);
         Run("Claude project thread status and mood transitions", TestClaudeProjectThreads);
+        Run("Isolated account state and display names", TestMultiAccounts);
+        Run("Codex browser login protocol and cancellation", () => TestCodexLoginProtocol().GetAwaiter().GetResult());
 
         Console.WriteLine($"Totals: {s_assertions} assertions, {s_failures} failures.");
         return s_failures == 0 ? 0 : 1;

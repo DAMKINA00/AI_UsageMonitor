@@ -146,6 +146,13 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
 public static class Fmt
 {
+    public static string? AccountId(string? name)
+    {
+        if (string.IsNullOrWhiteSpace(name)) return null;
+        int at = name.IndexOf('@');
+        return (at >= 0 ? name[..at] : name).Trim();
+    }
+
     static readonly string[] Days = ["일", "월", "화", "수", "목", "금", "토"];
 
     public static string Ago(DateTimeOffset? t)
@@ -408,7 +415,7 @@ public static class Presenter
             Plan = usage?.Plan,
             AppStatus = app,
             AppStatusBrush = appBrush,
-            Account = account,
+            Account = Fmt.AccountId(account),
             Usage = rows,
             UsageEmpty = rows.Count == 0 ? empty ?? "사용량 데이터 없음" : null,
             Extras = usage is { Extras.Count: > 0 } ? string.Join(" · ", usage.Extras) : null,

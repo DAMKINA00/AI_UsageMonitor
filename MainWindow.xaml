@@ -248,6 +248,8 @@
                 <TextBlock Text="AI 사용량 모니터" Foreground="{StaticResource Fg}" FontWeight="SemiBold" FontSize="13"
                            VerticalAlignment="Center" Margin="16,0,0,0"/>
                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,0,8,0">
+                    <Button Style="{StaticResource IconButton}" Content="계정" FontFamily="Segoe UI, Malgun Gothic" Width="42"
+                            ToolTip="계정 추가 및 사용량 보기" Click="Accounts_Click"/>
                     <Button x:Name="RefreshButton" Style="{StaticResource IconButton}" Content="&#xE72C;" ToolTip="지금 새로고침" Click="Refresh_Click"/>
                     <Button x:Name="PinButton" Style="{StaticResource IconButton}" Content="&#xE718;" ToolTip="항상 위에 표시" Click="Pin_Click"/>
                     <Button Style="{StaticResource IconButton}" Content="&#xE921;" ToolTip="트레이로 숨기기" Click="Hide_Click"/>

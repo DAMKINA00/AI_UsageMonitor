@@ -13,6 +13,7 @@ public partial class MainWindow : Window
     readonly AppSettings _settings;
 
     public event Action? RefreshRequested;
+    public event Action? AccountsRequested;
     public event Action<bool>? TopmostToggled;
 
     public bool AllowClose { get; set; }
@@ -124,6 +125,8 @@ public partial class MainWindow : Window
     }
 
     void Refresh_Click(object sender, RoutedEventArgs e) => RefreshRequested?.Invoke();
+
+    void Accounts_Click(object sender, RoutedEventArgs e) => AccountsRequested?.Invoke();
 
     void Pin_Click(object sender, RoutedEventArgs e) => TopmostToggled?.Invoke(!Topmost);
 

@@ -21,6 +21,9 @@ public partial class App : Application
     MainWindow _window = null!;
     Tray _tray = null!;
     Alerts _alerts = null!;
+    SecondaryAccountService _secondaryAccounts = null!;
+    AccountsWindow? _accountsWindow;
+    string _accountsSignature = "";
     readonly MoodTracker _claudeMood = new("claude");
     readonly MoodTracker _codexMood = new("codex");
     bool _firstUpdate = true;
@@ -51,6 +54,7 @@ public partial class App : Application
         _window = new MainWindow(_vm, _settings);
         _tray = new Tray(_settings);
         _alerts = new Alerts(_settings, _tray);
+        _secondaryAccounts = new SecondaryAccountService(_settings);
 
         WireUp();
         SyncStartupRegistration();
@@ -63,6 +67,7 @@ public partial class App : Application
         }) { IsBackground = true }.Start();
 
         _monitor.Start();
+        _secondaryAccounts.Start();
         if (!e.Args.Contains("--minimized")) _window.ShowAndActivate();
 
         // 진단용: 캐릭터 상태를 하나씩 띄워 PNG로 저장하고 종료
@@ -119,8 +124,10 @@ public partial class App : Application
     void WireUp()
     {
         _monitor.Changed += Render;
+        _secondaryAccounts.Changed += Render;
 
-        _window.RefreshRequested += () => _monitor.RefreshAll();
+        _window.RefreshRequested += RefreshAllAccounts;
+        _window.AccountsRequested += ShowAccounts;
         _window.TopmostToggled += SetTopmost;
         _window.IsVisibleChanged += (_, _) =>
         {
@@ -133,7 +140,8 @@ public partial class App : Application
         };
 
         _tray.OpenRequested += () => _window.ShowAndActivate();
-        _tray.RefreshRequested += () => _monitor.RefreshAll();
+        _tray.RefreshRequested += RefreshAllAccounts;
+        _tray.AccountsRequested += ShowAccounts;
         _tray.ExitRequested += ExitApp;
         _tray.TopmostChanged += SetTopmost;
         _tray.CharactersChanged += v =>
@@ -168,6 +176,28 @@ public partial class App : Application
         _tray.SetTopmost(on);
     }
 
+    void RefreshAllAccounts()
+    {
+        _monitor.RefreshAll();
+        _ = _secondaryAccounts.RefreshAsync(force: true);
+    }
+
+    void ShowAccounts()
+    {
+        if (_accountsWindow == null)
+        {
+            _accountsWindow = new AccountsWindow();
+            _accountsSignature = "";
+            _accountsWindow.AddClaudeRequested += async () => await _secondaryAccounts.AddAsync(AccountProvider.Claude);
+            _accountsWindow.AddCodexRequested += async () => await _secondaryAccounts.AddAsync(AccountProvider.Codex);
+            _accountsWindow.RefreshRequested += RefreshAllAccounts;
+            _accountsWindow.Closed += (_, _) => _accountsWindow = null;
+        }
+        Render();
+        _accountsWindow.Show();
+        _accountsWindow.Activate();
+    }
+
     void Render()
     {
         var claude = Presenter.Claude(_monitor, _settings, () =>
@@ -182,6 +212,16 @@ public partial class App : Application
         var codex = Presenter.Codex(_monitor);
         var footer = _monitor.LastLocalRefresh is { } t ? $"자동 갱신 중 · {t:HH:mm} 기준" : "불러오는 중…";
         _vm.Update(claude, codex, footer);
+        if (_accountsWindow != null)
+        {
+            var accounts = AccountUsageCard.Create(claude, codex, _secondaryAccounts);
+            var signature = string.Join('\n', accounts.Select(x => x.Signature));
+            if (_accountsSignature != signature)
+            {
+                _accountsSignature = signature;
+                _accountsWindow.Update(accounts, _secondaryAccounts.LoginBusy);
+            }
+        }
 
         if (!_demo)
         {
@@ -245,6 +285,9 @@ public partial class App : Application
     {
         _window.AllowClose = true;
         _settings.Save();
+        _secondaryAccounts.Changed -= Render;
+        _secondaryAccounts.Dispose();
+        _accountsWindow?.Close();
         _monitor.Dispose();
         _tray.Dispose();
         _window.Close();

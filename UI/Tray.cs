@@ -15,6 +15,7 @@ public sealed class Tray : IDisposable
     string _iconSig = "";
 
     public event Action? OpenRequested, RefreshRequested, ExitRequested, LoginRequested, LogoutRequested;
+    public event Action? AccountsRequested;
     public event Action<bool>? TopmostChanged, CharactersChanged, StartupChanged, UsageAlertsChanged, ActivityAlertsChanged;
     public event Action<bool>? ClaudeDesktopChanged;
 
@@ -23,6 +24,7 @@ public sealed class Tray : IDisposable
         var menu = new WinForms.ContextMenuStrip();
         menu.Items.Add("열기", null, (_, _) => OpenRequested?.Invoke());
         menu.Items.Add("지금 새로고침", null, (_, _) => RefreshRequested?.Invoke());
+        menu.Items.Add("계정 추가 및 사용량…", null, (_, _) => AccountsRequested?.Invoke());
         menu.Items.Add(new WinForms.ToolStripSeparator());
         _topmost = Check("항상 위에 표시", s.Topmost, v => TopmostChanged?.Invoke(v));
         _characters = Check("캐릭터 표시", s.ShowCharacters, v => CharactersChanged?.Invoke(v));
