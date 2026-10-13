@@ -22,7 +22,6 @@ public partial class App : Application
     Tray _tray = null!;
     Alerts _alerts = null!;
     SecondaryAccountService _secondaryAccounts = null!;
-    AccountsWindow? _accountsWindow;
     string _accountsSignature = "";
     readonly MoodTracker _claudeMood = new("claude");
     readonly MoodTracker _codexMood = new("codex");
@@ -129,6 +128,9 @@ public partial class App : Application
 
         _window.RefreshRequested += RefreshAllAccounts;
         _window.AccountsRequested += ShowAccounts;
+        _window.Accounts.AddClaudeRequested += async () => await _secondaryAccounts.AddAsync(AccountProvider.Claude);
+        _window.Accounts.AddCodexRequested += async () => await _secondaryAccounts.AddAsync(AccountProvider.Codex);
+        _window.Accounts.RefreshRequested += RefreshAllAccounts;
         _window.SecondaryAccountSwapRequested += (first, second) =>
         {
             if (_secondaryAccounts.SwapAccounts(first, second)) _settings.Save();
@@ -189,18 +191,9 @@ public partial class App : Application
 
     void ShowAccounts()
     {
-        if (_accountsWindow == null)
-        {
-            _accountsWindow = new AccountsWindow();
-            _accountsSignature = "";
-            _accountsWindow.AddClaudeRequested += async () => await _secondaryAccounts.AddAsync(AccountProvider.Claude);
-            _accountsWindow.AddCodexRequested += async () => await _secondaryAccounts.AddAsync(AccountProvider.Codex);
-            _accountsWindow.RefreshRequested += RefreshAllAccounts;
-            _accountsWindow.Closed += (_, _) => _accountsWindow = null;
-        }
+        _window.ShowAndActivate();
+        _window.SetAccountsOpen(true);
         Render();
-        _accountsWindow.Show();
-        _accountsWindow.Activate();
     }
 
     void Render()
@@ -218,14 +211,14 @@ public partial class App : Application
         claude.AccountSlots = AccountUsageSlot.Create(claude, _secondaryAccounts.Accounts);
         codex.AccountSlots = AccountUsageSlot.Create(codex, _secondaryAccounts.Accounts);
         _vm.Update(claude, codex, "");
-        if (_accountsWindow != null)
+        if (_window.IsAccountsOpen)
         {
             var accounts = AccountUsageCard.Create(claude, codex, _secondaryAccounts);
             var signature = string.Join('\n', accounts.Select(x => x.Signature));
             if (_accountsSignature != signature)
             {
                 _accountsSignature = signature;
-                _accountsWindow.Update(accounts, _secondaryAccounts.LoginBusy);
+                _window.Accounts.Update(accounts, _secondaryAccounts.LoginBusy);
             }
         }
 
@@ -293,7 +286,6 @@ public partial class App : Application
         _settings.Save();
         _secondaryAccounts.Changed -= Render;
         _secondaryAccounts.Dispose();
-        _accountsWindow?.Close();
         _monitor.Dispose();
         _tray.Dispose();
         _window.Close();

@@ -1,14 +1,16 @@
 using System.Windows;
+using System.Windows.Controls;
 
 namespace AIUsageMonitor.UI;
 
-public partial class AccountsWindow : Window
+public partial class AccountsPanel : UserControl
 {
     public event Action? AddClaudeRequested;
     public event Action? AddCodexRequested;
     public event Action? RefreshRequested;
+    public event Action? CloseRequested;
 
-    public AccountsWindow()
+    public AccountsPanel()
     {
         InitializeComponent();
     }
@@ -27,4 +29,5 @@ public partial class AccountsWindow : Window
     void AddCodex_Click(object sender, RoutedEventArgs e) => AddCodexRequested?.Invoke();
 
     void Refresh_Click(object sender, RoutedEventArgs e) => RefreshRequested?.Invoke();
+    void Close_Click(object sender, RoutedEventArgs e) => CloseRequested?.Invoke();
 }

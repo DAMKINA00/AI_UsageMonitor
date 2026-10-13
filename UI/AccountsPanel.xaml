@@ -1,17 +1,13 @@
-<Window x:Class="AIUsageMonitor.UI.AccountsWindow"
+<UserControl x:Class="AIUsageMonitor.UI.AccountsPanel"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:ui="clr-namespace:AIUsageMonitor.UI"
-        Title="계정 사용량"
-        Width="570" Height="700"
-        MinWidth="460" MinHeight="400"
-        ResizeMode="CanResize"
         Background="#1B1C21"
         FontFamily="Segoe UI Variable Text, Segoe UI, Malgun Gothic"
         FontSize="12.5"
         UseLayoutRounding="True"
         TextOptions.TextFormattingMode="Display">
-    <Window.Resources>
+    <UserControl.Resources>
         <SolidColorBrush x:Key="WinBg" Color="#1B1C21"/>
         <SolidColorBrush x:Key="CardBg" Color="#24262C"/>
         <SolidColorBrush x:Key="Line" Color="#33363E"/>
@@ -168,7 +164,7 @@
                 </StackPanel>
             </Border>
         </DataTemplate>
-    </Window.Resources>
+    </UserControl.Resources>
 
     <Border Background="{StaticResource WinBg}" Padding="16,14">
         <Grid>
@@ -182,12 +178,16 @@
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
                 <TextBlock Text="계정 사용량" Foreground="{StaticResource Fg}" FontSize="18" FontWeight="SemiBold"
                            VerticalAlignment="Center"/>
                 <Button x:Name="RefreshButton" Grid.Column="1" Content="새로고침" Style="{StaticResource ActionButton}"
                         HorizontalAlignment="Right" Margin="0" Click="Refresh_Click"
                         AutomationProperties.Name="계정 사용량 새로고침"/>
+                <Button x:Name="CloseButton" Grid.Column="2" Content="×" Style="{StaticResource ActionButton}" Margin="7,0,0,0"
+                        Padding="8,3" FontSize="18" Click="Close_Click" ToolTip="계정 패널 닫기 (Esc)"
+                        AutomationProperties.Name="계정 패널 닫기"/>
             </Grid>
 
             <StackPanel Grid.Row="1" Margin="0,12,0,14">
@@ -209,4 +209,4 @@
             </ScrollViewer>
         </Grid>
     </Border>
-</Window>
+</UserControl>

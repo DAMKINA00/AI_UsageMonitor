@@ -26,7 +26,8 @@ internal static partial class Program
         Run("Isolated account state and display names", TestMultiAccounts);
         Run("Compact usage and account slots", TestCompactUsage);
         Run("Usage failure, reset confirmation and hidden limits", TestUsageReliability);
-        Run("Display change fitting and restore", TestWindowDisplay);
+        Run("Stable size across monitor changes", TestWindowDisplay);
+        Run("Embedded account drawer and controls", TestAccountsPanel);
         Run("Character overlay activity and speech anchor", TestCharacterOverlay);
         Run("Account swap and Codex subagent filtering", TestAccountSwapAndCodexSubagents);
         Run("Codex stale file timestamps", TestCodexStaleFileTimes);

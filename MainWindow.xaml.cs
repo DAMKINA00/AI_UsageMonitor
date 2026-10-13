@@ -5,7 +5,7 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
-using System.Windows.Threading;
+using System.Windows.Media.Animation;
 using AIUsageMonitor.Core;
 using AIUsageMonitor.UI;
 
@@ -14,9 +14,6 @@ namespace AIUsageMonitor;
 public partial class MainWindow : Window
 {
     readonly AppSettings _settings;
-    HwndSource? _windowSource;
-    Rect _lastWorkArea;
-    bool _displayFitQueued, _fittingDisplay, _closed;
 
     public event Action? RefreshRequested;
     public event Action? AccountsRequested;
@@ -34,42 +31,112 @@ public partial class MainWindow : Window
         ApplyCharacters(settings.ShowCharacters);
         SourceInitialized += (_, _) =>
         {
-            _windowSource = HwndSource.FromHwnd(new WindowInteropHelper(this).Handle);
-            _windowSource?.AddHook(WindowMessage);
             RoundCorners();
             FitToContent();
         };
         ContentRendered += (_, _) => RestorePosition();
-        IsVisibleChanged += (_, _) =>
-        {
-            UpdateStages();
-            if (IsVisible) QueueDisplayFit();
-        };
-        LocationChanged += (_, _) =>
-        {
-            if (_positioned && !_fittingDisplay && CurrentWorkArea() != _lastWorkArea) QueueDisplayFit();
-        };
-        StateChanged += (_, _) =>
-        {
-            UpdateStages();
-            if (WindowState != WindowState.Minimized) QueueDisplayFit();
-        };
-        Closed += (_, _) =>
-        {
-            _closed = true;
-            _windowSource?.RemoveHook(WindowMessage);
-        };
+        IsVisibleChanged += (_, _) => UpdateStages();
+        StateChanged += (_, _) => UpdateStages();
+        AccountPanel.CloseRequested += () => SetAccountsOpen(false);
     }
 
     public CharacterStage Claude => ClaudeStage;
     public CharacterStage Codex => CodexStage;
+    public AccountsPanel Accounts => AccountPanel;
+    public bool IsAccountsOpen { get; private set; }
+
+    static readonly DependencyProperty DrawerWidthProperty = DependencyProperty.Register(
+        nameof(DrawerWidth), typeof(double), typeof(MainWindow), new PropertyMetadata(0d,
+            (owner, _) => ((MainWindow)owner).UpdateDrawerBounds()));
+    double DrawerWidth { get => (double)GetValue(DrawerWidthProperty); set => SetValue(DrawerWidthProperty, value); }
+    double _drawerAnchorLeft, _drawerTarget, _dashboardWindowWidth;
+    bool _drawerOnLeft, _drawerOverlay, _drawerAnimating;
+    double UiScale => ((ScaleTransform)((FrameworkElement)Content).LayoutTransform).ScaleX;
+    double DashboardLeft => Left + (_drawerOnLeft && !_drawerOverlay ? DrawerWidth * UiScale : 0);
+
+    public void SetAccountsOpen(bool open)
+    {
+        if (IsAccountsOpen == open) return;
+        if (!_positioned) RestorePosition();
+        FinishDrawerAnimation();
+        _drawerAnchorLeft = DashboardLeft;
+        IsAccountsOpen = open;
+        if (open)
+        {
+            var area = CurrentWorkArea();
+            const double panelWidth = 360;
+            double expandedWidth = _dashboardWindowWidth + panelWidth * UiScale;
+            _drawerOverlay = expandedWidth > area.Width - 24;
+            double leftSpace = _drawerAnchorLeft - area.Left - 12;
+            double rightSpace = area.Right - (_drawerAnchorLeft + _dashboardWindowWidth) - 12;
+            _drawerOnLeft = !_drawerOverlay && (leftSpace >= panelWidth * UiScale || leftSpace >= rightSpace);
+            AccountPanel.Width = Math.Min(panelWidth, Dashboard.Width);
+            _drawerTarget = AccountPanel.Width;
+            Grid.SetColumn(AccountDrawerHost, _drawerOverlay ? 1 : _drawerOnLeft ? 0 : 2);
+            AccountDrawerHost.HorizontalAlignment = _drawerOnLeft ? HorizontalAlignment.Left : HorizontalAlignment.Right;
+            AccountPanel.HorizontalAlignment = _drawerOnLeft ? HorizontalAlignment.Right : HorizontalAlignment.Left;
+            AccountDrawerHost.BorderThickness = _drawerOnLeft ? new Thickness(0, 0, 1, 0) : new Thickness(1, 0, 0, 0);
+            if (!_drawerOverlay)
+            {
+                double fullLeft = _drawerAnchorLeft - (_drawerOnLeft ? _drawerTarget * UiScale : 0);
+                fullLeft = Math.Clamp(fullLeft, area.Left + 12, area.Right - expandedWidth - 12);
+                _drawerAnchorLeft = fullLeft + (_drawerOnLeft ? _drawerTarget * UiScale : 0);
+            }
+            AccountDrawerHost.Visibility = Visibility.Visible;
+        }
+        else _drawerTarget = 0;
+        AccountsButton.Foreground = open ? Palette.Text : Palette.Muted;
+        if (SystemParameters.ClientAreaAnimation)
+        {
+            _drawerAnimating = true;
+            var animation = new DoubleAnimation(_drawerTarget, TimeSpan.FromMilliseconds(220))
+            {
+                EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut },
+            };
+            animation.Completed += (_, _) => FinishDrawerAnimation();
+            BeginAnimation(DrawerWidthProperty, animation);
+        }
+        else
+        {
+            DrawerWidth = _drawerTarget;
+            if (!open) AccountDrawerHost.Visibility = Visibility.Collapsed;
+        }
+        if (!open) AccountsButton.Focus();
+    }
+
+    void UpdateDrawerBounds()
+    {
+        AccountDrawerHost.Width = DrawerWidth;
+        double extension = _drawerOverlay ? 0 : DrawerWidth;
+        ((FrameworkElement)Content).Width = Dashboard.Width + extension;
+        Width = _dashboardWindowWidth + Math.Ceiling(extension * UiScale);
+        Left = _drawerAnchorLeft - (_drawerOnLeft ? extension * UiScale : 0);
+    }
+
+    void FinishDrawerAnimation()
+    {
+        if (!_drawerAnimating) return;
+        _drawerAnimating = false;
+        DrawerWidth = _drawerTarget;
+        BeginAnimation(DrawerWidthProperty, null);
+        if (!IsAccountsOpen) AccountDrawerHost.Visibility = Visibility.Collapsed;
+    }
+
+    protected override void OnPreviewKeyDown(KeyEventArgs e)
+    {
+        if (e.Key == Key.Escape && IsAccountsOpen)
+        {
+            SetAccountsOpen(false);
+            e.Handled = true;
+        }
+        base.OnPreviewKeyDown(e);
+    }
 
     public void ApplyCharacters(bool on)
     {
         var v = on ? Visibility.Visible : Visibility.Collapsed;
         ClaudeStage.Visibility = v;
         CodexStage.Visibility = v;
-        if (IsInitialized && PresentationSource.FromVisual(this) != null) FitToContent();
     }
 
     /// <summary>
@@ -81,17 +148,19 @@ public partial class MainWindow : Window
         if (Content is not FrameworkElement root) return;
         const double baseWidth = 410, preferredScale = 1.5;
         var area = CurrentWorkArea();
-        _lastWorkArea = area;
         root.LayoutTransform = Transform.Identity;
         root.Width = baseWidth;
+        Dashboard.Width = baseWidth;
         root.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
         double contentHeight = root.DesiredSize.Height;
         double scale = Math.Min(preferredScale, Math.Max(0.1, (area.Height - 24) / contentHeight));
         // 세로가 짧은 화면에서는 비율을 유지해 맞추고, 가로 여유는 세션 목록에 배분한다.
         root.Width = Math.Max(1, Math.Min(baseWidth * preferredScale, area.Width - 24)) / scale;
+        Dashboard.Width = root.Width;
         root.LayoutTransform = new ScaleTransform(scale, scale);
         root.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
         Width = Math.Ceiling(root.DesiredSize.Width);
+        _dashboardWindowWidth = Width;
         Height = Math.Ceiling(contentHeight * scale);
     }
 
@@ -100,41 +169,6 @@ public partial class MainWindow : Window
         var bounds = System.Windows.Forms.Screen.FromHandle(new WindowInteropHelper(this).Handle).WorkingArea;
         var fromPixels = PresentationSource.FromVisual(this)?.CompositionTarget?.TransformFromDevice ?? Matrix.Identity;
         return Rect.Transform(new Rect(bounds.X, bounds.Y, bounds.Width, bounds.Height), fromPixels);
-    }
-
-    IntPtr WindowMessage(IntPtr hwnd, int message, IntPtr wParam, IntPtr lParam, ref bool handled)
-    {
-        const int wmDisplayChange = 0x007E, wmSettingChange = 0x001A, spiSetWorkArea = 0x002F;
-        if (message == wmDisplayChange || (message == wmSettingChange && wParam.ToInt64() == spiSetWorkArea))
-            QueueDisplayFit();
-        return IntPtr.Zero;
-    }
-
-    protected override void OnDpiChanged(DpiScale oldDpi, DpiScale newDpi)
-    {
-        base.OnDpiChanged(oldDpi, newDpi);
-        QueueDisplayFit();
-    }
-
-    void QueueDisplayFit()
-    {
-        if (!_positioned || _closed || _fittingDisplay || _displayFitQueued) return;
-        _displayFitQueued = true;
-        // Windows가 모니터와 DPI 변경을 적용한 뒤 한 번만 다시 맞춘다.
-        Dispatcher.BeginInvoke(DispatcherPriority.ContextIdle, new Action(() =>
-        {
-            _displayFitQueued = false;
-            if (_closed || WindowState == WindowState.Minimized) return;
-            _fittingDisplay = true;
-            try
-            {
-                FitToContent();
-                KeepOnScreen();
-                _settings.WindowLeft = Left;
-                _settings.WindowTop = Top;
-            }
-            finally { _fittingDisplay = false; }
-        }));
     }
 
     void KeepOnScreen()
@@ -200,7 +234,7 @@ public partial class MainWindow : Window
 
     void SavePosition()
     {
-        _settings.WindowLeft = Left;
+        _settings.WindowLeft = DashboardLeft;
         _settings.WindowTop = Top;
         _settings.Save();
     }
@@ -208,15 +242,18 @@ public partial class MainWindow : Window
     void TitleBar_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
         if (e.ButtonState != MouseButtonState.Pressed) return;
+        FinishDrawerAnimation();
         DragMove();
-        FitToContent();
-        KeepOnScreen();
         SavePosition();
     }
 
     void Refresh_Click(object sender, RoutedEventArgs e) => RefreshRequested?.Invoke();
 
-    void Accounts_Click(object sender, RoutedEventArgs e) => AccountsRequested?.Invoke();
+    void Accounts_Click(object sender, RoutedEventArgs e)
+    {
+        if (IsAccountsOpen) SetAccountsOpen(false);
+        else AccountsRequested?.Invoke();
+    }
 
     const string AccountDragFormat = "AIUsageMonitor.SecondaryAccount";
     Point _accountDragStart;
