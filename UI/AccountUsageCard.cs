@@ -1,4 +1,4 @@
-using System.Windows.Input;
+﻿using System.Windows.Input;
 using AIUsageMonitor.Core;
 
 namespace AIUsageMonitor.UI;
@@ -30,7 +30,7 @@ public sealed class AccountUsageCard
                 Id = "primary:" + main.Name, ProviderName = main.Name + " · 주 계정",
                 DisplayName = Fmt.AccountId(main.Account) ?? "계정 확인 중", Plan = main.Plan,
                 Status = main.Notice ?? main.UsageEmpty ?? main.Footnote,
-                Usage = Rows(main.RawWindows),
+                Usage = Presenter.DisplayUsage(main.RawWindows),
             });
             foreach (var account in service.Accounts.Where(x => x.Settings.Provider.ToString() == main.Name))
             {
@@ -39,7 +39,7 @@ public sealed class AccountUsageCard
                 {
                     Id = id, ProviderName = main.Name + " · 서브 계정",
                     DisplayName = Fmt.AccountId(account.AccountName) ?? "새 계정", Plan = account.Usage?.Plan,
-                    Status = account.Status, Usage = Rows(account.Usage?.Windows ?? []),
+                    Status = account.Status, Usage = Presenter.DisplayUsage(account.Usage?.Windows ?? []),
                     IsSecondary = true, CanLogin = !service.LoginBusy && !account.Removed,
                     LoginText = account.IsLoggingIn ? "로그인 진행 중…" : account.Usage == null ? "브라우저 로그인" : "다시 로그인",
                     LoginCommand = new RelayCommand(async () => await service.LoginAsync(id)),
@@ -50,20 +50,4 @@ public sealed class AccountUsageCard
         return cards;
     }
 
-    static List<UsageRow> Rows(IEnumerable<UsageWindow> windows)
-    {
-        var now = DateTimeOffset.Now;
-        return windows.Select(w =>
-        {
-            bool expired = w.ResetsAt is { } reset && reset <= now;
-            var value = expired ? 0 : Math.Clamp(w.UsedPercent, 0, 100);
-            return new UsageRow
-            {
-                Label = w.Label, Value = value, UsedText = Fmt.Pct(value),
-                RemainText = $" 사용 · {Fmt.Pct(100 - value)} 남음",
-                ResetText = expired ? "리셋됨 · 새 데이터 대기 중" : w.ResetsAt is { } at ? $"리셋까지 {Fmt.Span(at - now)} · {Fmt.When(at)}" : "",
-                LevelBrush = Palette.Level(value),
-            };
-        }).ToList();
-    }
 }

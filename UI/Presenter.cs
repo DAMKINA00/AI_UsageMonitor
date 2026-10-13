@@ -24,7 +24,17 @@ public static class Palette
     public static readonly SolidColorBrush Muted = B("#8B8E98");
     public static readonly SolidColorBrush Text = B("#E8E8EA");
 
-    public static SolidColorBrush Level(double used) => used >= 90 ? Bad : used >= 70 ? Warn : Ok;
+    public static SolidColorBrush Level(double used)
+    {
+        double remaining = 100 - Math.Clamp(used, 0, 100);
+        var from = remaining <= 20 ? Bad.Color : Warn.Color;
+        var to = remaining <= 20 ? Warn.Color : Ok.Color;
+        double fraction = remaining <= 20 ? remaining / 20 : (remaining - 20) / 80;
+        byte Mix(byte a, byte b) => (byte)Math.Round(a + (b - a) * fraction);
+        var brush = new SolidColorBrush(Color.FromRgb(Mix(from.R, to.R), Mix(from.G, to.G), Mix(from.B, to.B)));
+        brush.Freeze();
+        return brush;
+    }
 
     public static SolidColorBrush State(SessionState s) => s switch
     {
@@ -42,6 +52,7 @@ public sealed class UsageRow
     public required string UsedText { get; init; }
     public required string RemainText { get; init; }
     public required string ResetText { get; init; }
+    public string ResetShort { get; init; } = "";
     public required Brush LevelBrush { get; init; }
 }
 
@@ -67,6 +78,7 @@ public sealed class ProviderCard
     public required Brush AppStatusBrush { get; init; }
     public string? Account { get; init; }
     public List<UsageRow> Usage { get; init; } = [];
+    public List<AccountUsageSlot> AccountSlots { get; set; } = [];
     public string? UsageEmpty { get; init; }
     public string? Extras { get; init; }
     public string? Notice { get; init; }
@@ -107,6 +119,7 @@ public sealed class ProviderCard
           .Append(Extras).Append('|').Append(Notice).Append('|').Append(ActionText).Append('|').Append(Footnote).Append('|')
           .Append(SessionsHeader).Append('|').Append(SessionsEmpty).Append('|');
         foreach (var u in Usage) sb.Append(u.Label).Append(u.UsedText).Append(u.RemainText).Append(u.ResetText).Append(';');
+        foreach (var slot in AccountSlots) sb.Append(slot.Signature).Append(';');
         foreach (var s in Sessions) sb.Append(s.Id).Append('|').Append(s.OpenUri).Append('|')
             .Append(s.Title).Append(s.Subtitle).Append(s.StateText).Append(s.OpenCommand != null).Append(';');
         return sb.ToString();
@@ -184,6 +197,15 @@ public static class Fmt
         return $"{(int)d.TotalDays}일 {d.Hours}시간";
     }
 
+    public static string ShortSpan(TimeSpan duration)
+    {
+        if (duration <= TimeSpan.Zero) return "0M";
+        if (duration.TotalMinutes < 1) return "<1M";
+        if (duration.TotalDays >= 1) return $"{(int)duration.TotalDays}D {duration.Hours}H {duration.Minutes}M";
+        if (duration.TotalHours >= 1) return $"{(int)duration.TotalHours}H {duration.Minutes}M";
+        return $"{duration.Minutes}M";
+    }
+
     public static string When(DateTimeOffset t)
     {
         var l = t.ToLocalTime();
@@ -233,9 +255,26 @@ public static class Presenter
             yield break;
         }
         var weekly = windows.FirstOrDefault(IsWeekly);
-        yield return weekly != null
-            ? weekly with { Label = "주간 한도" }
-            : windows.OrderByDescending(w => w.UsedPercent).First();
+        if (weekly != null) yield return weekly with { Label = "주간 한도" };
+    }
+
+    public static List<UsageRow> DisplayUsage(IEnumerable<UsageWindow> windows, DateTimeOffset? asOf = null)
+    {
+        var now = asOf ?? DateTimeOffset.Now;
+        var effective = windows.Select(w => w with
+        {
+            UsedPercent = w.ResetsAt is { } reset && reset <= now ? 0 : Math.Clamp(w.UsedPercent, 0, 100),
+        }).ToList();
+        return PickDisplayWindows(effective).Select(w => new UsageRow
+        {
+            Label = w.Label, Value = w.UsedPercent, UsedText = Fmt.Pct(w.UsedPercent),
+            RemainText = $" 사용 · {Fmt.Pct(100 - w.UsedPercent)} 남음",
+            ResetText = w.ResetsAt is { } reset && reset <= now
+                ? "리셋됨 · 새 데이터 대기 중"
+                : w.ResetsAt is { } at ? $"리셋까지 {Fmt.Span(at - now)} · {Fmt.When(at)}" : "",
+            ResetShort = w.ResetsAt is { } resets ? Fmt.ShortSpan(resets - now) : "—",
+            LevelBrush = Palette.Level(w.UsedPercent),
+        }).ToList();
     }
 
     public static ProviderCard Claude(MonitorService m, AppSettings s, Action login)
@@ -370,31 +409,12 @@ public static class Presenter
         string? notice, string? action, ICommand? cmd, string? empty, string footnote, List<SessionInfo> sessions, string sessionsEmpty)
     {
         var now = DateTimeOffset.Now;
-        var rows = new List<UsageRow>();
+        var rows = DisplayUsage(usage?.Windows ?? [], now);
         var effective = new List<UsageWindow>();
-        var expiredKeys = new HashSet<string>();
         foreach (var w in usage?.Windows ?? [])
         {
             bool expired = w.ResetsAt is { } r && r <= now;
-            if (expired) expiredKeys.Add(w.Key);
             effective.Add(w with { UsedPercent = expired ? 0 : Math.Clamp(w.UsedPercent, 0, 100) });
-        }
-
-        // 화면에는 한도 하나만: 평소엔 주간 한도, 5시간 한도가 90% 이상이면 그쪽을 대신 보여 준다 (알림·아이콘은 전체 기준)
-        foreach (var w in PickDisplayWindows(effective))
-        {
-            bool expired = expiredKeys.Contains(w.Key);
-            rows.Add(new UsageRow
-            {
-                Label = w.Label,
-                Value = w.UsedPercent,
-                UsedText = Fmt.Pct(w.UsedPercent),
-                RemainText = $" 사용 · {Fmt.Pct(100 - w.UsedPercent)} 남음",
-                ResetText = expired
-                    ? "리셋됨 · 새 데이터 대기 중"
-                    : w.ResetsAt is { } at ? $"리셋까지 {Fmt.Span(at - now)} · {Fmt.When(at)}" : "",
-                LevelBrush = Palette.Level(w.UsedPercent),
-            });
         }
 
         var ordered = sessions

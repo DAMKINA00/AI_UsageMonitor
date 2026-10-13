@@ -27,6 +27,7 @@ public sealed class CodexLocalReader
         public DateTime Mtime;
         public string? Cwd;
         public bool HeadRead;
+        public bool IsSubagent;
         public long Position;
         public string? LastTaskEvent;
         /// <summary>마지막 실제 활동 시각 (앱이 덧붙이는 thread_settings_applied 는 제외).</summary>
@@ -68,6 +69,8 @@ public sealed class CodexLocalReader
         {
             var c = Refresh(f);
             if (c.RateLimits is { } rl && (newest == null || rl.AsOf > newest.AsOf)) newest = rl;
+            // 자식 에이전트의 사용량도 계정 한도에 포함되지만, 세션 목록에는 부모 대화만 표시한다.
+            if (c.IsSubagent) continue;
             // 파일 갱신 시각이 아니라 실제 활동 시각으로 판단한다 (앱을 켜면 모든 스레드에 설정 이벤트가 덧붙는다)
             if (c.LastActivityAt is not { } last || last.UtcDateTime < cutoff) continue;
 
@@ -170,9 +173,8 @@ public sealed class CodexLocalReader
                 using (var sr = new StreamReader(fs, Encoding.UTF8, false, 64 * 1024, leaveOpen: true))
                 {
                     var first = sr.ReadLine();
-                    if (first != null) c.Cwd = ParseCwd(first);
+                    if (first != null) c.HeadRead = ParseHead(first, c);
                 }
-                c.HeadRead = true;
             }
 
             // 로그는 append-only 이므로 지난번 이후 추가된 부분만 읽는다 (처음에는 끝 TailBytes 만)
@@ -245,14 +247,19 @@ public sealed class CodexLocalReader
         return end > start ? JsonUtil.Iso(line[start..end]) : null;
     }
 
-    static string? ParseCwd(string line)
+    static bool ParseHead(string line, FileInfoCache cache)
     {
         try
         {
             using var doc = JsonDocument.Parse(line);
-            return doc.RootElement.Obj("payload")?.Str("cwd");
+            var payload = doc.RootElement.Obj("payload");
+            cache.Cwd = payload?.Str("cwd");
+            if (doc.RootElement.Str("type") == "session_meta" && payload is { } meta)
+                cache.IsSubagent = meta.Str("source") == "subagent" ||
+                    meta.Obj("source") is { } source && source.TryGetProperty("subagent", out _);
+            return true;
         }
-        catch (JsonException) { return null; }
+        catch (JsonException) { return false; }
     }
 
     static string? EventType(string line)

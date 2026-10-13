@@ -87,7 +87,7 @@ public sealed class MonitorService : IDisposable
             _settings.Save();
             _ = RefreshClaudeWebAsync();
         };
-        _timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
+        _timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
         _timer.Tick += (_, _) => Tick();
         _timer.Start();
         Tick();

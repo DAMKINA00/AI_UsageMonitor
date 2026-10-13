@@ -21,17 +21,18 @@ public sealed class CharacterStage : Border
     static readonly FontFamily PopFont = new("Malgun Gothic");
 
     readonly Grid _root = new();
+    readonly Grid _figure = new() { Width = 150, Height = 318 };
     readonly Image _img = new() { Stretch = Stretch.Uniform, VerticalAlignment = VerticalAlignment.Bottom, HorizontalAlignment = HorizontalAlignment.Center };
     readonly ScaleTransform _scale = new(1, 1);
     readonly RotateTransform _rot = new(0);
     readonly TranslateTransform _move = new(0, 0);
     readonly Ellipse _shadow;
     readonly Canvas _fx = new() { IsHitTestVisible = false, ClipToBounds = false };
-    readonly Grid _bubble = new() { HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(8, 8, 8, 0) };
+    readonly Grid _bubble = new() { HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(2, 8, 2, 0) };
     readonly TextBlock _bubbleText = new()
     {
-        Foreground = Ink, FontFamily = PopFont, FontWeight = FontWeights.Bold, FontSize = 11.5,
-        TextWrapping = TextWrapping.Wrap, TextAlignment = TextAlignment.Center,
+        Foreground = Ink, FontFamily = PopFont, FontWeight = FontWeights.Bold, FontSize = 13,
+        TextWrapping = TextWrapping.NoWrap, TextAlignment = TextAlignment.Center,
     };
     readonly ScaleTransform _bubbleScale = new(1, 1);
     readonly DispatcherTimer _timer;
@@ -49,8 +50,14 @@ public sealed class CharacterStage : Border
     {
         // 배경 없이 창 위에 캐릭터만 선다 (말풍선·효과는 위로 삐져나가도 되게 클립하지 않음)
         Background = Brushes.Transparent;
-        MinHeight = 230;
+        MinHeight = 260;
         Child = _root;
+        _root.Children.Add(new Viewbox
+        {
+            Width = 75, Height = 159, Child = _figure,
+            HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Bottom,
+        });
+        _nextBubbleAt = _rng.NextDouble() * 4;
 
         // 발밑의 옅은 바닥 그림자
         _shadow = new Ellipse
@@ -58,20 +65,20 @@ public sealed class CharacterStage : Border
             Width = 92, Height = 10, Fill = new SolidColorBrush(Color.FromArgb(0x22, 0xFF, 0xFF, 0xFF)),
             VerticalAlignment = VerticalAlignment.Bottom, HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 0, 0, 10),
         };
-        _root.Children.Add(_shadow);
+        _figure.Children.Add(_shadow);
 
         _img.Margin = new Thickness(0, 0, 0, 12);
         _img.RenderTransformOrigin = new Point(0.5, 1);
         _img.RenderTransform = new TransformGroup { Children = { _scale, _rot, _move } };
         RenderOptions.SetBitmapScalingMode(_img, BitmapScalingMode.HighQuality);
-        _root.Children.Add(_img);
-        _root.Children.Add(_fx);
+        _figure.Children.Add(_img);
+        _figure.Children.Add(_fx);
 
         // 말풍선: 흰 바탕 + 갈색 테두리 + 아래 꼬리
         var box = new Border
         {
             Background = Brushes.White, BorderBrush = Ink, BorderThickness = new Thickness(1.6),
-            CornerRadius = new CornerRadius(10), Padding = new Thickness(8, 4, 8, 5), Child = _bubbleText,
+            CornerRadius = new CornerRadius(10), Padding = new Thickness(6, 4, 6, 5), Child = _bubbleText,
         };
         var tail = new Path
         {
@@ -89,7 +96,8 @@ public sealed class CharacterStage : Border
 
         _timer = new DispatcherTimer(DispatcherPriority.Render) { Interval = TimeSpan.FromSeconds(1 / Fps) };
         _timer.Tick += (_, _) => Frame();
-        SizeChanged += (_, _) => ApplyImageSize();
+        _figure.SizeChanged += (_, _) => ApplyImageSize();
+        SizeChanged += (_, _) => LayoutBubble();
         IsVisibleChanged += (_, _) => UpdateRunning();
         Loaded += (_, _) => UpdateRunning();
         Unloaded += (_, _) => _timer.Stop();
@@ -166,13 +174,14 @@ public sealed class CharacterStage : Border
 
     void ShowBubble(string text)
     {
-        _bubbleText.Text = Balance(text);
+        _bubbleContent = text;
+        LayoutBubble();
         _bubble.Visibility = Visibility.Visible;
         _bubble.Opacity = 1;
         _bubbleShown = true;
         _bubbleT = 0;
         _bubbleHideT = 99;
-        _bubbleShowFor = 3.2 + 0.08 * text.Length; // 긴 대사는 조금 더 오래
+        _bubbleShowFor = 4 + Math.Min(3, 0.08 * text.Length) + _rng.NextDouble() * 3;
     }
 
     void HideBubble()
@@ -180,7 +189,7 @@ public sealed class CharacterStage : Border
         if (!_bubbleShown) return;
         _bubbleShown = false;
         _bubbleHideT = 0;
-        _nextBubbleAt = _t + 1.5 + _rng.NextDouble() * 3; // 1.5~4.5초 쉬었다가 다음 대사
+        _nextBubbleAt = _t + 3 + _rng.NextDouble() * 9;
     }
 
     void UpdateBubble(double dt)
@@ -204,26 +213,37 @@ public sealed class CharacterStage : Border
         }
     }
 
-    /// <summary>
-    /// WPF는 한글을 글자 단위로 줄바꿈하므로("주세/요"), 긴 문장은 띄어쓰기에서 직접 나눈다 (길면 세 줄).
-    /// </summary>
-    static string Balance(string text)
+    string _bubbleContent = "";
+
+    void LayoutBubble()
     {
-        if (text.Length <= 10 || text.Contains('\n')) return text;
-        int parts = text.Length > 22 ? 3 : 2;
-        int from = 0;
-        var sb = new System.Text.StringBuilder();
-        for (int p = 1; p < parts; p++)
+        // 한글 기본 줄바꿈은 어절의 마지막 글자까지 쪼갠다. 실제 폭을 재서 공백에서만 나눈다.
+        double available = Math.Max(1, (ActualWidth > 0 ? ActualWidth : 140) - 20);
+        var typeface = new Typeface(PopFont, FontStyles.Normal, FontWeights.Bold, FontStretches.Normal);
+        double pixelsPerDip = VisualTreeHelper.GetDpi(this).PixelsPerDip;
+        double Measure(string value, double size) => new FormattedText(value,
+            System.Globalization.CultureInfo.CurrentCulture, FlowDirection.LeftToRight, typeface, size, Ink, pixelsPerDip).WidthIncludingTrailingWhitespace;
+        var words = _bubbleContent.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+        double longest = words.Length == 0 ? 0 : words.Max(word => Measure(word, 13));
+        double fontSize = longest > available ? 13 * available / longest : 13;
+        _bubbleText.FontSize = fontSize;
+        var lines = new List<string>();
+        foreach (var paragraph in _bubbleContent.Replace("\r", "").Split('\n'))
         {
-            int target = text.Length * p / parts, best = -1;
-            for (int i = from; i < text.Length; i++)
-                if (text[i] == ' ' && (best < 0 || Math.Abs(i - target) < Math.Abs(best - target))) best = i;
-            if (best <= from) break;
-            sb.Append(text[from..best]).Append('\n');
-            from = best + 1;
+            string line = "";
+            foreach (var word in paragraph.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+            {
+                string next = line.Length == 0 ? word : line + " " + word;
+                if (line.Length > 0 && Measure(next, fontSize) > available)
+                {
+                    lines.Add(line);
+                    line = word;
+                }
+                else line = next;
+            }
+            lines.Add(line);
         }
-        sb.Append(text[from..]);
-        return sb.ToString();
+        _bubbleText.Text = string.Join('\n', lines);
     }
 
     /// <summary>사용률이 올랐을 때 머리 위로 "+3%" 같은 큰 글자를 띄운다.</summary>
@@ -311,8 +331,8 @@ public sealed class CharacterStage : Border
 
     void ApplyImageSize()
     {
-        if (_img.Source is not BitmapSource b || ActualHeight <= 0) return;
-        double k = Math.Max(0.2, (ActualHeight - 58) / RefCanvasHeight);
+        if (_img.Source is not BitmapSource b || _figure.ActualHeight <= 0) return;
+        double k = Math.Max(0.2, (_figure.ActualHeight - 58) / RefCanvasHeight);
         _img.Width = b.PixelWidth * k;
         _img.Height = b.PixelHeight * k;
     }
@@ -401,14 +421,14 @@ public sealed class CharacterStage : Border
 
     Point HeadPoint()
     {
-        if (_img.ActualWidth <= 0) return new Point(ActualWidth / 2, ActualHeight * 0.45);
-        var r = _img.TransformToAncestor(_root).TransformBounds(new Rect(0, 0, _img.ActualWidth, _img.ActualHeight));
+        if (_img.ActualWidth <= 0) return new Point(_figure.ActualWidth / 2, _figure.ActualHeight * 0.45);
+        var r = _img.TransformToAncestor(_figure).TransformBounds(new Rect(0, 0, _img.ActualWidth, _img.ActualHeight));
         return new Point(r.Left + r.Width / 2, r.Top + r.Height * 0.17);
     }
 
     Rect ImageRect() => _img.ActualWidth <= 0
-        ? new Rect(ActualWidth / 2 - 50, ActualHeight - 180, 100, 160)
-        : _img.TransformToAncestor(_root).TransformBounds(new Rect(0, 0, _img.ActualWidth, _img.ActualHeight));
+        ? new Rect(_figure.ActualWidth / 2 - 50, _figure.ActualHeight - 180, 100, 160)
+        : _img.TransformToAncestor(_figure).TransformBounds(new Rect(0, 0, _img.ActualWidth, _img.ActualHeight));
 
     void SpawnForMood()
     {
@@ -451,10 +471,10 @@ public sealed class CharacterStage : Border
     {
         if (_particles.Count > 40) return;
         // 무대 밖으로 잘리지 않게 시작 위치를 안쪽으로
-        if (ActualWidth > 0)
+        if (_figure.ActualWidth > 0)
         {
             double half = (double.IsNaN(el.Width) ? 10 : el.Width / 2) + 4;
-            x = Math.Clamp(x, half, Math.Max(half, ActualWidth - half));
+            x = Math.Clamp(x, half, Math.Max(half, _figure.ActualWidth - half));
         }
         el.RenderTransformOrigin = new Point(0.5, 0.5);
         el.RenderTransform = new TransformGroup { Children = { new ScaleTransform(s0, s0), new RotateTransform(0) } };

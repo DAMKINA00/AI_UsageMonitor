@@ -31,7 +31,7 @@ public sealed class SecondaryAccountService : IDisposable
 {
     readonly AppSettings _settings;
     readonly List<SecondaryAccountState> _accounts = [];
-    readonly DispatcherTimer _timer = new() { Interval = TimeSpan.FromSeconds(15) };
+    readonly DispatcherTimer _timer = new() { Interval = TimeSpan.FromSeconds(5) };
     bool _refreshing, _disposed;
     public IReadOnlyList<SecondaryAccountState> Accounts => _accounts;
     public bool LoginBusy { get; private set; }
@@ -171,6 +171,20 @@ public sealed class SecondaryAccountService : IDisposable
             account.Status = usage == null ? "사용량 데이터 없음" : $"연결됨 · {usage.AsOf.ToLocalTime():HH:mm} 기준";
         }
         else account.Status = (account.Usage == null ? "조회 실패: " : "이전 사용량 표시 중 · 조회 실패: ") + error;
+    }
+
+    /// <summary>같은 서비스의 추가 계정 순서를 교환한다. 성공하면 호출자가 설정을 저장한다.</summary>
+    public bool SwapAccounts(string firstId, string secondId)
+    {
+        if (_disposed || firstId == secondId) return false;
+        int first = _accounts.FindIndex(x => x.Settings.Id == firstId && !x.Removed);
+        int second = _accounts.FindIndex(x => x.Settings.Id == secondId && !x.Removed);
+        if (first < 0 || second < 0 || _accounts[first].Settings.Provider != _accounts[second].Settings.Provider)
+            return false;
+        (_accounts[first], _accounts[second]) = (_accounts[second], _accounts[first]);
+        _settings.SecondaryAccounts = _accounts.Select(x => x.Settings).ToList();
+        Changed?.Invoke();
+        return true;
     }
 
     public async Task RemoveAsync(string id)

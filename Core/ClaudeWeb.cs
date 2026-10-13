@@ -76,6 +76,35 @@ public sealed class ClaudeWebClient : IDisposable
               throw new Error('프로젝트 작업 목록을 끝까지 읽지 못했습니다.');
             };
             const projects = (await pages('/v1/code/channels?scope=joined&limit=200')).filter(p => !p.archived_at);
+            const sessionReads = new Map();
+            const readSession = id => {
+              if (!sessionReads.has(id)) sessionReads.set(id, (async () => {
+                const r = await get('/v1/code/sessions/' + encodeURIComponent(id.replace(/^cse_/, 'session_')), headers, signal);
+                if (r.status === 404) return null;
+                if (r.status !== 200) throw new Error('PC 작업 상태 조회 실패 (HTTP ' + r.status + ')');
+                const s = r.json?.response_shape ?? r.json;
+                if (!s || typeof s.id !== 'string') throw new Error('PC 작업 상태 응답이 올바르지 않습니다.');
+                // 프로젝트 조정자 등 다른 클라우드 작업은 이 스레드의 PC 작업으로 세지 않는다.
+                return s.environment_kind === 'bridge' && s.status === 'active' && s.connection_status === 'connected'
+                  ? { status: s.worker_status, at: s.last_event_at ?? null } : null;
+              })());
+              return sessionReads.get(id);
+            };
+            const pcStateOf = async (projectId, row) => {
+              if (['resolved', 'failed', 'archived', 1, 2, 5].includes(row.thread_status)) return null;
+              // PC로 넘긴 실행은 루트의 bound_sessions에 없고, 스레드 메시지의 작성 세션으로 연결된다.
+              const messages = await pages('/v1/code/channels/' + encodeURIComponent(projectId) +
+                '/threads/' + encodeURIComponent(row.id) + '?limit=200');
+              const ids = [...new Set(messages.flatMap(m => [m.author_session_id, ...(m.bound_sessions ?? []).map(s => s.id)])
+                .filter(id => typeof id === 'string' && /^(cse_|session_)[A-Za-z0-9]+$/.test(id)))];
+              let active = null;
+              for (const id of ids) {
+                const state = await readSession(id);
+                if (state?.status === 'requires_action') return state;
+                if (state?.status === 'running') active = state;
+              }
+              return active;
+            };
             const result = []; let next = 0;
             await Promise.all(Array.from({ length: Math.min(4, projects.length) }, async () => {
               while (next < projects.length) {
@@ -86,8 +115,10 @@ public sealed class ClaudeWebClient : IDisposable
                 for (const row of rows) {
                   const session = row.bound_sessions?.find(s => s.title) || row.bound_sessions?.[0];
                   if (!session || !row.id) continue;
+                  const pc = await pcStateOf(project.id, row);
                   result.push({ source_kind: 'project_thread', uuid: row.id, name: session.title || '프로젝트 작업',
                     project: project.name || '', project_uuid: project.id, thread_status: row.thread_status ?? null,
+                    pc_status: pc?.status ?? null, pc_updated_at: pc?.at ?? null,
                     updated_at: row.last_reply_at || row.created_at || null,
                     workspace_session_id: typeof session.id === 'string' ? session.id.replace(/^cse_/, 'session_') : null });
                 }
@@ -509,6 +540,15 @@ public sealed class ClaudeWebClient : IDisposable
                     status = number switch { 1 => "resolved", 2 => "failed", 3 => "working", 4 => "needs_input", 5 => "archived", 6 => "idle", _ => null };
                 if (status == "archived") continue;
                 var activity = JsonUtil.Iso(c.Str("updated_at"));
+                var pc = c.Str("pc_status");
+                bool pcActive = status is not ("resolved" or "failed") && (pc is "running" or "requires_action");
+                if (pcActive)
+                {
+                    if (pc == "requires_action") status = "needs_input";
+                    else if (status != "needs_input") status = "working";
+                    var pcAt = JsonUtil.Iso(c.Str("pc_updated_at"));
+                    if (pcAt is { } pcActivity && (activity == null || pcActivity > activity)) activity = pcActivity;
+                }
                 var (taskState, taskText) = status switch
                 {
                     "working" => (SessionState.Working, "작업 중"),
@@ -523,7 +563,7 @@ public sealed class ClaudeWebClient : IDisposable
                 var projectName = c.Str("project");
                 var sessionId = c.Str("workspace_session_id");
                 list.Add(new SessionInfo($"chat:{uuid}", c.Str("name") is { Length: > 0 } projectTitle ? projectTitle : "프로젝트 작업",
-                    string.IsNullOrEmpty(projectName) ? "프로젝트 작업" : $"{projectName} · 프로젝트 작업",
+                    (string.IsNullOrEmpty(projectName) ? "프로젝트 작업" : $"{projectName} · 프로젝트 작업") + (pcActive ? " · PC 실행" : ""),
                     taskState, taskText, activity, false,
                     OpenUri: sessionId is { Length: > 0 } ? $"claude://claude.ai/cowork/{Uri.EscapeDataString(sessionId)}" : null,
                     AltId: sessionId));

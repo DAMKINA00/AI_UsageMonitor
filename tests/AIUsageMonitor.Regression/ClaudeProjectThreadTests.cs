@@ -85,6 +85,46 @@ internal static partial class Program
             { Id: "chat:regular-chat", Title: "일반 대화", State: SessionState.Idle },
             Describe(ChatOf("regular-chat")));
 
+        var pcUpdated = DateTimeOffset.Parse(ProjectIso(now.AddMinutes(-1)),
+            System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.AssumeUniversal);
+        var idlePc = ParseProject(JsonSerializer.Serialize(new[]
+        {
+            ProjectThread("idle-pc", "PC 실행", project, "session_idle_pc", now.AddHours(-1), "idle",
+                pcStatus: "running", pcUpdatedAt: pcUpdated),
+        }), cutoff).Single();
+        Check("idle cloud thread with a running PC bridge maps to working and uses PC activity",
+            idlePc is { State: SessionState.Working, StateText: "작업 중", Subtitle: "AI 개발 · 프로젝트 작업 · PC 실행" } &&
+            idlePc.LastActivity == pcUpdated, Describe(idlePc));
+
+        var explicitNeedsPc = ParseProject(JsonSerializer.Serialize(new[]
+        {
+            ProjectThread("needs-pc", "입력 필요", project, "session_needs_pc", now, "needs_input",
+                pcStatus: "running", pcUpdatedAt: pcUpdated),
+        }), cutoff).Single();
+        Check("explicit thread needs-input stays higher priority than PC running",
+            explicitNeedsPc is { State: SessionState.NeedsInput, StateText: "입력 대기" }, Describe(explicitNeedsPc));
+
+        var requiresActionPc = ParseProject(JsonSerializer.Serialize(new[]
+        {
+            ProjectThread("action-pc", "PC 승인", project, "session_action_pc", now.AddHours(-1), "idle",
+                pcStatus: "requires_action", pcUpdatedAt: pcUpdated),
+        }), cutoff).Single();
+        Check("PC requires-action maps to needs-input",
+            requiresActionPc is { State: SessionState.NeedsInput, StateText: "입력 대기" } &&
+            requiresActionPc.LastActivity == pcUpdated, Describe(requiresActionPc));
+
+        var resolvedAt = DateTimeOffset.Parse(ProjectIso(now.AddMinutes(-2)),
+            System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.AssumeUniversal);
+        var resolvedPc = ParseProject(JsonSerializer.Serialize(new[]
+        {
+            ProjectThread("resolved-pc", "완료", project, "session_resolved_pc", resolvedAt, "resolved",
+                pcStatus: "running", pcUpdatedAt: now),
+        }), cutoff).Single();
+        Check("resolved thread stays completed despite a PC status",
+            resolvedPc is { State: SessionState.Idle, StateText: "완료" } &&
+            resolvedPc.Subtitle == "AI 개발 · 프로젝트 작업" &&
+            resolvedPc.LastActivity == resolvedAt, Describe(resolvedPc));
+
         using var monitor = new MonitorService(new AppSettings());
         SetProperty(monitor, nameof(MonitorService.ClaudeLocal), new ClaudeLocalState { DesktopRunning = true });
         var settings = new AppSettings { ClaudeDesktopEnabled = true };
@@ -94,6 +134,14 @@ internal static partial class Program
             ParseProject(JsonSerializer.Serialize(new[]
             {
                 ProjectThread("mood", "기분 상태", "AI 개발", "session_mood", timestamp, status),
+            }), timestamp.AddHours(-12));
+
+        static List<SessionInfo> ParseSingleWithPc(DateTimeOffset timestamp, string status, string pcStatus,
+            DateTimeOffset pcUpdatedAt) =>
+            ParseProject(JsonSerializer.Serialize(new[]
+            {
+                ProjectThread("mood-pc", "기분 상태", "AI 개발", "session_mood_pc", timestamp, status,
+                    pcStatus: pcStatus, pcUpdatedAt: pcUpdatedAt),
             }), timestamp.AddHours(-12));
 
         var workingMood = UpdateMood(ParseSingle(now, "working"));
@@ -115,6 +163,11 @@ internal static partial class Program
         Check("project working state restores working mood", workingAgainMood.mood.Mood == Mood.Working &&
             workingAgainMood.card.WorkingCount == 1,
             $"mood={workingAgainMood.mood.Mood}, count={workingAgainMood.card.WorkingCount}");
+
+        var pcWorkingMood = UpdateMood(ParseSingleWithPc(now, "idle", "running", pcUpdated));
+        Check("PC project work restores card and mood working counts", pcWorkingMood.mood.Mood == Mood.Working &&
+            pcWorkingMood.card.WorkingCount == 1 && pcWorkingMood.card.NeedsInputCount == 0,
+            $"mood={pcWorkingMood.mood.Mood}, counts={pcWorkingMood.card.WorkingCount}/{pcWorkingMood.card.NeedsInputCount}");
 
         SetProperty(monitor, nameof(MonitorService.ClaudeChatsAt), DateTimeOffset.Now.AddMinutes(-11));
         var stale = Presenter.ClaudeSessions(monitor).Single();
@@ -159,7 +212,8 @@ internal static partial class Program
             : $"{session.Id}:{session.State}:{session.StateText}:{session.Title}";
 
         static object ProjectThread(string uuid, string name, string project, string workspaceSessionId,
-            DateTimeOffset updatedAt, object? status, bool includeStatus = true) =>
+            DateTimeOffset updatedAt, object? status, bool includeStatus = true, string? pcStatus = null,
+            DateTimeOffset? pcUpdatedAt = null) =>
             includeStatus
                 ? new Dictionary<string, object?>
                 {
@@ -171,6 +225,8 @@ internal static partial class Program
                     ["workspace_session_id"] = workspaceSessionId,
                     ["updated_at"] = ProjectIso(updatedAt),
                     ["thread_status"] = status,
+                    ["pc_status"] = pcStatus,
+                    ["pc_updated_at"] = pcUpdatedAt.HasValue ? ProjectIso(pcUpdatedAt.Value) : null,
                 }
                 : new Dictionary<string, object?>
                 {
@@ -181,6 +237,8 @@ internal static partial class Program
                     ["project_uuid"] = "chan_AI_development",
                     ["workspace_session_id"] = workspaceSessionId,
                     ["updated_at"] = ProjectIso(updatedAt),
+                    ["pc_status"] = pcStatus,
+                    ["pc_updated_at"] = pcUpdatedAt.HasValue ? ProjectIso(pcUpdatedAt.Value) : null,
                 };
 
         static string ProjectIso(DateTimeOffset value) => value.UtcDateTime.ToString(

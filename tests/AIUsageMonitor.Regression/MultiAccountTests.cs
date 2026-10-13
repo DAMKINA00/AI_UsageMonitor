@@ -50,7 +50,8 @@ internal static partial class Program
             apply.Invoke(null, [account, ok, login, name, usage, error]);
         var reset = DateTimeOffset.Now.AddDays(2);
         for (int index = 0; index < service.Accounts.Count; index++)
-            Apply(service.Accounts[index], true, false, $"sub{index}@example.test", Snapshot("test", DateTimeOffset.Now, Window("weekly", 10 + index, reset)), null);
+            Apply(service.Accounts[index], true, false, $"sub{index}@example.test", Snapshot("test", DateTimeOffset.Now,
+                Window(service.Accounts[index].Settings.Provider == AccountProvider.Claude ? "seven_day" : "codex:w10080", 10 + index, reset)), null);
         var savedUsage = service.Accounts[0].Usage;
         Apply(service.Accounts[0], false, false, null, null, "network");
         Check("failed refresh retains only that account's last usage", ReferenceEquals(savedUsage, service.Accounts[0].Usage) &&

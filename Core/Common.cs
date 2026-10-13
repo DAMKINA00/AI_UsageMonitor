@@ -63,11 +63,11 @@ public sealed class AppSettings
     public bool UsageAlerts { get; set; } = true;
     public bool ActivityAlerts { get; set; }
     public int[] AlertThresholds { get; set; } = [80, 95];
-    public int CodexPollSeconds { get; set; } = 120;
-    public int ClaudeWebPollSeconds { get; set; } = 180;
+    public int CodexPollSeconds { get; set; } = 60;
+    public int ClaudeWebPollSeconds { get; set; } = 60;
     public int CodexActiveHours { get; set; } = 12;
     /// <summary>Claude 앱이 켜져 있거나 진행 중인 대화가 있을 때 claude.ai 대화 목록을 확인하는 간격.</summary>
-    public int ClaudeChatPollSeconds { get; set; } = 30;
+    public int ClaudeChatPollSeconds { get; set; } = 15;
     /// <summary>진행 중이 아닌 claude.ai 대화를 카드에 남겨 두는 시간.</summary>
     public int ClaudeChatActiveHours { get; set; } = 12;
     public bool ClaudeWebEnabled { get; set; }

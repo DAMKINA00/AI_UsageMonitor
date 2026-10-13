@@ -10,6 +10,8 @@ const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 const query = new AsyncFunction('fetch', prelude + '\nreturn await chatsOf("test-org");');
 const channels = '/v1/code/channels?scope=joined&limit=200';
 const timeline = id => `/v1/code/channels/${id}/timeline?limit=200&bound_only=true&thread_roots_only=true`;
+const threadPage = (project, id) => `/v1/code/channels/${project}/threads/${id}?limit=200`;
+const session = id => `/v1/code/sessions/${id}`;
 const thread = (id, status) => ({
   id, thread_status: status, created_at: '2026-10-12T08:00:00Z', last_reply_at: '2026-10-12T09:00:00Z',
   body: 'PRIVATE_BODY_MUST_NOT_ESCAPE',
@@ -42,6 +44,8 @@ test('collects paginated projects and threads, skips archived projects and exclu
     [timeline('one')]: { data: [thread('working', 'working')], next_cursor: 'next' },
     [timeline('one') + '&cursor=next']: { data: [thread('waiting', 'needs_input')] },
     [timeline('two')]: { data: [thread('done', 'resolved'), { id: 'unbound', body: 'ignored' }] },
+    [threadPage('one', 'working')]: { data: [] },
+    [threadPage('one', 'waiting')]: { data: [] },
   });
   const result = await query(f.fetch);
   assert.equal(result.status, 200);
@@ -50,11 +54,107 @@ test('collects paginated projects and threads, skips archived projects and exclu
   const work = result.chats.find(x => x.uuid === 'working');
   assert.deepEqual(work, {
     source_kind: 'project_thread', uuid: 'working', name: 'Task working', project: 'Project One',
-    project_uuid: 'one', thread_status: 'working', updated_at: '2026-10-12T09:00:00Z', workspace_session_id: 'session_working',
+    project_uuid: 'one', thread_status: 'working', pc_status: null, pc_updated_at: null,
+    updated_at: '2026-10-12T09:00:00Z', workspace_session_id: 'session_working',
   });
   assert.equal(result.chats.find(x => x.uuid === 'waiting').thread_status, 'needs_input');
   assert.ok(!JSON.stringify(result).includes('PRIVATE_BODY'));
   assert.ok(!f.calls.some(url => url.includes('/archived/')));
+});
+
+const activeSession = (id, overrides = {}) => ({
+  id, environment_kind: 'bridge', status: 'active', connection_status: 'connected',
+  worker_status: 'running', last_event_at: '2026-10-12T09:30:00Z', ...overrides,
+});
+
+test('idle cloud thread gets the active bridge worker state and newer activity', async () => {
+  const f = fixture({
+    [channels]: { data: [{ id: 'one', name: 'Project One' }] },
+    [timeline('one')]: { data: [thread('idle-pc', 'idle')] },
+    [threadPage('one', 'idle-pc')]: { data: [{
+      author_session_id: 'cse_bridge',
+      bound_sessions: [{ id: 'cse_cloud', title: 'Cloud coordinator' }],
+      body: 'PRIVATE_THREAD_BODY_MUST_NOT_ESCAPE',
+    }] },
+    [session('session_bridge')]: { body: activeSession('session_bridge') },
+    [session('session_cloud')]: { body: activeSession('session_cloud', { environment_kind: 'cloud' }) },
+  });
+  const result = await query(f.fetch);
+  const row = result.chats.find(x => x.uuid === 'idle-pc');
+  assert.equal(row.pc_status, 'running');
+  assert.equal(row.pc_updated_at, '2026-10-12T09:30:00Z');
+  assert.ok(!JSON.stringify(result).includes('PRIVATE_THREAD_BODY'));
+});
+
+test('requires_action wins, while disconnected, cloud, and archived sessions stay excluded', async () => {
+  const f = fixture({
+    [channels]: { data: [{ id: 'one', name: 'Project One' }] },
+    [timeline('one')]: { data: [
+      thread('priority', 'idle'), thread('disconnected', 'idle'), thread('cloud-only', 'idle'), thread('archived', 'archived'),
+    ] },
+    [threadPage('one', 'priority')]: { data: [
+      { author_session_id: 'cse_running' }, { bound_sessions: [{ id: 'cse_action' }] },
+    ] },
+    [threadPage('one', 'disconnected')]: { data: [{ author_session_id: 'cse_disconnected' }] },
+    [threadPage('one', 'cloud-only')]: { data: [{ author_session_id: 'cse_cloudonly' }] },
+    [session('session_running')]: { body: activeSession('session_running') },
+    [session('session_action')]: { body: activeSession('session_action', { worker_status: 'requires_action' }) },
+    [session('session_disconnected')]: { body: activeSession('session_disconnected', { connection_status: 'disconnected' }) },
+    [session('session_cloudonly')]: { body: activeSession('session_cloudonly', { environment_kind: 'cloud' }) },
+  });
+  const result = await query(f.fetch);
+  assert.equal(result.chats.find(x => x.uuid === 'priority').pc_status, 'requires_action');
+  assert.equal(result.chats.find(x => x.uuid === 'disconnected').pc_status, null);
+  assert.equal(result.chats.find(x => x.uuid === 'cloud-only').pc_status, null);
+  assert.equal(result.chats.find(x => x.uuid === 'archived').pc_status, null);
+  assert.ok(f.calls.includes(session('session_disconnected')));
+  assert.ok(f.calls.includes(session('session_cloudonly')));
+  assert.ok(!f.calls.some(url => url === threadPage('one', 'archived')));
+});
+
+test('thread and session failures are fatal, but missing sessions are ignored', async () => {
+  const threadFailure = fixture({
+    [channels]: { data: [{ id: 'one', name: 'Project One' }] },
+    [timeline('one')]: { data: [thread('broken-thread', 'idle')] },
+    [threadPage('one', 'broken-thread')]: { status: 503, body: {} },
+  });
+  await assert.rejects(query(threadFailure.fetch), /프로젝트 작업 조회 실패 \(HTTP 503\)/);
+
+  const sessionFailure = fixture({
+    [channels]: { data: [{ id: 'one', name: 'Project One' }] },
+    [timeline('one')]: { data: [thread('broken-session', 'idle')] },
+    [threadPage('one', 'broken-session')]: { data: [{ author_session_id: 'cse_broken' }] },
+    [session('session_broken')]: { status: 503, body: {} },
+  });
+  await assert.rejects(query(sessionFailure.fetch), /PC 작업 상태 조회 실패 \(HTTP 503\)/);
+
+  const missingSession = fixture({
+    [channels]: { data: [{ id: 'one', name: 'Project One' }] },
+    [timeline('one')]: { data: [thread('missing-session', 'idle')] },
+    [threadPage('one', 'missing-session')]: { data: [{ author_session_id: 'cse_missing' }] },
+    [session('session_missing')]: { status: 404, body: {} },
+  });
+  const result = await query(missingSession.fetch);
+  assert.equal(result.chats.find(x => x.uuid === 'missing-session').pc_status, null);
+});
+
+test('thread message pagination reaches the end and reads a duplicate session once', async () => {
+  const f = fixture({
+    [channels]: { data: [{ id: 'one', name: 'Project One' }] },
+    [timeline('one')]: { data: [thread('paged', 'idle')] },
+    [threadPage('one', 'paged')]: { data: [{
+      author_session_id: 'cse_shared', body: 'PRIVATE_PAGED_BODY_MUST_NOT_ESCAPE',
+    }], next_cursor: 'page/2' },
+    [threadPage('one', 'paged') + '&cursor=page%2F2']: { data: [{
+      bound_sessions: [{ id: 'cse_shared' }], author_session_id: 'cse_shared',
+    }] },
+    [session('session_shared')]: { body: activeSession('session_shared', { response_shape: activeSession('session_shared') }) },
+  });
+  const result = await query(f.fetch);
+  assert.equal(result.chats.find(x => x.uuid === 'paged').pc_status, 'running');
+  assert.equal(f.calls.filter(url => url === session('session_shared')).length, 1);
+  assert.ok(f.calls.includes(threadPage('one', 'paged') + '&cursor=page%2F2'));
+  assert.ok(!JSON.stringify(result).includes('PRIVATE_PAGED_BODY'));
 });
 
 test('empty projects preserve regular chats', async () => {

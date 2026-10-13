@@ -110,6 +110,7 @@ public partial class App : Application
     void SaveWindowPng(string path)
     {
         if (_window.Content is not FrameworkElement root) return;
+        root.UpdateLayout();
         var dpi = System.Windows.Media.VisualTreeHelper.GetDpi(root);
         var bmp = new System.Windows.Media.Imaging.RenderTargetBitmap(
             (int)(root.ActualWidth * dpi.DpiScaleX), (int)(root.ActualHeight * dpi.DpiScaleY),
@@ -128,6 +129,10 @@ public partial class App : Application
 
         _window.RefreshRequested += RefreshAllAccounts;
         _window.AccountsRequested += ShowAccounts;
+        _window.SecondaryAccountSwapRequested += (first, second) =>
+        {
+            if (_secondaryAccounts.SwapAccounts(first, second)) _settings.Save();
+        };
         _window.TopmostToggled += SetTopmost;
         _window.IsVisibleChanged += (_, _) =>
         {
@@ -210,8 +215,9 @@ public partial class App : Application
             else _monitor.ClaudeWeb.ShowLogin();
         });
         var codex = Presenter.Codex(_monitor);
-        var footer = _monitor.LastLocalRefresh is { } t ? $"자동 갱신 중 · {t:HH:mm} 기준" : "불러오는 중…";
-        _vm.Update(claude, codex, footer);
+        claude.AccountSlots = AccountUsageSlot.Create(claude, _secondaryAccounts.Accounts);
+        codex.AccountSlots = AccountUsageSlot.Create(codex, _secondaryAccounts.Accounts);
+        _vm.Update(claude, codex, "");
         if (_accountsWindow != null)
         {
             var accounts = AccountUsageCard.Create(claude, codex, _secondaryAccounts);

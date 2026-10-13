@@ -1,8 +1,10 @@
-using System.ComponentModel;
+﻿using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Interop;
+using System.Windows.Media;
 using AIUsageMonitor.Core;
 using AIUsageMonitor.UI;
 
@@ -14,6 +16,7 @@ public partial class MainWindow : Window
 
     public event Action? RefreshRequested;
     public event Action? AccountsRequested;
+    public event Action<string, string>? SecondaryAccountSwapRequested;
     public event Action<bool>? TopmostToggled;
 
     public bool AllowClose { get; set; }
@@ -127,6 +130,69 @@ public partial class MainWindow : Window
     void Refresh_Click(object sender, RoutedEventArgs e) => RefreshRequested?.Invoke();
 
     void Accounts_Click(object sender, RoutedEventArgs e) => AccountsRequested?.Invoke();
+
+    const string AccountDragFormat = "AIUsageMonitor.SecondaryAccount";
+    Point _accountDragStart;
+    AccountUsageSlot? _dragAccount;
+    Border? _dropTarget;
+
+    void Account_MouseDown(object sender, MouseButtonEventArgs e)
+    {
+        _dragAccount = (sender as FrameworkElement)?.DataContext as AccountUsageSlot;
+        _accountDragStart = e.GetPosition(this);
+    }
+
+    void Account_MouseMove(object sender, MouseEventArgs e)
+    {
+        if (e.LeftButton != MouseButtonState.Pressed) { _dragAccount = null; return; }
+        if (_dragAccount is not { CanDrag: true } account || sender is not FrameworkElement element ||
+            element.DataContext is not AccountUsageSlot current || current.Id != account.Id) return;
+        var delta = e.GetPosition(this) - _accountDragStart;
+        if (Math.Abs(delta.X) < SystemParameters.MinimumHorizontalDragDistance &&
+            Math.Abs(delta.Y) < SystemParameters.MinimumVerticalDragDistance) return;
+        _dragAccount = null;
+        var data = new DataObject();
+        data.SetData(AccountDragFormat, account, false);
+        try { DragDrop.DoDragDrop(element, data, DragDropEffects.Move); }
+        finally { ClearDropTarget(); }
+    }
+
+    static AccountUsageSlot? DragSource(DragEventArgs e) =>
+        e.Data.GetDataPresent(AccountDragFormat, false) ? e.Data.GetData(AccountDragFormat, false) as AccountUsageSlot : null;
+
+    void ClearDropTarget()
+    {
+        if (_dropTarget != null) _dropTarget.Background = Brushes.Transparent;
+        _dropTarget = null;
+    }
+
+    void Account_DragOver(object sender, DragEventArgs e)
+    {
+        ClearDropTarget();
+        bool valid = sender is Border { DataContext: AccountUsageSlot target } && target.CanSwapWith(DragSource(e));
+        e.Effects = valid ? DragDropEffects.Move : DragDropEffects.None;
+        if (valid && sender is Border border)
+        {
+            _dropTarget = border;
+            border.Background = new SolidColorBrush(Color.FromArgb(28, 91, 185, 140));
+        }
+        e.Handled = true;
+    }
+
+    void Account_DragLeave(object sender, DragEventArgs e) => ClearDropTarget();
+
+    void Account_Drop(object sender, DragEventArgs e)
+    {
+        ClearDropTarget();
+        var source = DragSource(e);
+        if (sender is FrameworkElement { DataContext: AccountUsageSlot target } && target.CanSwapWith(source))
+        {
+            SecondaryAccountSwapRequested?.Invoke(source!.Id, target.Id);
+            e.Effects = DragDropEffects.Move;
+        }
+        else e.Effects = DragDropEffects.None;
+        e.Handled = true;
+    }
 
     void Pin_Click(object sender, RoutedEventArgs e) => TopmostToggled?.Invoke(!Topmost);
 
