@@ -4,7 +4,7 @@
         xmlns:ui="clr-namespace:AIUsageMonitor.UI"
         Background="#1B1C21"
         FontFamily="Segoe UI Variable Text, Segoe UI, Malgun Gothic"
-        FontSize="12.5"
+        FontSize="12"
         UseLayoutRounding="True"
         TextOptions.TextFormattingMode="Display">
     <UserControl.Resources>
@@ -25,7 +25,7 @@
             <Setter Property="Background" Value="{StaticResource ButtonBg}"/>
             <Setter Property="BorderBrush" Value="{StaticResource ButtonBorder}"/>
             <Setter Property="BorderThickness" Value="1"/>
-            <Setter Property="Padding" Value="12,6"/>
+            <Setter Property="Padding" Value="9,4"/>
             <Setter Property="Margin" Value="0,0,7,0"/>
             <Setter Property="Cursor" Value="Hand"/>
             <Setter Property="Template">
@@ -52,13 +52,13 @@
         </Style>
 
         <Style x:Key="SmallActionButton" TargetType="Button" BasedOn="{StaticResource ActionButton}">
-            <Setter Property="Padding" Value="10,5"/>
+            <Setter Property="Padding" Value="8,3"/>
             <Setter Property="Margin" Value="0,0,6,0"/>
-            <Setter Property="FontSize" Value="11.5"/>
+            <Setter Property="FontSize" Value="11"/>
         </Style>
 
         <Style x:Key="UsageBar" TargetType="ProgressBar">
-            <Setter Property="Height" Value="7"/>
+            <Setter Property="Height" Value="5"/>
             <Setter Property="Minimum" Value="0"/>
             <Setter Property="Maximum" Value="100"/>
             <Setter Property="Template">
@@ -106,33 +106,25 @@
         </Style>
 
         <DataTemplate x:Key="AccountTemplate" DataType="{x:Type ui:AccountUsageCard}">
-            <Border Background="{StaticResource CardBg}" CornerRadius="10" Padding="14,12" Margin="0,0,0,10">
+            <Border Background="{StaticResource CardBg}" CornerRadius="8" Padding="10,8" Margin="0,0,0,6">
                 <StackPanel>
-                    <Grid>
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="Auto"/>
-                        </Grid.RowDefinitions>
-                        <StackPanel>
-                            <StackPanel Orientation="Horizontal">
-                                <TextBlock Text="{Binding ProviderName}" Foreground="{StaticResource Fg}"
-                                           FontSize="15" FontWeight="SemiBold"/>
-                                <Border Background="#1FFFFFFF" CornerRadius="4" Padding="6,1" Margin="8,1,0,0"
-                                        VerticalAlignment="Center">
-                                    <TextBlock Text="{Binding Plan, TargetNullValue=—}" Foreground="{StaticResource Fg2}" FontSize="11"/>
-                                </Border>
-                            </StackPanel>
-                            <TextBlock Text="{Binding DisplayName}" Foreground="{StaticResource Fg}" FontWeight="Bold"
-                                       Margin="0,3,0,0" TextTrimming="CharacterEllipsis"/>
-                        </StackPanel>
-                        <TextBlock Grid.Row="1" Text="{Binding Status}" Foreground="{StaticResource Fg2}"
-                                   Margin="0,6,0,0" FontSize="11" TextWrapping="Wrap"/>
-                    </Grid>
+                    <DockPanel>
+                        <TextBlock DockPanel.Dock="Right" Text="{Binding Plan, TargetNullValue=—}"
+                                   Foreground="{StaticResource Fg2}" FontSize="10.5" VerticalAlignment="Center"/>
+                        <TextBlock Text="{Binding ProviderName}" Foreground="{StaticResource Fg}"
+                                   FontSize="12" FontWeight="SemiBold"/>
+                    </DockPanel>
+                    <DockPanel Margin="0,2,0,0">
+                        <TextBlock DockPanel.Dock="Left" Text="{Binding DisplayName}" Foreground="{StaticResource Fg}" FontWeight="Bold"
+                                   MaxWidth="150" Margin="0,0,8,0" TextTrimming="CharacterEllipsis" ToolTip="{Binding DisplayName}"/>
+                        <TextBlock Text="{Binding Status}" Foreground="{StaticResource Fg2}"
+                                   VerticalAlignment="Center" FontSize="10.5" TextTrimming="CharacterEllipsis" ToolTip="{Binding Status}"/>
+                    </DockPanel>
 
-                    <ItemsControl ItemsSource="{Binding Usage}" Margin="0,12,0,0">
+                    <ItemsControl ItemsSource="{Binding Usage}" Margin="0,5,0,0">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate DataType="{x:Type ui:UsageRow}">
-                                <StackPanel Margin="0,0,0,10">
+                                <StackPanel Margin="0,0,0,3">
                                     <Grid>
                                         <TextBlock Text="{Binding Label}" Foreground="{StaticResource Fg}"/>
                                         <TextBlock HorizontalAlignment="Right">
@@ -142,15 +134,16 @@
                                     </Grid>
                                     <ProgressBar Style="{StaticResource UsageBar}" Value="{Binding Value}"
                                                  Visibility="{Binding BarVisibility}"
-                                                 Foreground="{Binding LevelBrush}" Margin="0,5,0,4"/>
-                                    <TextBlock Text="{Binding ResetText}" Foreground="{StaticResource Fg2}" FontSize="11"/>
+                                                 Foreground="{Binding LevelBrush}" Margin="0,3,0,2"/>
+                                    <TextBlock Text="{Binding ResetText}" Foreground="{StaticResource Fg2}" FontSize="10.5"
+                                               TextTrimming="CharacterEllipsis" ToolTip="{Binding ResetText}"/>
                                 </StackPanel>
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
 
                     <StackPanel Orientation="Horizontal" Visibility="{Binding IsSecondary, Converter={StaticResource BooleanToVisibilityConverter}}"
-                                Margin="0,2,0,0">
+                                Margin="0,3,0,0">
                         <Button Content="{Binding LoginText}" Command="{Binding LoginCommand}" IsEnabled="{Binding CanLogin}"
                                 Style="{StaticResource SmallActionButton}"
                                 AutomationProperties.Name="{Binding LoginText}"
@@ -166,7 +159,7 @@
         </DataTemplate>
     </UserControl.Resources>
 
-    <Border Background="{StaticResource WinBg}" Padding="16,14">
+    <Border Background="{StaticResource WinBg}" Padding="12,10">
         <Grid>
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto"/>
@@ -180,7 +173,7 @@
                     <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
-                <TextBlock Text="계정 사용량" Foreground="{StaticResource Fg}" FontSize="18" FontWeight="SemiBold"
+                <TextBlock Text="계정 사용량" Foreground="{StaticResource Fg}" FontSize="16" FontWeight="SemiBold"
                            VerticalAlignment="Center"/>
                 <Button x:Name="RefreshButton" Grid.Column="1" Content="새로고침" Style="{StaticResource ActionButton}"
                         HorizontalAlignment="Right" Margin="0" Click="Refresh_Click"
@@ -190,21 +183,19 @@
                         AutomationProperties.Name="계정 패널 닫기"/>
             </Grid>
 
-            <StackPanel Grid.Row="1" Margin="0,12,0,14">
-                <TextBlock Text="브라우저에서 로그인해 계정을 추가할 수 있습니다." Foreground="{StaticResource Fg2}"
-                           TextWrapping="Wrap"/>
-                <TextBlock Text="기존 앱의 주 계정은 유지됩니다. Codex 로그인 시 브라우저에서 추가할 계정을 선택해 주세요." Foreground="{StaticResource Fg2}"
-                           Margin="0,3,0,0" TextWrapping="Wrap"/>
-                <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
+            <StackPanel Grid.Row="1" Margin="0,7,0,8">
+                <TextBlock Text="브라우저에서 서브 계정 추가 · 기존 앱 계정 유지" Foreground="{StaticResource Fg2}" FontSize="11"/>
+                <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
                     <Button x:Name="AddClaudeButton" Content="Claude 계정 추가" Style="{StaticResource ActionButton}"
                             Click="AddClaude_Click" AutomationProperties.Name="Claude 계정 추가"/>
                     <Button x:Name="AddCodexButton" Content="Codex 계정 추가" Style="{StaticResource ActionButton}"
-                            Click="AddCodex_Click" AutomationProperties.Name="Codex 계정 추가"/>
+                            Click="AddCodex_Click" AutomationProperties.Name="Codex 계정 추가"
+                            ToolTip="브라우저에서 추가할 Codex 계정을 선택해 주세요"/>
                 </StackPanel>
             </StackPanel>
 
-            <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
-                          CanContentScroll="True" Padding="0,0,7,0">
+            <ScrollViewer x:Name="AccountsScroll" Grid.Row="2" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
+                          CanContentScroll="False" Padding="0,0,3,0">
                 <ItemsControl x:Name="AccountItems" ItemTemplate="{StaticResource AccountTemplate}"/>
             </ScrollViewer>
         </Grid>

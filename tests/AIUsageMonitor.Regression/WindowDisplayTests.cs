@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Windows;
@@ -116,6 +116,7 @@ internal static partial class Program
         {
             Opacity = 0, ShowActivated = false, ShowInTaskbar = false, AllowClose = true,
         };
+        AccountsFlyout? flyout = null;
         try
         {
             window.Show();
@@ -125,30 +126,29 @@ internal static partial class Program
             var baseline = new Size(window.Width, window.Height);
             var root = (FrameworkElement)window.Content;
             double scale = ((ScaleTransform)root.LayoutTransform).ScaleX;
-            var dashboard = (FrameworkElement)window.FindName("Dashboard");
-            double dashboardWidth = dashboard.ActualWidth;
-            var host = (Border)window.FindName("AccountDrawerHost");
+            int geometryChanges = 0;
+            window.LocationChanged += (_, _) => geometryChanges++;
+            window.SizeChanged += (_, _) => geometryChanges++;
             foreach (bool onLeft in new[] { true, false })
             {
                 window.Left = onLeft ? area.Right - baseline.Width - 12 : area.Left + 12;
                 PumpDisplay();
-                double mainLeft = window.Left;
+                var position = new Point(window.Left, window.Top);
+                geometryChanges = 0;
                 window.SetAccountsOpen(true);
-                PumpDisplay(350);
-                var mainPosition = dashboard.TranslatePoint(new Point(), window);
-                Check("account drawer opens beside the dashboard", window.IsAccountsOpen &&
-                    host.Visibility == Visibility.Visible && Grid.GetColumn(host) == (onLeft ? 0 : 2) &&
-                    window.Width > baseline.Width && window.Height == baseline.Height &&
-                    dashboard.ActualWidth == dashboardWidth && ((ScaleTransform)root.LayoutTransform).ScaleX == scale &&
-                    Math.Abs(window.Left + mainPosition.X - mainLeft) <= 1,
-                    $"left={onLeft}, column={Grid.GetColumn(host)}, width={window.Width}, dashboard={dashboard.ActualWidth}");
-                Check("account management shares the main native window",
-                    PresentationSource.FromVisual(window.Accounts) == PresentationSource.FromVisual(window), "separate window");
+                PumpDisplay();
+                flyout = window.OwnedWindows.OfType<AccountsFlyout>().Single();
+                Check("floating panel opens on the available side", window.IsAccountsOpen && flyout.IsVisible &&
+                    (onLeft ? flyout.Left + flyout.Width < window.Left : flyout.Left > window.Left + window.Width),
+                    $"left={onLeft}, panel={flyout.Left}/{flyout.Width}, main={window.Left}/{window.Width}");
+                Check("account panel uses an owned independent native window", !flyout.ShowInTaskbar &&
+                    PresentationSource.FromVisual(window.Accounts) != PresentationSource.FromVisual(window), "shared HWND or taskbar entry");
                 window.SetAccountsOpen(false);
-                PumpDisplay(350);
-                CheckStable("closing the drawer restores main width without rescaling", window, baseline, scale);
-                Check("closing preserves dashboard position", Math.Abs(window.Left - mainLeft) <= 1 &&
-                    host.Visibility == Visibility.Collapsed, $"left={window.Left}, expected={mainLeft}");
+                PumpDisplay();
+                CheckStable("open and close preserve main size and scale", window, baseline, scale);
+                Check("open and close never move or resize the owner", geometryChanges == 0 &&
+                    new Point(window.Left, window.Top) == position && !flyout.IsVisible,
+                    $"geometry events={geometryChanges}");
             }
 
             int claudeAdds = 0, codexAdds = 0, refreshes = 0;
@@ -159,50 +159,80 @@ internal static partial class Program
             window.Accounts.Update([], false);
             foreach (var name in new[] { "AddClaudeButton", "AddCodexButton", "RefreshButton" })
                 Button(name).RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Button.ClickEvent));
-            Check("embedded panel forwards account and refresh actions", claudeAdds == 1 && codexAdds == 1 && refreshes == 1,
+            Check("floating panel forwards account and refresh actions", claudeAdds == 1 && codexAdds == 1 && refreshes == 1,
                 $"actions={claudeAdds}/{codexAdds}/{refreshes}");
             window.Accounts.Update([], true);
             Check("login in progress disables add buttons", !Button("AddClaudeButton").IsEnabled && !Button("AddCodexButton").IsEnabled,
                 "login guard missing");
-            window.SetAccountsOpen(true);
-            PumpDisplay(350);
-            var key = new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(window)!, Environment.TickCount, Key.Escape)
-            { RoutedEvent = Keyboard.PreviewKeyDownEvent };
-            window.RaiseEvent(key);
-            PumpDisplay(350);
-            Check("Escape closes the account drawer", !window.IsAccountsOpen && host.Visibility == Visibility.Collapsed && key.Handled,
-                "Escape not handled");
+
+            foreach (var target in new Window[] { window, flyout! })
+            {
+                window.SetAccountsOpen(true);
+                PumpDisplay();
+                var key = new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(target)!, Environment.TickCount, Key.Escape)
+                { RoutedEvent = Keyboard.PreviewKeyDownEvent };
+                target.RaiseEvent(key);
+                Check("Escape in either window closes the floating panel", !window.IsAccountsOpen && !flyout!.IsVisible && key.Handled,
+                    target.GetType().Name);
+            }
             window.SetAccountsOpen(true);
             window.SetAccountsOpen(false);
             window.SetAccountsOpen(true);
-            PumpDisplay(350);
-            Check("rapid toggles finish in the last requested state", window.IsAccountsOpen && host.Width == 360 &&
-                host.Visibility == Visibility.Visible, $"width={host.Width}");
+            PumpDisplay();
+            Check("rapid toggles reuse a single floating panel", window.IsAccountsOpen && flyout!.IsVisible &&
+                window.OwnedWindows.Count == 1, $"owned windows={window.OwnedWindows.Count}");
+            double panelLeft = flyout!.Left;
             window.Left += 30;
             PumpDisplay();
-            double movedMainLeft = window.Left + dashboard.TranslatePoint(new Point(), window).X;
+            Check("floating panel follows owner movement", Math.Abs(flyout.Left - panelLeft - 30) <= 1, flyout.Left.ToString());
+            double movedMainLeft = window.Left;
             Button("CloseButton").RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Button.ClickEvent));
-            PumpDisplay(350);
-            CheckStable("rapid toggles do not accumulate window width", window, baseline, scale);
-            Check("panel close after moving keeps the moved dashboard position", !window.IsAccountsOpen &&
-                Math.Abs(window.Left - movedMainLeft) <= 1, $"left={window.Left}, expected={movedMainLeft}");
+            PumpDisplay();
+            CheckStable("rapid toggles do not accumulate main window width", window, baseline, scale);
+            Check("closing after movement preserves owner position", !window.IsAccountsOpen && window.Left == movedMainLeft,
+                window.Left.ToString());
 
-            // Simulate a dashboard too wide for an adjacent panel without changing display settings.
-            double narrowWidth = area.Width - 24;
-            window.Width = narrowWidth;
-            dashboard.Width = narrowWidth / scale;
-            root.Width = dashboard.Width;
-            typeof(MainWindow).GetField("_dashboardWindowWidth", BindingFlags.Instance | BindingFlags.NonPublic)!
-                .SetValue(window, narrowWidth);
             window.SetAccountsOpen(true);
-            PumpDisplay(350);
-            Check("insufficient side space uses an overlay without changing dashboard scale",
-                Grid.GetColumn(host) == 1 && window.Width == narrowWidth && host.Width == 360 &&
-                ((ScaleTransform)root.LayoutTransform).ScaleX == scale, $"width={window.Width}, column={Grid.GetColumn(host)}");
-            window.SetAccountsOpen(false);
-            PumpDisplay(350);
-            Check("closing overlay keeps the existing window width", window.Width == narrowWidth, window.Width.ToString());
+            var positionBefore = new Point(window.Left, window.Top);
+            var narrowArea = new Rect(window.Left, window.Top, 420, 920);
+            flyout.PositionBeside(window, narrowArea);
+            Check("limited side space only repositions the floating panel", window.Width == baseline.Width &&
+                new Point(window.Left, window.Top) == positionBefore && flyout.Left >= narrowArea.Left &&
+                flyout.Left + flyout.Width <= narrowArea.Right, $"panel={flyout.Left}/{flyout.Width}");
+            flyout.PositionBeside(window, area);
+
+            var accounts = Enumerable.Range(0, 6).Select(i => new AccountUsageCard
+            {
+                Id = i.ToString(), ProviderName = (i < 3 ? "Claude" : "Codex") + (i % 3 == 0 ? " · 주 계정" : " · 서브 계정"),
+                DisplayName = "ACCOUNT_" + i, Plan = "Max 20x", Status = "연결됨 · 화면 검증용 데이터",
+                IsSecondary = i % 3 != 0, CanLogin = true, LoginText = "다시 로그인",
+                Usage = [new UsageRow { Label = i == 5 ? "5시간 한도" : "주간 한도", Value = 25,
+                    UsedText = "25%", RemainText = "사용 · 75% 남음", ResetText = "리셋까지 5일 12시간 · 10-19(월) 08:09", LevelBrush = Palette.Ok }],
+            }).ToList();
+            window.Accounts.Update(accounts, false);
+            PumpDisplay();
+            var scroll = (ScrollViewer)window.Accounts.FindName("AccountsScroll");
+            var items = (ItemsControl)window.Accounts.FindName("AccountItems");
+            var last = (FrameworkElement)items.ItemContainerGenerator.ContainerFromIndex(5);
+            Check("all six compact account cards fit without scrolling", scroll.ScrollableHeight == 0 &&
+                last.TransformToAncestor(scroll).Transform(new Point(0, last.ActualHeight)).Y <= scroll.ActualHeight + 1,
+                $"extent={scroll.ExtentHeight}, viewport={scroll.ViewportHeight}, overflow={scroll.ScrollableHeight}");
+
+            window.Hide();
+            Check("hiding owner hides the account panel", !window.IsAccountsOpen && !flyout.IsVisible, "orphan panel");
+            window.Show();
+            window.SetAccountsOpen(true);
+            window.WindowState = WindowState.Minimized;
+            PumpDisplay();
+            Check("minimizing owner dismisses the account panel", !window.IsAccountsOpen && !flyout.IsVisible, "panel stayed open");
+            window.WindowState = WindowState.Normal;
+            window.SetAccountsOpen(true);
+            flyout.Close();
+            Check("native panel close preserves reusable accounts", !window.IsAccountsOpen && !flyout.IsVisible, "panel state stale");
+            window.SetAccountsOpen(true);
+            Check("closed floating panel reopens with account data", flyout.IsVisible && items.Items.Count == 6, "data lost");
         }
         finally { window.Close(); }
+        Check("closing owner cleans up floating panel", flyout == null || !flyout.IsVisible, "orphan window");
     }
 }

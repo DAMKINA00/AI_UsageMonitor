@@ -239,18 +239,7 @@
     </Window.Resources>
 
     <Border Background="{StaticResource WinBg}">
-        <Grid>
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="Auto"/>
-                <ColumnDefinition Width="Auto"/>
-                <ColumnDefinition Width="Auto"/>
-            </Grid.ColumnDefinitions>
-            <Border x:Name="AccountDrawerHost" Grid.Column="0" Width="0" ClipToBounds="True"
-                    Visibility="Collapsed" Panel.ZIndex="2" Background="{StaticResource WinBg}"
-                    BorderBrush="{StaticResource Line}" BorderThickness="0,0,1,0">
-                <ui:AccountsPanel x:Name="AccountPanel" Width="360" HorizontalAlignment="Right"/>
-            </Border>
-        <DockPanel x:Name="Dashboard" Grid.Column="1">
+        <DockPanel x:Name="Dashboard">
             <!-- 타이틀 바 -->
             <Grid DockPanel.Dock="Top" Height="40" Background="Transparent" MouseLeftButtonDown="TitleBar_MouseLeftButtonDown">
                 <TextBlock Text="AI 사용량 모니터" Foreground="{StaticResource Fg}" FontWeight="SemiBold" FontSize="13"
@@ -281,6 +270,5 @@
                 </Grid>
             </StackPanel>
         </DockPanel>
-        </Grid>
     </Border>
 </Window>

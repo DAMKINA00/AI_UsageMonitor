@@ -5,7 +5,6 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
-using System.Windows.Media.Animation;
 using AIUsageMonitor.Core;
 using AIUsageMonitor.UI;
 
@@ -35,91 +34,38 @@ public partial class MainWindow : Window
             FitToContent();
         };
         ContentRendered += (_, _) => RestorePosition();
-        IsVisibleChanged += (_, _) => UpdateStages();
-        StateChanged += (_, _) => UpdateStages();
-        AccountPanel.CloseRequested += () => SetAccountsOpen(false);
+        IsVisibleChanged += (_, _) => { UpdateStages(); if (!IsVisible) SetAccountsOpen(false); };
+        StateChanged += (_, _) => { UpdateStages(); if (WindowState == WindowState.Minimized) SetAccountsOpen(false); };
+        LocationChanged += (_, _) => { if (IsAccountsOpen) _accountsFlyout!.PositionBeside(this, CurrentWorkArea()); };
+        Accounts.CloseRequested += () => SetAccountsOpen(false);
     }
 
     public CharacterStage Claude => ClaudeStage;
     public CharacterStage Codex => CodexStage;
-    public AccountsPanel Accounts => AccountPanel;
+    public AccountsPanel Accounts { get; } = new();
     public bool IsAccountsOpen { get; private set; }
-
-    static readonly DependencyProperty DrawerWidthProperty = DependencyProperty.Register(
-        nameof(DrawerWidth), typeof(double), typeof(MainWindow), new PropertyMetadata(0d,
-            (owner, _) => ((MainWindow)owner).UpdateDrawerBounds()));
-    double DrawerWidth { get => (double)GetValue(DrawerWidthProperty); set => SetValue(DrawerWidthProperty, value); }
-    double _drawerAnchorLeft, _drawerTarget, _dashboardWindowWidth;
-    bool _drawerOnLeft, _drawerOverlay, _drawerAnimating;
-    double UiScale => ((ScaleTransform)((FrameworkElement)Content).LayoutTransform).ScaleX;
-    double DashboardLeft => Left + (_drawerOnLeft && !_drawerOverlay ? DrawerWidth * UiScale : 0);
+    AccountsFlyout? _accountsFlyout;
 
     public void SetAccountsOpen(bool open)
     {
         if (IsAccountsOpen == open) return;
         if (!_positioned) RestorePosition();
-        FinishDrawerAnimation();
-        _drawerAnchorLeft = DashboardLeft;
         IsAccountsOpen = open;
         if (open)
         {
-            var area = CurrentWorkArea();
-            const double panelWidth = 360;
-            double expandedWidth = _dashboardWindowWidth + panelWidth * UiScale;
-            _drawerOverlay = expandedWidth > area.Width - 24;
-            double leftSpace = _drawerAnchorLeft - area.Left - 12;
-            double rightSpace = area.Right - (_drawerAnchorLeft + _dashboardWindowWidth) - 12;
-            _drawerOnLeft = !_drawerOverlay && (leftSpace >= panelWidth * UiScale || leftSpace >= rightSpace);
-            AccountPanel.Width = Math.Min(panelWidth, Dashboard.Width);
-            _drawerTarget = AccountPanel.Width;
-            Grid.SetColumn(AccountDrawerHost, _drawerOverlay ? 1 : _drawerOnLeft ? 0 : 2);
-            AccountDrawerHost.HorizontalAlignment = _drawerOnLeft ? HorizontalAlignment.Left : HorizontalAlignment.Right;
-            AccountPanel.HorizontalAlignment = _drawerOnLeft ? HorizontalAlignment.Right : HorizontalAlignment.Left;
-            AccountDrawerHost.BorderThickness = _drawerOnLeft ? new Thickness(0, 0, 1, 0) : new Thickness(1, 0, 0, 0);
-            if (!_drawerOverlay)
+            if (_accountsFlyout == null)
             {
-                double fullLeft = _drawerAnchorLeft - (_drawerOnLeft ? _drawerTarget * UiScale : 0);
-                fullLeft = Math.Clamp(fullLeft, area.Left + 12, area.Right - expandedWidth - 12);
-                _drawerAnchorLeft = fullLeft + (_drawerOnLeft ? _drawerTarget * UiScale : 0);
+                _accountsFlyout = new AccountsFlyout(Accounts) { Owner = this };
+                _accountsFlyout.CloseRequested += () => SetAccountsOpen(false);
             }
-            AccountDrawerHost.Visibility = Visibility.Visible;
+            _accountsFlyout.Topmost = Topmost;
+            _accountsFlyout.Opacity = Opacity;
+            _accountsFlyout.PositionBeside(this, CurrentWorkArea());
+            _accountsFlyout.Show();
         }
-        else _drawerTarget = 0;
+        else _accountsFlyout?.Hide();
         AccountsButton.Foreground = open ? Palette.Text : Palette.Muted;
-        if (SystemParameters.ClientAreaAnimation)
-        {
-            _drawerAnimating = true;
-            var animation = new DoubleAnimation(_drawerTarget, TimeSpan.FromMilliseconds(220))
-            {
-                EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut },
-            };
-            animation.Completed += (_, _) => FinishDrawerAnimation();
-            BeginAnimation(DrawerWidthProperty, animation);
-        }
-        else
-        {
-            DrawerWidth = _drawerTarget;
-            if (!open) AccountDrawerHost.Visibility = Visibility.Collapsed;
-        }
         if (!open) AccountsButton.Focus();
-    }
-
-    void UpdateDrawerBounds()
-    {
-        AccountDrawerHost.Width = DrawerWidth;
-        double extension = _drawerOverlay ? 0 : DrawerWidth;
-        ((FrameworkElement)Content).Width = Dashboard.Width + extension;
-        Width = _dashboardWindowWidth + Math.Ceiling(extension * UiScale);
-        Left = _drawerAnchorLeft - (_drawerOnLeft ? extension * UiScale : 0);
-    }
-
-    void FinishDrawerAnimation()
-    {
-        if (!_drawerAnimating) return;
-        _drawerAnimating = false;
-        DrawerWidth = _drawerTarget;
-        BeginAnimation(DrawerWidthProperty, null);
-        if (!IsAccountsOpen) AccountDrawerHost.Visibility = Visibility.Collapsed;
     }
 
     protected override void OnPreviewKeyDown(KeyEventArgs e)
@@ -160,7 +106,6 @@ public partial class MainWindow : Window
         root.LayoutTransform = new ScaleTransform(scale, scale);
         root.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
         Width = Math.Ceiling(root.DesiredSize.Width);
-        _dashboardWindowWidth = Width;
         Height = Math.Ceiling(contentHeight * scale);
     }
 
@@ -200,6 +145,7 @@ public partial class MainWindow : Window
     public void ApplyTopmost(bool on)
     {
         Topmost = on;
+        if (_accountsFlyout != null) _accountsFlyout.Topmost = on;
         PinButton.Content = on ? "" : "";
         PinButton.ToolTip = on ? "항상 위에 표시 해제" : "항상 위에 표시";
     }
@@ -234,7 +180,7 @@ public partial class MainWindow : Window
 
     void SavePosition()
     {
-        _settings.WindowLeft = DashboardLeft;
+        _settings.WindowLeft = Left;
         _settings.WindowTop = Top;
         _settings.Save();
     }
@@ -242,7 +188,6 @@ public partial class MainWindow : Window
     void TitleBar_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
         if (e.ButtonState != MouseButtonState.Pressed) return;
-        FinishDrawerAnimation();
         DragMove();
         SavePosition();
     }

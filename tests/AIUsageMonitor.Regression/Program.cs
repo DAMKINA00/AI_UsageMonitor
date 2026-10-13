@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using System.Reflection;
 using System.Text;
 using System.Text.Json;
@@ -27,7 +27,7 @@ internal static partial class Program
         Run("Compact usage and account slots", TestCompactUsage);
         Run("Usage failure, reset confirmation and hidden limits", TestUsageReliability);
         Run("Stable size across monitor changes", TestWindowDisplay);
-        Run("Embedded account drawer and controls", TestAccountsPanel);
+        Run("Floating account panel and compact cards", TestAccountsPanel);
         Run("Character overlay activity and speech anchor", TestCharacterOverlay);
         Run("Account swap and Codex subagent filtering", TestAccountSwapAndCodexSubagents);
         Run("Codex stale file timestamps", TestCodexStaleFileTimes);
