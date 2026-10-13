@@ -105,8 +105,8 @@ internal static partial class Program
         Check("unauthenticated secondary is blank without shifting secondary 2",
             claudeSlots[1].IsEmpty && claudeSlots[1].Account == null &&
             claudeSlots[1].ContentVisibility == Visibility.Hidden &&
-            claudeSlots[2].Account == "claude2" && claudeSlots[2].Usage?.Value == 22 &&
-            claudeSlots.All(x => x.Account is not "claude3" and not "claude4"),
+            claudeSlots[2].Account == "CLAUDE2" && claudeSlots[2].Usage?.Value == 22 &&
+            claudeSlots.All(x => x.Account is not "CLAUDE3" and not "CLAUDE4"),
             string.Join(",", claudeSlots.Select(x => $"{x.Role}:{x.Account}:{x.Usage?.Value}")));
         Check("populated slot exposes remaining text, label, visibility, and signature",
             claudeSlots[2].Remaining == 78 && claudeSlots[2].RemainingText == "78%" &&
@@ -122,14 +122,14 @@ internal static partial class Program
             Snapshot("fixture", DateTimeOffset.UtcNow, Window("seven_day", 11, reset)), null);
         var independent = AccountUsageSlot.Create(claudeMain, service.Accounts);
         Check("secondary account usage stays independent",
-            independent[1].Account == "claude1" && independent[1].Usage?.Value == 11 &&
-            independent[2].Account == "claude2" && independent[2].Usage?.Value == 22,
+            independent[1].Account == "CLAUDE1" && independent[1].Usage?.Value == 11 &&
+            independent[2].Account == "CLAUDE2" && independent[2].Usage?.Value == 22,
             string.Join(",", independent.Select(x => $"{x.Role}:{x.Account}:{x.Usage?.Value}")));
 
         ApplySecondary(claudeAccounts[0], false, true, null, null, null);
         var afterLoginLoss = AccountUsageSlot.Create(claudeMain, service.Accounts);
         Check("login loss clears only the affected secondary slot",
-            afterLoginLoss[1].IsEmpty && afterLoginLoss[2].Account == "claude2" && afterLoginLoss[2].Usage?.Value == 22,
+            afterLoginLoss[1].IsEmpty && afterLoginLoss[2].Account == "CLAUDE2" && afterLoginLoss[2].Usage?.Value == 22,
             string.Join(",", afterLoginLoss.Select(x => $"{x.Role}:{x.Account}:{x.Usage?.Value}")));
 
         var vm = new MainViewModel();
@@ -219,7 +219,7 @@ internal static partial class Program
         var future = Presenter.DisplayUsage([Window("seven_day", 10, now.AddHours(1).AddMinutes(5))], now).Single();
         var expired = Presenter.DisplayUsage([Window("seven_day", 10, now.AddSeconds(-1))], now).Single();
         Check("UsageRow carries a short future reset timer", future.ResetShort == "1H 5M", future.ResetShort);
-        Check("expired UsageRow carries a zero short reset timer", expired.Value == 0 && expired.ResetShort == "0M",
+        Check("expired UsageRow awaits confirmation without fabricating usage", expired.Value == 10 && expired.IsResetPending && expired.ResetShort == "확인 중",
             $"value={expired.Value}, reset={expired.ResetShort}");
 
         var fiveMinute = Presenter.DisplayUsage([Window("seven_day", 10, now.AddMinutes(5))], now).Single();

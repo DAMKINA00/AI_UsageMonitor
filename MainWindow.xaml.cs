@@ -5,6 +5,7 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
+using System.Windows.Threading;
 using AIUsageMonitor.Core;
 using AIUsageMonitor.UI;
 
@@ -13,6 +14,9 @@ namespace AIUsageMonitor;
 public partial class MainWindow : Window
 {
     readonly AppSettings _settings;
+    HwndSource? _windowSource;
+    Rect _lastWorkArea;
+    bool _displayFitQueued, _fittingDisplay, _closed;
 
     public event Action? RefreshRequested;
     public event Action? AccountsRequested;
@@ -30,12 +34,31 @@ public partial class MainWindow : Window
         ApplyCharacters(settings.ShowCharacters);
         SourceInitialized += (_, _) =>
         {
+            _windowSource = HwndSource.FromHwnd(new WindowInteropHelper(this).Handle);
+            _windowSource?.AddHook(WindowMessage);
             RoundCorners();
             FitToContent();
         };
         ContentRendered += (_, _) => RestorePosition();
-        IsVisibleChanged += (_, _) => UpdateStages();
-        StateChanged += (_, _) => UpdateStages();
+        IsVisibleChanged += (_, _) =>
+        {
+            UpdateStages();
+            if (IsVisible) QueueDisplayFit();
+        };
+        LocationChanged += (_, _) =>
+        {
+            if (_positioned && !_fittingDisplay && CurrentWorkArea() != _lastWorkArea) QueueDisplayFit();
+        };
+        StateChanged += (_, _) =>
+        {
+            UpdateStages();
+            if (WindowState != WindowState.Minimized) QueueDisplayFit();
+        };
+        Closed += (_, _) =>
+        {
+            _closed = true;
+            _windowSource?.RemoveHook(WindowMessage);
+        };
     }
 
     public CharacterStage Claude => ClaudeStage;
@@ -58,6 +81,7 @@ public partial class MainWindow : Window
         if (Content is not FrameworkElement root) return;
         const double baseWidth = 410, preferredScale = 1.5;
         var area = CurrentWorkArea();
+        _lastWorkArea = area;
         root.LayoutTransform = Transform.Identity;
         root.Width = baseWidth;
         root.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
@@ -76,6 +100,41 @@ public partial class MainWindow : Window
         var bounds = System.Windows.Forms.Screen.FromHandle(new WindowInteropHelper(this).Handle).WorkingArea;
         var fromPixels = PresentationSource.FromVisual(this)?.CompositionTarget?.TransformFromDevice ?? Matrix.Identity;
         return Rect.Transform(new Rect(bounds.X, bounds.Y, bounds.Width, bounds.Height), fromPixels);
+    }
+
+    IntPtr WindowMessage(IntPtr hwnd, int message, IntPtr wParam, IntPtr lParam, ref bool handled)
+    {
+        const int wmDisplayChange = 0x007E, wmSettingChange = 0x001A, spiSetWorkArea = 0x002F;
+        if (message == wmDisplayChange || (message == wmSettingChange && wParam.ToInt64() == spiSetWorkArea))
+            QueueDisplayFit();
+        return IntPtr.Zero;
+    }
+
+    protected override void OnDpiChanged(DpiScale oldDpi, DpiScale newDpi)
+    {
+        base.OnDpiChanged(oldDpi, newDpi);
+        QueueDisplayFit();
+    }
+
+    void QueueDisplayFit()
+    {
+        if (!_positioned || _closed || _fittingDisplay || _displayFitQueued) return;
+        _displayFitQueued = true;
+        // Windows가 모니터와 DPI 변경을 적용한 뒤 한 번만 다시 맞춘다.
+        Dispatcher.BeginInvoke(DispatcherPriority.ContextIdle, new Action(() =>
+        {
+            _displayFitQueued = false;
+            if (_closed || WindowState == WindowState.Minimized) return;
+            _fittingDisplay = true;
+            try
+            {
+                FitToContent();
+                KeepOnScreen();
+                _settings.WindowLeft = Left;
+                _settings.WindowTop = Top;
+            }
+            finally { _fittingDisplay = false; }
+        }));
     }
 
     void KeepOnScreen()

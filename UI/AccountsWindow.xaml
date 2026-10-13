@@ -126,7 +126,7 @@
                                     <TextBlock Text="{Binding Plan, TargetNullValue=—}" Foreground="{StaticResource Fg2}" FontSize="11"/>
                                 </Border>
                             </StackPanel>
-                            <TextBlock Text="{Binding DisplayName}" Foreground="{StaticResource Fg2}"
+                            <TextBlock Text="{Binding DisplayName}" Foreground="{StaticResource Fg}" FontWeight="Bold"
                                        Margin="0,3,0,0" TextTrimming="CharacterEllipsis"/>
                         </StackPanel>
                         <TextBlock Grid.Row="1" Text="{Binding Status}" Foreground="{StaticResource Fg2}"
@@ -145,6 +145,7 @@
                                         </TextBlock>
                                     </Grid>
                                     <ProgressBar Style="{StaticResource UsageBar}" Value="{Binding Value}"
+                                                 Visibility="{Binding BarVisibility}"
                                                  Foreground="{Binding LevelBrush}" Margin="0,5,0,4"/>
                                     <TextBlock Text="{Binding ResetText}" Foreground="{StaticResource Fg2}" FontSize="11"/>
                                 </StackPanel>

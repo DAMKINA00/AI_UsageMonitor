@@ -30,7 +30,7 @@ public sealed class AccountUsageCard
                 Id = "primary:" + main.Name, ProviderName = main.Name + " · 주 계정",
                 DisplayName = Fmt.AccountId(main.Account) ?? "계정 확인 중", Plan = main.Plan,
                 Status = main.Notice ?? main.UsageEmpty ?? main.Footnote,
-                Usage = Presenter.DisplayUsage(main.RawWindows),
+                Usage = main.Usage,
             });
             foreach (var account in service.Accounts.Where(x => x.Settings.Provider.ToString() == main.Name))
             {

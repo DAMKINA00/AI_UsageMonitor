@@ -8,8 +8,8 @@ internal static partial class Program
 {
     static void TestMultiAccounts()
     {
-        Check("account labels contain only the ID", Fmt.AccountId("damkina@example.test's Organization") == "damkina" &&
-            Fmt.AccountId("  sub@example.test  ") == "sub" && Fmt.AccountId("plain name") == "plain name" &&
+        Check("account labels contain only the uppercase ID", Fmt.AccountId("damkina@example.test's Organization") == "DAMKINA" &&
+            Fmt.AccountId("  sub@example.test  ") == "SUB" && Fmt.AccountId("plain name") == "PLAIN NAME" &&
             Fmt.AccountId(null) == null && Fmt.AccountId("  ") == null, "account formatting");
         var firstId = Guid.NewGuid().ToString("N");
         var secondId = Guid.NewGuid().ToString("N");
@@ -77,7 +77,7 @@ internal static partial class Program
         var claude = Presenter.Claude(monitor, settings, () => { });
         var codex = Presenter.Codex(monitor);
         var cards = AccountUsageCard.Create(claude, codex, service);
-        Check("primary and secondary cards show IDs without domains", claude.Account == "mainclaude" && codex.Account == "maincodex" &&
+        Check("primary and secondary cards show IDs without domains", claude.Account == "MAINCLAUDE" && codex.Account == "MAINCODEX" &&
             cards.All(x => !x.DisplayName.Contains('@')), string.Join(',', cards.Select(x => x.DisplayName)));
         Check("multiple accounts have independent displayed usage", cards.Count == 6 && cards.Count(x => x.IsSecondary) == 4 &&
             cards.SelectMany(x => x.Usage).Select(x => x.Value).Order().SequenceEqual(new double[] { 10, 11, 12, 13, 60, 70 }),

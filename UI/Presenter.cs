@@ -53,6 +53,8 @@ public sealed class UsageRow
     public required string RemainText { get; init; }
     public required string ResetText { get; init; }
     public string ResetShort { get; init; } = "";
+    public bool IsResetPending { get; init; }
+    public Visibility BarVisibility => IsResetPending ? Visibility.Hidden : Visibility.Visible;
     public required Brush LevelBrush { get; init; }
 }
 
@@ -99,6 +101,7 @@ public sealed class ProviderCard
     public int FreshNeedsInputCount { get; init; }
     public bool AppRunning { get; init; }
     public bool LimitReached { get; init; }
+    public bool UsageResetPending { get; init; }
     public DateTimeOffset? LastActivity { get; init; }
     public DateTimeOffset? SoonestReset { get; init; }
 
@@ -163,7 +166,7 @@ public static class Fmt
     {
         if (string.IsNullOrWhiteSpace(name)) return null;
         int at = name.IndexOf('@');
-        return (at >= 0 ? name[..at] : name).Trim();
+        return (at >= 0 ? name[..at] : name).Trim().ToUpperInvariant();
     }
 
     static readonly string[] Days = ["일", "월", "화", "수", "목", "금", "토"];
@@ -245,10 +248,13 @@ public static class Presenter
     static bool IsFiveHour(UsageWindow w) => w.Key is "five_hour" || w.Key.EndsWith(":w300", StringComparison.Ordinal);
     static bool IsWeekly(UsageWindow w) => w.Key is "seven_day" || w.Key.EndsWith(":w10080", StringComparison.Ordinal);
 
-    static IEnumerable<UsageWindow> PickDisplayWindows(List<UsageWindow> windows)
+    static bool IsExpired(UsageWindow window, DateTimeOffset now) => window.ResetsAt is { } reset && reset <= now;
+    static bool IsFable(UsageWindow window) => window.Key.Equals("seven_day_fable", StringComparison.OrdinalIgnoreCase);
+
+    static IEnumerable<UsageWindow> PickDisplayWindows(List<UsageWindow> windows, DateTimeOffset now)
     {
         if (windows.Count == 0) yield break;
-        var five = windows.Where(IsFiveHour).OrderByDescending(w => w.UsedPercent).FirstOrDefault();
+        var five = windows.Where(w => IsFiveHour(w) && !IsExpired(w, now)).OrderByDescending(w => w.UsedPercent).FirstOrDefault();
         if (five is { UsedPercent: >= 90 })
         {
             yield return five with { Label = "5시간 한도" };
@@ -256,6 +262,8 @@ public static class Presenter
         }
         var weekly = windows.FirstOrDefault(IsWeekly);
         if (weekly != null) yield return weekly with { Label = "주간 한도" };
+        else if (windows.FirstOrDefault(w => IsFiveHour(w) && IsExpired(w, now) && w.UsedPercent >= 90) is { } pending)
+            yield return pending with { Label = "5시간 한도" };
     }
 
     public static List<UsageRow> DisplayUsage(IEnumerable<UsageWindow> windows, DateTimeOffset? asOf = null)
@@ -263,17 +271,19 @@ public static class Presenter
         var now = asOf ?? DateTimeOffset.Now;
         var effective = windows.Select(w => w with
         {
-            UsedPercent = w.ResetsAt is { } reset && reset <= now ? 0 : Math.Clamp(w.UsedPercent, 0, 100),
+            UsedPercent = Math.Clamp(w.UsedPercent, 0, 100),
         }).ToList();
-        return PickDisplayWindows(effective).Select(w => new UsageRow
+        return PickDisplayWindows(effective, now).Select(w => new UsageRow
         {
-            Label = w.Label, Value = w.UsedPercent, UsedText = Fmt.Pct(w.UsedPercent),
-            RemainText = $" 사용 · {Fmt.Pct(100 - w.UsedPercent)} 남음",
-            ResetText = w.ResetsAt is { } reset && reset <= now
-                ? "리셋됨 · 새 데이터 대기 중"
+            Label = w.Label, Value = w.UsedPercent,
+            IsResetPending = IsExpired(w, now),
+            UsedText = IsExpired(w, now) ? "확인 중" : Fmt.Pct(w.UsedPercent),
+            RemainText = IsExpired(w, now) ? "" : $" 사용 · {Fmt.Pct(100 - w.UsedPercent)} 남음",
+            ResetText = IsExpired(w, now)
+                ? "리셋 시각 경과 · 새 사용량 확인 중"
                 : w.ResetsAt is { } at ? $"리셋까지 {Fmt.Span(at - now)} · {Fmt.When(at)}" : "",
-            ResetShort = w.ResetsAt is { } resets ? Fmt.ShortSpan(resets - now) : "—",
-            LevelBrush = Palette.Level(w.UsedPercent),
+            ResetShort = IsExpired(w, now) ? "확인 중" : w.ResetsAt is { } resets ? Fmt.ShortSpan(resets - now) : "—",
+            LevelBrush = IsExpired(w, now) ? Palette.Muted : Palette.Level(w.UsedPercent),
         }).ToList();
     }
 
@@ -411,10 +421,11 @@ public static class Presenter
         var now = DateTimeOffset.Now;
         var rows = DisplayUsage(usage?.Windows ?? [], now);
         var effective = new List<UsageWindow>();
-        foreach (var w in usage?.Windows ?? [])
+        var relevant = (usage?.Windows ?? []).Where(w => !IsFable(w)).ToList();
+        bool resetPending = relevant.Any(w => IsExpired(w, now));
+        foreach (var w in relevant.Where(w => !IsExpired(w, now)))
         {
-            bool expired = w.ResetsAt is { } r && r <= now;
-            effective.Add(w with { UsedPercent = expired ? 0 : Math.Clamp(w.UsedPercent, 0, 100) });
+            effective.Add(w with { UsedPercent = Math.Clamp(w.UsedPercent, 0, 100) });
         }
 
         var ordered = sessions
@@ -465,7 +476,8 @@ public static class Presenter
                 (x.Id.StartsWith("chat:", StringComparison.Ordinal) ||
                  x.LastActivity is not { } la || now - la < TimeSpan.FromMinutes(30))),
             AppRunning = appRunning,
-            LimitReached = usage?.Warning?.Contains("도달") == true,
+            LimitReached = !resetPending && usage?.Warning?.Contains("도달") == true,
+            UsageResetPending = resetPending,
             LastActivity = ordered.Count > 0 ? ordered.Max(x => x.LastActivity) : null,
             SoonestReset = effective.OrderByDescending(w => w.UsedPercent).FirstOrDefault()?.ResetsAt,
         };

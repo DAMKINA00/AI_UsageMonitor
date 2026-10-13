@@ -168,10 +168,19 @@
                                             </Style>
                                         </Border.Style>
                                         <StackPanel Visibility="{Binding ContentVisibility}">
-                                            <TextBlock Text="{Binding Account}" Foreground="{StaticResource Fg}" FontSize="11"
+                                            <DockPanel>
+                                                <TextBlock DockPanel.Dock="Right" Text="⚠" Foreground="#E5A54B" FontSize="11"
+                                                           Margin="3,0,0,0" Visibility="{Binding WarningVisibility}"
+                                                           AutomationProperties.Name="사용량 조회 실패"/>
+                                                <TextBlock Text="{Binding Account}" Foreground="{StaticResource Fg}" FontSize="11" FontWeight="Bold"
+                                                           LineHeight="16" LineStackingStrategy="BlockLineHeight"
+                                                           TextAlignment="Center" TextTrimming="CharacterEllipsis"/>
+                                            </DockPanel>
+                                            <TextBlock Text="{Binding Label}" Foreground="{Binding LevelBrush}" FontSize="11"
                                                        LineHeight="16" LineStackingStrategy="BlockLineHeight"
-                                                       TextAlignment="Center" TextTrimming="CharacterEllipsis" Margin="0,0,0,4"/>
+                                                       HorizontalAlignment="Center" Margin="0,0,0,4"/>
                                             <Grid Width="54" Height="54" HorizontalAlignment="Center"
+                                                  Opacity="{Binding UsageOpacity}"
                                                   AutomationProperties.Name="{Binding ToolTipText}">
                                                 <ui:UsageRing Remaining="{Binding Remaining}" Visibility="{Binding RingVisibility}"/>
                                                 <TextBlock Text="{Binding RemainingText}" Foreground="{Binding LevelBrush}"
@@ -179,9 +188,6 @@
                                             </Grid>
                                             <TextBlock Text="{Binding ResetTimer}" Foreground="{StaticResource Fg2}" FontSize="10"
                                                        LineHeight="14" LineStackingStrategy="BlockLineHeight"
-                                                       HorizontalAlignment="Center" Margin="0,3,0,0"/>
-                                            <TextBlock Text="{Binding Label}" Foreground="{Binding LevelBrush}" FontSize="11"
-                                                       LineHeight="16" LineStackingStrategy="BlockLineHeight"
                                                        HorizontalAlignment="Center" Margin="0,3,0,0"/>
                                         </StackPanel>
                                     </Border>

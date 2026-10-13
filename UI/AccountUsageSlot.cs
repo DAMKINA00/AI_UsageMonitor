@@ -17,8 +17,11 @@ public sealed class AccountUsageSlot
     public string Status { get; init; } = "";
     public string? Plan { get; init; }
     public bool IsEmpty { get; init; }
-    public double Remaining => Usage is { } usage ? 100 - usage.Value : 0;
-    public string RemainingText => Usage == null ? "—" : Fmt.Pct(Remaining);
+    public bool HasRefreshError { get; init; }
+    public Visibility WarningVisibility => HasRefreshError && !IsEmpty ? Visibility.Visible : Visibility.Collapsed;
+    public double UsageOpacity => HasRefreshError ? 0.45 : 1;
+    public double Remaining => Usage is { IsResetPending: false } usage ? 100 - usage.Value : 0;
+    public string RemainingText => Usage == null || Usage.IsResetPending ? "—" : Fmt.Pct(Remaining);
     public string Label => Usage?.Label ?? "확인 중";
     public string ResetTimer => Usage?.ResetShort ?? "";
     public Brush LevelBrush => Usage?.LevelBrush ?? Palette.Muted;
@@ -26,7 +29,7 @@ public sealed class AccountUsageSlot
     public Visibility RingVisibility => Usage == null ? Visibility.Hidden : Visibility.Visible;
     public string ToolTipText => string.Join('\n', new[] { Role, Account, Plan, Usage?.Label, Usage?.ResetText, Status }
         .Where(x => !string.IsNullOrWhiteSpace(x)));
-    public string Signature => $"{Role}|{Id}|{Provider}|{Account}|{Plan}|{IsEmpty}|{Usage?.Label}|{Usage?.Value}|{Usage?.ResetText}|{ResetTimer}|{Status}";
+    public string Signature => $"{Role}|{Id}|{Provider}|{Account}|{Plan}|{IsEmpty}|{Usage?.Label}|{Usage?.Value}|{Usage?.ResetText}|{ResetTimer}|{Status}|{HasRefreshError}";
 
     public static List<AccountUsageSlot> Create(ProviderCard main, IReadOnlyList<SecondaryAccountState> accounts)
     {
@@ -46,6 +49,7 @@ public sealed class AccountUsageSlot
                 Id = account?.Settings.Id ?? "", Provider = main.Name,
                 Usage = Presenter.DisplayUsage(account?.Usage?.Windows ?? []).FirstOrDefault(),
                 IsEmpty = account?.Usage == null && account?.AccountName == null,
+                HasRefreshError = account?.HasRefreshError == true,
                 Status = account?.Status ?? "계정 메뉴에서 추가할 수 있습니다.",
             });
         }

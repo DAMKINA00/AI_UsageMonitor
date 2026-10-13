@@ -18,6 +18,7 @@ public sealed class SecondaryAccountState(SecondaryAccountSettings settings)
     public string? AccountName { get; internal set; }
     public UsageSnapshot? Usage { get; internal set; }
     public string Status { get; internal set; } = "사용량 확인 중…";
+    public bool HasRefreshError { get; internal set; }
     public bool IsLoggingIn { get; internal set; }
     internal bool Removed;
     internal DateTime NextRefresh;
@@ -80,6 +81,7 @@ public sealed class SecondaryAccountService : IDisposable
         if (account == null || account.Removed || LoginBusy || _disposed) return;
         LoginBusy = true;
         account.IsLoggingIn = true;
+        account.HasRefreshError = false;
         account.Status = "브라우저에서 추가할 계정으로 로그인해 주세요.";
         Changed?.Invoke();
         bool entered = false;
@@ -126,7 +128,10 @@ public sealed class SecondaryAccountService : IDisposable
                 if (account.Removed || account.IsLoggingIn || (!force && DateTime.UtcNow < account.NextRefresh)) continue;
                 if (!await account.Gate.WaitAsync(0)) continue;
                 try { await ReadAsync(account); }
-                catch (Exception ex) { if (!account.Removed) account.Status = "조회 실패: " + ex.Message; }
+                catch (Exception ex)
+                {
+                    if (!account.Removed) ApplyResult(account, false, false, null, null, ex.Message);
+                }
                 finally { account.Gate.Release(); }
                 if (_disposed) break;
             }
@@ -158,6 +163,7 @@ public sealed class SecondaryAccountService : IDisposable
     internal static void ApplyResult(SecondaryAccountState account, bool ok, bool loginRequired,
         string? name, UsageSnapshot? usage, string? error)
     {
+        account.HasRefreshError = !ok && !loginRequired;
         if (loginRequired)
         {
             account.Usage = null;
@@ -170,7 +176,8 @@ public sealed class SecondaryAccountService : IDisposable
             account.AccountName = name;
             account.Status = usage == null ? "사용량 데이터 없음" : $"연결됨 · {usage.AsOf.ToLocalTime():HH:mm} 기준";
         }
-        else account.Status = (account.Usage == null ? "조회 실패: " : "이전 사용량 표시 중 · 조회 실패: ") + error;
+        else account.Status = (account.Usage == null ? "조회 실패: " :
+            $"이전 사용량 표시 중 · 마지막 확인 {account.Usage.AsOf.ToLocalTime():M/d HH:mm}\n조회 실패: ") + error;
     }
 
     /// <summary>같은 서비스의 추가 계정 순서를 교환한다. 성공하면 호출자가 설정을 저장한다.</summary>

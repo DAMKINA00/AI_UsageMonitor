@@ -24,7 +24,8 @@ public sealed class MoodTracker(string character)
         double? delta = null;
         bool reset = false;
 
-        if (used is double u && _lastUsed is double last)
+        if (card.UsageResetPending) _happyUntil = default;
+        if (!card.UsageResetPending && used is double u && _lastUsed is double last)
         {
             if (last - u >= 15)
             {
@@ -36,7 +37,7 @@ public sealed class MoodTracker(string character)
                 delta = u - last;
             }
         }
-        if (used != null) _lastUsed = used;
+        if (!card.UsageResetPending && used != null) _lastUsed = used;
 
         var mood = Decide(card, used, now);
         var color = used >= 90 ? Color.FromRgb(0xFF, 0x7A, 0x6E) : used >= 70 ? Color.FromRgb(0xFF, 0xC8, 0x6B) : Color.FromRgb(0x9B, 0xF0, 0xC0);
