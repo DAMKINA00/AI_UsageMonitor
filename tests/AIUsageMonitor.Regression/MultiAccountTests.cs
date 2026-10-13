@@ -43,7 +43,14 @@ internal static partial class Program
             !psi.Environment.ContainsKey("OPENAI_API_KEY") && !psi.Environment.ContainsKey("CODEX_ACCESS_TOKEN"), psi.WorkingDirectory);
         primary.Environment.TryGetValue("CODEX_HOME", out var inheritedHome);
         Check("primary Codex process keeps existing authentication configuration",
-            inheritedHome == Environment.GetEnvironmentVariable("CODEX_HOME") && primary.ArgumentList.Count == 1, inheritedHome ?? "default home");
+            inheritedHome == Environment.GetEnvironmentVariable("CODEX_HOME") &&
+            !primary.ArgumentList.Contains("cli_auth_credentials_store=\"file\""), inheritedHome ?? "default home");
+        Check("all monitor Codex connections disable unnecessary plugin refreshes",
+            new[] { primary, psi, psi2 }.All(info => info.ArgumentList.SequenceEqual(new[]
+            {
+                "app-server", "-c", "features.plugins=false",
+            }.Concat(info == primary ? Array.Empty<string>() : new[] { "-c", "cli_auth_credentials_store=\"file\"" }))),
+            "primary and secondary account process arguments");
 
         var apply = typeof(SecondaryAccountService).GetMethod("ApplyResult", BindingFlags.Static | BindingFlags.NonPublic)!;
         void Apply(SecondaryAccountState account, bool ok, bool login, string? name, UsageSnapshot? usage, string? error) =>

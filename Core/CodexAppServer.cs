@@ -148,6 +148,9 @@ public static class CodexAppServer
             StandardInputEncoding = new UTF8Encoding(false),
         };
         psi.ArgumentList.Add("app-server");
+        // Account queries do not need plugin refreshes, which spawn Git HTTPS helpers at startup.
+        psi.ArgumentList.Add("-c");
+        psi.ArgumentList.Add("features.plugins=false");
         if (codexHome != null)
         {
             psi.WorkingDirectory = codexHome;
