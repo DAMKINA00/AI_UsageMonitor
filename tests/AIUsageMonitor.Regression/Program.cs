@@ -25,7 +25,9 @@ internal static partial class Program
         Run("Claude project thread status and mood transitions", TestClaudeProjectThreads);
         Run("Isolated account state and display names", TestMultiAccounts);
         Run("Compact usage and account slots", TestCompactUsage);
+        Run("Character overlay activity and speech anchor", TestCharacterOverlay);
         Run("Account swap and Codex subagent filtering", TestAccountSwapAndCodexSubagents);
+        Run("Codex stale file timestamps", TestCodexStaleFileTimes);
         Run("Codex browser login protocol and cancellation", () => TestCodexLoginProtocol().GetAwaiter().GetResult());
 
         Console.WriteLine($"Totals: {s_assertions} assertions, {s_failures} failures.");

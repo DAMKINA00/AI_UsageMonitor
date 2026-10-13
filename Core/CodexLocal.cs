@@ -54,18 +54,17 @@ public sealed class CodexLocalReader
 
         var files = new DirectoryInfo(dir)
             .EnumerateFiles("rollout-*.jsonl", SearchOption.AllDirectories)
-            .OrderByDescending(f => f.LastWriteTimeUtc)
             .ToList();
 
         var cutoff = DateTime.UtcNow.AddHours(-activeHours);
-        var recent = files.Where(f => f.LastWriteTimeUtc >= cutoff).ToList();
-        if (recent.Count == 0 && files.Count > 0) recent.Add(files[0]); // rate_limits 용으로 최신 파일 하나는 읽는다
 
         LoadNames();
         var threads = new List<SessionInfo>();
         UsageSnapshot? newest = null;
 
-        foreach (var f in recent)
+        // Windows는 열린 로그의 수정 시각 갱신을 늦출 수 있다. 파일 시각으로 제외하지 않고,
+        // 크기/시각이 바뀐 파일만 증분으로 읽은 뒤 로그 안의 실제 활동 시각으로 거른다.
+        foreach (var f in files)
         {
             var c = Refresh(f);
             if (c.RateLimits is { } rl && (newest == null || rl.AsOf > newest.AsOf)) newest = rl;
@@ -98,7 +97,7 @@ public sealed class CodexLocalReader
         // 사라진 파일 캐시 정리
         if (_cache.Count > 200)
         {
-            var keep = recent.Select(f => f.FullName).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var keep = files.Select(f => f.FullName).ToHashSet(StringComparer.OrdinalIgnoreCase);
             foreach (var k in _cache.Keys.Where(k => !keep.Contains(k)).ToList()) _cache.Remove(k);
         }
 

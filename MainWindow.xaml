@@ -123,12 +123,11 @@
         </Style>
 
         <DataTemplate x:Key="CardTemplate" DataType="{x:Type ui:ProviderCard}">
-            <Border Background="{StaticResource CardBg}" CornerRadius="10" Padding="14,12,14,10" Width="390" Height="384">
+            <Border Background="{StaticResource CardBg}" CornerRadius="10" Padding="14,12,14,10" Width="390" Height="400">
                 <Grid>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="*"/>
-                        <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
                     <Grid>
                         <Grid.ColumnDefinitions>
@@ -156,7 +155,7 @@
                         <ItemsControl ItemsSource="{Binding AccountSlots}">
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate DataType="{x:Type ui:AccountUsageSlot}">
-                                    <Border Height="102" ToolTip="{Binding ToolTipText}" Background="Transparent" CornerRadius="6"
+                                    <Border Height="114" ToolTip="{Binding ToolTipText}" Background="Transparent" CornerRadius="6"
                                             AllowDrop="True" PreviewMouseLeftButtonDown="Account_MouseDown" PreviewMouseMove="Account_MouseMove"
                                             DragOver="Account_DragOver" DragLeave="Account_DragLeave" Drop="Account_Drop">
                                         <Border.Style>
@@ -170,6 +169,7 @@
                                         </Border.Style>
                                         <StackPanel Visibility="{Binding ContentVisibility}">
                                             <TextBlock Text="{Binding Account}" Foreground="{StaticResource Fg}" FontSize="11"
+                                                       LineHeight="16" LineStackingStrategy="BlockLineHeight"
                                                        TextAlignment="Center" TextTrimming="CharacterEllipsis" Margin="0,0,0,4"/>
                                             <Grid Width="54" Height="54" HorizontalAlignment="Center"
                                                   AutomationProperties.Name="{Binding ToolTipText}">
@@ -178,9 +178,11 @@
                                                            FontSize="15" FontWeight="SemiBold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
                                             </Grid>
                                             <TextBlock Text="{Binding ResetTimer}" Foreground="{StaticResource Fg2}" FontSize="10"
+                                                       LineHeight="14" LineStackingStrategy="BlockLineHeight"
                                                        HorizontalAlignment="Center" Margin="0,3,0,0"/>
-                                            <TextBlock Text="{Binding Label}" Foreground="{Binding LevelBrush}" FontSize="10"
-                                                       HorizontalAlignment="Center" Margin="0,1,0,0"/>
+                                            <TextBlock Text="{Binding Label}" Foreground="{Binding LevelBrush}" FontSize="11"
+                                                       LineHeight="16" LineStackingStrategy="BlockLineHeight"
+                                                       HorizontalAlignment="Center" Margin="0,3,0,0"/>
                                         </StackPanel>
                                     </Border>
                                 </DataTemplate>
@@ -225,8 +227,6 @@
                         </DockPanel>
                     </Border>
                     </Grid>
-                    <TextBlock Grid.Row="2" Text="{Binding Footnote}" Foreground="#6E717B" FontSize="10" Margin="0,5,0,0"
-                               TextTrimming="CharacterEllipsis" ToolTip="{Binding Footnote}"/>
                 </Grid>
             </Border>
         </DataTemplate>
@@ -248,25 +248,19 @@
                 </StackPanel>
             </Grid>
 
-            <!-- 창 크기는 고정: 카드(왼쪽) + 캐릭터(오른쪽) 두 줄 -->
+            <!-- 캐릭터는 각 카드의 세션 영역 오른쪽 아래에 겹쳐 표시한다. -->
             <StackPanel Margin="10,0,10,0">
                 <Grid Margin="0,0,0,10">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="Auto"/>
-                        <ColumnDefinition Width="Auto"/>
-                    </Grid.ColumnDefinitions>
-                    <ContentControl Content="{Binding Claude}" ContentTemplate="{StaticResource CardTemplate}" Width="390" Height="384"/>
-                    <ui:CharacterStage x:Name="ClaudeStage" Grid.Column="1" Character="claude" Width="140" Height="280"
-                                       Margin="10,0,0,0" VerticalAlignment="Center"/>
+                    <ContentControl Content="{Binding Claude}" ContentTemplate="{StaticResource CardTemplate}" Width="390" Height="400"/>
+                    <ui:CharacterStage x:Name="ClaudeStage" Character="claude" Width="140" Height="240"
+                                       HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,14,10"
+                                       Panel.ZIndex="1" IsHitTestVisible="False"/>
                 </Grid>
                 <Grid Margin="0,0,0,10">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="Auto"/>
-                        <ColumnDefinition Width="Auto"/>
-                    </Grid.ColumnDefinitions>
-                    <ContentControl Content="{Binding Codex}" ContentTemplate="{StaticResource CardTemplate}" Width="390" Height="384"/>
-                    <ui:CharacterStage x:Name="CodexStage" Grid.Column="1" Character="codex" Width="140" Height="280"
-                                       Margin="10,0,0,0" VerticalAlignment="Center"/>
+                    <ContentControl Content="{Binding Codex}" ContentTemplate="{StaticResource CardTemplate}" Width="390" Height="400"/>
+                    <ui:CharacterStage x:Name="CodexStage" Character="codex" Width="140" Height="240"
+                                       HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,14,10"
+                                       Panel.ZIndex="1" IsHitTestVisible="False"/>
                 </Grid>
             </StackPanel>
         </DockPanel>

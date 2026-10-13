@@ -11,7 +11,7 @@ namespace AIUsageMonitor.UI;
 public enum Mood { Idle, Playing, Sleeping, Working, WorkingHard, Waiting, Tired, Exhausted, Panic, Happy }
 
 /// <summary>
-/// 카드 옆에서 캐릭터가 상태(Mood)에 따라 움직이는 작은 무대.
+/// 세션 목록 위에서 캐릭터가 상태(Mood)에 따라 움직이는 작은 무대.
 /// 뮤직비디오 컷아웃 느낌을 내려고 일부러 15fps로 끊어서 움직인다.
 /// </summary>
 public sealed class CharacterStage : Border
@@ -21,6 +21,7 @@ public sealed class CharacterStage : Border
     static readonly FontFamily PopFont = new("Malgun Gothic");
 
     readonly Grid _root = new();
+    readonly TranslateTransform _wander = new();
     readonly Grid _figure = new() { Width = 150, Height = 318 };
     readonly Image _img = new() { Stretch = Stretch.Uniform, VerticalAlignment = VerticalAlignment.Bottom, HorizontalAlignment = HorizontalAlignment.Center };
     readonly ScaleTransform _scale = new(1, 1);
@@ -28,17 +29,20 @@ public sealed class CharacterStage : Border
     readonly TranslateTransform _move = new(0, 0);
     readonly Ellipse _shadow;
     readonly Canvas _fx = new() { IsHitTestVisible = false, ClipToBounds = false };
-    readonly Grid _bubble = new() { HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(2, 8, 2, 0) };
+    readonly Grid _bubble = new() { HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Bottom, Margin = new Thickness(2, 0, 2, 0) };
     readonly TextBlock _bubbleText = new()
     {
         Foreground = Ink, FontFamily = PopFont, FontWeight = FontWeights.Bold, FontSize = 13,
         TextWrapping = TextWrapping.NoWrap, TextAlignment = TextAlignment.Center,
     };
     readonly ScaleTransform _bubbleScale = new(1, 1);
+    readonly TranslateTransform _bubblePosition = new();
     readonly DispatcherTimer _timer;
     readonly List<Particle> _particles = [];
     readonly Random _rng = new();
     readonly Dictionary<string, BitmapImage?> _poseCache = new();
+    readonly Dictionary<string, Rect> _visibleBounds = new();
+    Rect _bodyBounds = new(0, 0, 1, 1);
 
     string _character = "claude";
     Mood _mood = Mood.Idle;
@@ -50,8 +54,9 @@ public sealed class CharacterStage : Border
     {
         // 배경 없이 창 위에 캐릭터만 선다 (말풍선·효과는 위로 삐져나가도 되게 클립하지 않음)
         Background = Brushes.Transparent;
-        MinHeight = 260;
+        MinHeight = 200;
         Child = _root;
+        _root.RenderTransform = _wander;
         _root.Children.Add(new Viewbox
         {
             Width = 75, Height = 159, Child = _figure,
@@ -90,13 +95,15 @@ public sealed class CharacterStage : Border
         _bubble.Children.Add(tail);
         Panel.SetZIndex(tail, 1);
         _bubble.RenderTransformOrigin = new Point(0.5, 1);
-        _bubble.RenderTransform = _bubbleScale;
+        _bubble.RenderTransform = new TransformGroup { Children = { _bubbleScale, _bubblePosition } };
         _bubble.Visibility = Visibility.Collapsed;
         _root.Children.Add(_bubble);
 
         _timer = new DispatcherTimer(DispatcherPriority.Render) { Interval = TimeSpan.FromSeconds(1 / Fps) };
         _timer.Tick += (_, _) => Frame();
         _figure.SizeChanged += (_, _) => ApplyImageSize();
+        _img.SizeChanged += (_, _) => PositionBubble();
+        _bubble.SizeChanged += (_, _) => PositionBubble();
         SizeChanged += (_, _) => LayoutBubble();
         IsVisibleChanged += (_, _) => UpdateRunning();
         Loaded += (_, _) => UpdateRunning();
@@ -152,6 +159,7 @@ public sealed class CharacterStage : Border
         if (mood != _mood)
         {
             _mood = mood;
+            if (mood != Mood.Idle) _wander.X = 0;
             _moodT = 0;
             _nextSpawn = 0.3;
             _popT = 0;
@@ -246,6 +254,18 @@ public sealed class CharacterStage : Border
         _bubbleText.Text = string.Join('\n', lines);
     }
 
+    void PositionBubble()
+    {
+        if (_img.ActualWidth <= 0 || _root.ActualHeight <= 0) return;
+        var body = _img.TransformToAncestor(_root).TransformBounds(new Rect(
+            _bodyBounds.X * _img.ActualWidth, _bodyBounds.Y * _img.ActualHeight,
+            _bodyBounds.Width * _img.ActualWidth, _bodyBounds.Height * _img.ActualHeight));
+        // 투명 여백이 많은 졸음/휴식 포즈에서도 말풍선 꼬리가 몸 바로 위에 붙는다.
+        _bubblePosition.Y = body.Top - _root.ActualHeight - 12;
+        double room = Math.Max(0, (_root.ActualWidth - _bubble.ActualWidth) / 2 - 2);
+        _bubblePosition.X = Math.Clamp(body.Left + body.Width / 2 - _root.ActualWidth / 2, -room, room);
+    }
+
     /// <summary>사용률이 올랐을 때 머리 위로 "+3%" 같은 큰 글자를 띄운다.</summary>
     public void PopText(string text, Color color)
     {
@@ -310,7 +330,7 @@ public sealed class CharacterStage : Border
             {
                 bmp = new BitmapImage();
                 bmp.BeginInit();
-                bmp.UriSource = new Uri($"pack://application:,,,/Assets/Characters/{key}.png");
+                bmp.UriSource = new Uri($"pack://application:,,,/AIUsageMonitor;component/Assets/Characters/{key}.png");
                 bmp.CacheOption = BitmapCacheOption.OnLoad;
                 bmp.EndInit();
                 bmp.Freeze();
@@ -322,7 +342,30 @@ public sealed class CharacterStage : Border
             _poseCache[key] = bmp;
         }
         _img.Source = bmp ?? _img.Source;
+        if (bmp != null)
+        {
+            if (!_visibleBounds.TryGetValue(key, out _bodyBounds))
+                _visibleBounds[key] = _bodyBounds = VisibleBounds(bmp);
+        }
         ApplyImageSize();
+    }
+
+    static Rect VisibleBounds(BitmapSource bitmap)
+    {
+        var bgra = new FormatConvertedBitmap(bitmap, PixelFormats.Bgra32, null, 0);
+        int width = bgra.PixelWidth, height = bgra.PixelHeight, stride = width * 4;
+        var pixels = new byte[stride * height];
+        bgra.CopyPixels(pixels, stride, 0);
+        int left = width, top = height, right = -1, bottom = -1;
+        for (int y = 0; y < height; y++)
+            for (int x = 0; x < width; x++)
+                if (pixels[y * stride + x * 4 + 3] > 12)
+                {
+                    left = Math.Min(left, x); right = Math.Max(right, x);
+                    top = Math.Min(top, y); bottom = Math.Max(bottom, y);
+                }
+        return right < 0 ? new Rect(0, 0, 1, 1) : new Rect((double)left / width, (double)top / height,
+            (double)(right - left + 1) / width, (double)(bottom - top + 1) / height);
     }
 
     // 에셋은 두 캐릭터 모두 "기본 자세의 키가 같은 픽셀 수"로 맞춰져 있다 (art/build_assets.py).
@@ -353,11 +396,9 @@ public sealed class CharacterStage : Border
             case Mood.Idle:
                 sy = 1 + 0.015 * Math.Sin(t * 2 * Math.PI / 2.4);
                 sx = 1 - 0.008 * Math.Sin(t * 2 * Math.PI / 2.4);
-                var hop = t % 6.5;
-                if (hop < 0.45) y = -10 * Math.Sin(Math.PI * hop / 0.45);
+                y = -8 * Math.Pow(Math.Sin(_moodT * Math.PI / 1.2), 2);
                 break;
             case Mood.Playing:
-                rot = 2.5 * Math.Sin(t * 2 * Math.PI / 1.6);
                 sy = 1 + 0.012 * Math.Sin(t * 2 * Math.PI / 0.8);
                 break;
             case Mood.Sleeping:
@@ -411,9 +452,12 @@ public sealed class CharacterStage : Border
         _rot.Angle = rot;
         _move.X = x;
         _move.Y = y;
+        // Idle 포즈에서만 산책한다. 게임/독서/티타임, 작업, 졸음 등은 오른쪽 아래에 고정한다.
+        _wander.X = _mood == Mood.Idle ? -18 * (1 - Math.Cos(_moodT * 2 * Math.PI / 12)) : 0;
         _shadow.Width = 92 * (1 + y / 60);
 
         UpdateBubble(dt);
+        PositionBubble();
 
         if (_moodT >= _nextSpawn) SpawnForMood();
         UpdateParticles(dt);
