@@ -123,7 +123,7 @@
         </Style>
 
         <DataTemplate x:Key="CardTemplate" DataType="{x:Type ui:ProviderCard}">
-            <Border Background="{StaticResource CardBg}" CornerRadius="10" Padding="14,12,14,10" Width="390" Height="400">
+            <Border Background="{StaticResource CardBg}" CornerRadius="10" Padding="14,12,14,10" Height="400">
                 <Grid>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
@@ -251,13 +251,13 @@
             <!-- 캐릭터는 각 카드의 세션 영역 오른쪽 아래에 겹쳐 표시한다. -->
             <StackPanel Margin="10,0,10,0">
                 <Grid Margin="0,0,0,10">
-                    <ContentControl Content="{Binding Claude}" ContentTemplate="{StaticResource CardTemplate}" Width="390" Height="400"/>
+                    <ContentControl Content="{Binding Claude}" ContentTemplate="{StaticResource CardTemplate}" HorizontalContentAlignment="Stretch" Height="400"/>
                     <ui:CharacterStage x:Name="ClaudeStage" Character="claude" Width="140" Height="240"
                                        HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,14,10"
                                        Panel.ZIndex="1" IsHitTestVisible="False"/>
                 </Grid>
                 <Grid Margin="0,0,0,10">
-                    <ContentControl Content="{Binding Codex}" ContentTemplate="{StaticResource CardTemplate}" Width="390" Height="400"/>
+                    <ContentControl Content="{Binding Codex}" ContentTemplate="{StaticResource CardTemplate}" HorizontalContentAlignment="Stretch" Height="400"/>
                     <ui:CharacterStage x:Name="CodexStage" Character="codex" Width="140" Height="240"
                                        HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,14,10"
                                        Panel.ZIndex="1" IsHitTestVisible="False"/>

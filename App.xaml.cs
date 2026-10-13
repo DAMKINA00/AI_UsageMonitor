@@ -109,7 +109,7 @@ public partial class App : Application
 
     void SaveWindowPng(string path)
     {
-        if (_window.Content is not FrameworkElement root) return;
+        FrameworkElement root = _window;
         root.UpdateLayout();
         var dpi = System.Windows.Media.VisualTreeHelper.GetDpi(root);
         var bmp = new System.Windows.Media.Imaging.RenderTargetBitmap(

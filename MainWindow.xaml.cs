@@ -56,9 +56,33 @@ public partial class MainWindow : Window
     void FitToContent()
     {
         if (Content is not FrameworkElement root) return;
+        const double baseWidth = 410, preferredScale = 1.5;
+        var area = CurrentWorkArea();
+        root.LayoutTransform = Transform.Identity;
+        root.Width = baseWidth;
+        root.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+        double contentHeight = root.DesiredSize.Height;
+        double scale = Math.Min(preferredScale, Math.Max(0.1, (area.Height - 24) / contentHeight));
+        // 세로가 짧은 화면에서는 비율을 유지해 맞추고, 가로 여유는 세션 목록에 배분한다.
+        root.Width = Math.Max(1, Math.Min(baseWidth * preferredScale, area.Width - 24)) / scale;
+        root.LayoutTransform = new ScaleTransform(scale, scale);
         root.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
         Width = Math.Ceiling(root.DesiredSize.Width);
-        Height = Math.Ceiling(root.DesiredSize.Height);
+        Height = Math.Ceiling(contentHeight * scale);
+    }
+
+    Rect CurrentWorkArea()
+    {
+        var bounds = System.Windows.Forms.Screen.FromHandle(new WindowInteropHelper(this).Handle).WorkingArea;
+        var fromPixels = PresentationSource.FromVisual(this)?.CompositionTarget?.TransformFromDevice ?? Matrix.Identity;
+        return Rect.Transform(new Rect(bounds.X, bounds.Y, bounds.Width, bounds.Height), fromPixels);
+    }
+
+    void KeepOnScreen()
+    {
+        var area = CurrentWorkArea();
+        Left = Math.Clamp(Left, area.Left + 12, Math.Max(area.Left + 12, area.Right - Width - 12));
+        Top = Math.Clamp(Top, area.Top + 12, Math.Max(area.Top + 12, area.Bottom - Height - 12));
     }
 
     void UpdateStages()
@@ -91,7 +115,7 @@ public partial class MainWindow : Window
     {
         if (_positioned) return;
         _positioned = true;
-        var area = SystemParameters.WorkArea;
+        var area = CurrentWorkArea();
         if (_settings.WindowLeft is double l && _settings.WindowTop is double t &&
             l >= SystemParameters.VirtualScreenLeft && l < SystemParameters.VirtualScreenLeft + SystemParameters.VirtualScreenWidth - 80 &&
             t >= SystemParameters.VirtualScreenTop && t < SystemParameters.VirtualScreenTop + SystemParameters.VirtualScreenHeight - 80)
@@ -101,9 +125,11 @@ public partial class MainWindow : Window
         }
         else
         {
-            Left = area.Right - ActualWidth - 12;
-            Top = Math.Max(area.Top + 12, area.Bottom - ActualHeight - 12);
+            Left = area.Right - Width - 12;
+            Top = Math.Max(area.Top + 12, area.Bottom - Height - 12);
         }
+        FitToContent();
+        KeepOnScreen();
     }
 
     public void ShowAndActivate()
@@ -124,6 +150,8 @@ public partial class MainWindow : Window
     {
         if (e.ButtonState != MouseButtonState.Pressed) return;
         DragMove();
+        FitToContent();
+        KeepOnScreen();
         SavePosition();
     }
 
