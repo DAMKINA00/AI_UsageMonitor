@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
@@ -10,18 +11,27 @@ namespace AIUsageMonitor.UI;
 
 public enum Mood { Idle, Playing, Sleeping, Working, WorkingHard, Waiting, Tired, Exhausted, Panic, Happy }
 
+/// <summary>말풍선 위치: 머리 위(Above) 또는 캐릭터 왼쪽에 꼬리를 오른쪽으로 둔 채(Left).</summary>
+public enum BubblePlacement { Above, Left }
+
 /// <summary>
-/// 세션 목록 위에서 캐릭터가 상태(Mood)에 따라 움직이는 작은 무대.
+/// 캐릭터가 상태(Mood)에 따라 움직이는 작은 무대.
 /// 뮤직비디오 컷아웃 느낌을 내려고 일부러 15fps로 끊어서 움직인다.
 /// </summary>
 public sealed class CharacterStage : Border
 {
     const double Fps = 15;
+    const double BubbleFontSize = 13, MinBubbleFontSize = 10;
     static readonly Brush Ink = Frozen(Color.FromRgb(0x5A, 0x3A, 0x28));
     static readonly FontFamily PopFont = new("Malgun Gothic");
+    // 캐릭터 그림 영역의 원래 비율 (_figure 150×318 을 Viewbox 로 줄여 쓴다)
+    const double FigureAspect = 150.0 / 318.0;
 
     readonly Grid _root = new();
     readonly TranslateTransform _wander = new();
+    readonly Viewbox _figureBox;
+    readonly Border _box;
+    readonly Path _tail;
     readonly Grid _figure = new() { Width = 150, Height = 318 };
     readonly Image _img = new() { Stretch = Stretch.Uniform, VerticalAlignment = VerticalAlignment.Bottom, HorizontalAlignment = HorizontalAlignment.Center };
     readonly ScaleTransform _scale = new(1, 1);
@@ -54,14 +64,14 @@ public sealed class CharacterStage : Border
     {
         // 배경 없이 창 위에 캐릭터만 선다 (말풍선·효과는 위로 삐져나가도 되게 클립하지 않음)
         Background = Brushes.Transparent;
-        MinHeight = 200;
         Child = _root;
         _root.RenderTransform = _wander;
-        _root.Children.Add(new Viewbox
+        _figureBox = new Viewbox
         {
             Width = 75, Height = 159, Child = _figure,
             HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Bottom,
-        });
+        };
+        _root.Children.Add(_figureBox);
         _nextBubbleAt = _rng.NextDouble() * 4;
 
         // 발밑의 옅은 바닥 그림자
@@ -80,20 +90,20 @@ public sealed class CharacterStage : Border
         _figure.Children.Add(_fx);
 
         // 말풍선: 흰 바탕 + 갈색 테두리 + 아래 꼬리
-        var box = new Border
+        _box = new Border
         {
             Background = Brushes.White, BorderBrush = Ink, BorderThickness = new Thickness(1.6),
             CornerRadius = new CornerRadius(10), Padding = new Thickness(6, 4, 6, 5), Child = _bubbleText,
         };
-        var tail = new Path
+        _tail = new Path
         {
-            Data = Geometry.Parse("M0,0 L7,9 L13,0"), Fill = Brushes.White, Stroke = Ink, StrokeThickness = 1.6,
+            Data = TailDown, Fill = Brushes.White, Stroke = Ink, StrokeThickness = 1.6,
             HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Bottom,
             Margin = new Thickness(0, 0, 0, -8),
         };
-        _bubble.Children.Add(box);
-        _bubble.Children.Add(tail);
-        Panel.SetZIndex(tail, 1);
+        _bubble.Children.Add(_box);
+        _bubble.Children.Add(_tail);
+        Panel.SetZIndex(_tail, 1);
         _bubble.RenderTransformOrigin = new Point(0.5, 1);
         _bubble.RenderTransform = new TransformGroup { Children = { _bubbleScale, _bubblePosition } };
         _bubble.Visibility = Visibility.Collapsed;
@@ -108,6 +118,7 @@ public sealed class CharacterStage : Border
         IsVisibleChanged += (_, _) => UpdateRunning();
         Loaded += (_, _) => UpdateRunning();
         Unloaded += (_, _) => _timer.Stop();
+        HasArt = CharacterTheme.HasAsset(_character, "idle");
     }
 
     public string Character
@@ -117,18 +128,66 @@ public sealed class CharacterStage : Border
         {
             _character = value;
             _pose = "";
-            // 리셋 반짝이와 "+N%" 표시 색: 클짱은 연갈색 계열, 짚짱은 형광 시안 계열
-            (_fxStroke, _sparkles) = value == "codex"
-                ? (Frozen(Color.FromRgb(0x08, 0x2A, 0x36)),
-                   new[] { Color.FromRgb(0x2B, 0xF6, 0xFF), Colors.White, Color.FromRgb(0x9A, 0xFF, 0xF8), Color.FromRgb(0x4D, 0xA8, 0xFF) })
-                : (Frozen(Color.FromRgb(0x6B, 0x47, 0x2E)),
-                   new[] { Color.FromRgb(0xEE, 0xCF, 0xA6), Colors.White, Color.FromRgb(0xFF, 0xD9, 0x7A), Color.FromRgb(0xF6, 0xB8, 0x9E) });
+            // 리셋 반짝이와 "+N%" 표시 색은 캐릭터 테마가 정한다
+            var theme = CharacterTheme.For(value);
+            _fxStroke = theme.FxStroke;
+            _sparkles = theme.Sparkles;
+            AutomationProperties.SetName(this, theme.DisplayName);
+            // 포즈 이미지가 아직 없는 캐릭터는 자리만 비워 둔다 (말풍선·효과도 숨김)
+            HasArt = CharacterTheme.HasAsset(value, "idle");
+            _root.Visibility = HasArt ? Visibility.Visible : Visibility.Hidden;
             ApplyPose();
+            UpdateRunning();
         }
     }
 
+    /// <summary>이 캐릭터의 기본 포즈 이미지가 리소스에 있는지.</summary>
+    public bool HasArt { get; private set; }
+
     Brush _fxStroke = Ink;
     Color[] _sparkles = [Colors.White];
+
+    BubblePlacement _placement = BubblePlacement.Above;
+
+    /// <summary>Left 는 캐릭터를 무대 오른쪽 아래에 두고 말풍선을 그 왼쪽에 띄운다 (행 옆에 캐릭터를 둘 때).</summary>
+    public BubblePlacement BubblePlacement
+    {
+        get => _placement;
+        set
+        {
+            _placement = value;
+            bool left = value == BubblePlacement.Left;
+            _figureBox.HorizontalAlignment = left ? HorizontalAlignment.Right : HorizontalAlignment.Center;
+            _bubble.HorizontalAlignment = left ? HorizontalAlignment.Left : HorizontalAlignment.Center;
+            _bubble.VerticalAlignment = left ? VerticalAlignment.Top : VerticalAlignment.Bottom;
+            _bubble.Margin = left ? new Thickness(0) : new Thickness(2, 0, 2, 0);
+            _bubble.RenderTransformOrigin = left ? new Point(1, 0.5) : new Point(0.5, 1);
+            _box.Margin = left ? new Thickness(0, 0, 8, 0) : new Thickness(0);
+            _tail.Data = left ? TailRight : TailDown;
+            _tail.HorizontalAlignment = left ? HorizontalAlignment.Right : HorizontalAlignment.Center;
+            _tail.VerticalAlignment = left ? VerticalAlignment.Center : VerticalAlignment.Bottom;
+            _tail.Margin = left ? new Thickness(0) : new Thickness(0, 0, 0, -8);
+            if (left) _wander.X = 0;
+            LayoutBubble();
+        }
+    }
+
+    /// <summary>캐릭터 그림 영역의 높이 (기본 159). 폭은 원래 비율로 정한다.</summary>
+    public double FigureHeight
+    {
+        get => _figureBox.Height;
+        set
+        {
+            if (_figureBox.Height == value) return;
+            _figureBox.Height = value;
+            _figureBox.Width = value * FigureAspect;
+            // 그림 폭이 바뀌면 왼쪽 말풍선의 글자 폭도 바뀌므로 지금 대사를 다시 줄바꿈한다
+            if (_bubbleContent.Length > 0) LayoutBubble();
+        }
+    }
+
+    static readonly Geometry TailDown = Freeze(Geometry.Parse("M0,0 L7,9 L13,0"));
+    static readonly Geometry TailRight = Freeze(Geometry.Parse("M0,0 L9,6 L0,12"));
 
     public Mood Mood => _mood;
 
@@ -143,19 +202,25 @@ public sealed class CharacterStage : Border
 
     void UpdateRunning()
     {
-        if (_active && IsVisible && IsLoaded) _timer.Start();
+        if (_active && HasArt && IsVisible && IsLoaded) _timer.Start();
         else _timer.Stop();
     }
 
     // 말풍선: 몇 초 보였다가 사라지고, 잠깐 쉬었다가 다른 대사가 나온다
     string[] _lines = [];
-    string? _lastLine;
+    // 대사마다 같은 대사인지 가리는 키 (원문 템플릿). "리셋까지 5분"·"리셋까지 4분" 처럼 채운 값만 다른 대사를 같은 대사로 본다.
+    string[] _keys = [];
+    string? _lastKey;
     bool _bubbleShown;
     double _bubbleShowFor, _bubbleHideT = 99, _nextBubbleAt;
 
-    public void SetMood(Mood mood, IReadOnlyList<string> lines)
+    /// <param name="keys">각 대사의 원문 템플릿 (lines 와 같은 순서). 없으면 대사 자체를 키로 쓴다.</param>
+    public void SetMood(Mood mood, IReadOnlyList<string> lines, IReadOnlyList<string>? keys = null)
     {
-        _lines = lines.Where(l => !string.IsNullOrEmpty(l)).ToArray();
+        var pairs = lines.Select((line, i) => (Line: line, Key: keys != null && i < keys.Count ? keys[i] : line))
+            .Where(p => !string.IsNullOrEmpty(p.Line)).ToArray();
+        _lines = pairs.Select(p => p.Line).ToArray();
+        _keys = pairs.Select(p => p.Key).ToArray();
         if (mood != _mood)
         {
             _mood = mood;
@@ -174,10 +239,14 @@ public sealed class CharacterStage : Border
         }
     }
 
+    /// <summary>직전에 보인 대사와 원문 템플릿이 다른 대사를 고른다 (고를 수 있는 대사가 하나뿐이면 그것).</summary>
     string PickLine()
     {
-        var pool = _lines.Length > 1 ? _lines.Where(l => l != _lastLine).ToArray() : _lines;
-        return _lastLine = pool[_rng.Next(pool.Length)];
+        var indices = Enumerable.Range(0, _lines.Length).ToArray();
+        var pool = indices.Length > 1 && indices.Any(i => _keys[i] != _lastKey) ? indices.Where(i => _keys[i] != _lastKey).ToArray() : indices;
+        int pick = pool[_rng.Next(pool.Length)];
+        _lastKey = _keys[pick];
+        return _lines[pick];
     }
 
     void ShowBubble(string text)
@@ -223,17 +292,27 @@ public sealed class CharacterStage : Border
 
     string _bubbleContent = "";
 
+    /// <summary>말풍선 글자 줄의 최대 폭. 위쪽 말풍선은 무대 폭, 왼쪽 말풍선은 캐릭터 그림 영역을 뺀 폭을 쓴다.</summary>
+    double BubbleTextWidth()
+    {
+        double width = ActualWidth > 0 ? ActualWidth : Width is > 0 and var w ? w : 140;
+        return _placement == BubblePlacement.Left
+            ? Math.Max(48, width - _figureBox.Width - 30)  // 꼬리 8 + 상자 여백·테두리 15 + 그림과의 간격
+            : Math.Max(1, width - 20);
+    }
+
     void LayoutBubble()
     {
         // 한글 기본 줄바꿈은 어절의 마지막 글자까지 쪼갠다. 실제 폭을 재서 공백에서만 나눈다.
-        double available = Math.Max(1, (ActualWidth > 0 ? ActualWidth : 140) - 20);
+        double available = BubbleTextWidth();
         var typeface = new Typeface(PopFont, FontStyles.Normal, FontWeights.Bold, FontStretches.Normal);
         double pixelsPerDip = VisualTreeHelper.GetDpi(this).PixelsPerDip;
         double Measure(string value, double size) => new FormattedText(value,
             System.Globalization.CultureInfo.CurrentCulture, FlowDirection.LeftToRight, typeface, size, Ink, pixelsPerDip).WidthIncludingTrailingWhitespace;
         var words = _bubbleContent.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
-        double longest = words.Length == 0 ? 0 : words.Max(word => Measure(word, 13));
-        double fontSize = longest > available ? 13 * available / longest : 13;
+        double longest = words.Length == 0 ? 0 : words.Max(word => Measure(word, BubbleFontSize));
+        // 긴 어절은 글자를 줄여 맞추되 10 DIP 아래로는 줄이지 않는다 (그래도 넘치면 글자 단위로 나눈다)
+        double fontSize = longest > available ? Math.Max(MinBubbleFontSize, BubbleFontSize * available / longest) : BubbleFontSize;
         _bubbleText.FontSize = fontSize;
         var lines = new List<string>();
         foreach (var paragraph in _bubbleContent.Replace("\r", "").Split('\n'))
@@ -241,6 +320,15 @@ public sealed class CharacterStage : Border
             string line = "";
             foreach (var word in paragraph.Split(' ', StringSplitOptions.RemoveEmptyEntries))
             {
+                if (Measure(word, fontSize) > available)
+                {
+                    // 10 DIP 로도 한 줄에 안 들어가는 어절: 앞 줄을 끝내고 글자 단위로 나눈다
+                    if (line.Length > 0) lines.Add(line);
+                    var pieces = SplitToWidth(word, available, w => Measure(w, fontSize));
+                    lines.AddRange(pieces.Take(pieces.Count - 1));
+                    line = pieces[^1];
+                    continue;
+                }
                 string next = line.Length == 0 ? word : line + " " + word;
                 if (line.Length > 0 && Measure(next, fontSize) > available)
                 {
@@ -254,12 +342,40 @@ public sealed class CharacterStage : Border
         _bubbleText.Text = string.Join('\n', lines);
     }
 
+    /// <summary>한 줄에 들어가지 않는 어절을 글자(문자 요소) 단위로 나눈다.</summary>
+    static List<string> SplitToWidth(string word, double available, Func<string, double> measure)
+    {
+        var pieces = new List<string>();
+        var piece = new System.Text.StringBuilder();
+        var elements = System.Globalization.StringInfo.GetTextElementEnumerator(word);
+        while (elements.MoveNext())
+        {
+            var element = elements.GetTextElement();
+            if (piece.Length > 0 && measure(piece + element) > available)
+            {
+                pieces.Add(piece.ToString());
+                piece.Clear();
+            }
+            piece.Append(element);
+        }
+        pieces.Add(piece.ToString());
+        return pieces;
+    }
+
     void PositionBubble()
     {
         if (_img.ActualWidth <= 0 || _root.ActualHeight <= 0) return;
         var body = _img.TransformToAncestor(_root).TransformBounds(new Rect(
             _bodyBounds.X * _img.ActualWidth, _bodyBounds.Y * _img.ActualHeight,
             _bodyBounds.Width * _img.ActualWidth, _bodyBounds.Height * _img.ActualHeight));
+        if (_placement == BubblePlacement.Left)
+        {
+            // 꼬리 끝이 몸 왼쪽에 붙고, 말풍선 가운데가 머리 높이에 오도록 둔다. 무대 밖으로는 나가지 않는다.
+            double headY = body.Top + body.Height * 0.18;
+            _bubblePosition.X = Math.Max(0, body.Left - 2 - _bubble.ActualWidth);
+            _bubblePosition.Y = Math.Clamp(headY - _bubble.ActualHeight / 2, 0, Math.Max(0, _root.ActualHeight - _bubble.ActualHeight));
+            return;
+        }
         // 투명 여백이 많은 졸음/휴식 포즈에서도 말풍선 꼬리가 몸 바로 위에 붙는다.
         _bubblePosition.Y = body.Top - _root.ActualHeight - 12;
         double room = Math.Max(0, (_root.ActualWidth - _bubble.ActualWidth) / 2 - 2);
@@ -287,7 +403,7 @@ public sealed class CharacterStage : Border
         }
     }
 
-    // 작업 중: 짚짱은 홀로그램 타이핑, 클짱은 수첩 메모. 1→2→1→3 순서로 손이 움직이고 가끔 눈을 깜빡인다
+    // 작업 중: 짚쨩은 홀로그램 타이핑, 클쨩은 수첩 메모. 1→2→1→3 순서로 손이 움직이고 가끔 눈을 깜빡인다
     static readonly string[] WorkFrames = ["work1", "work2", "work1", "work3"];
 
     static string[] FramesFor(Mood m) => m switch
@@ -326,18 +442,23 @@ public sealed class CharacterStage : Border
         var key = $"{_character}_{pose}";
         if (!_poseCache.TryGetValue(key, out var bmp))
         {
-            try
+            bmp = null;
+            // 아직 그리지 않은 포즈는 열지 않는다 (없는 리소스를 열면 예외가 난다)
+            if (CharacterTheme.HasAsset(_character, pose))
             {
-                bmp = new BitmapImage();
-                bmp.BeginInit();
-                bmp.UriSource = new Uri($"pack://application:,,,/AIUsageMonitor;component/Assets/Characters/{key}.png");
-                bmp.CacheOption = BitmapCacheOption.OnLoad;
-                bmp.EndInit();
-                bmp.Freeze();
-            }
-            catch (Exception)
-            {
-                bmp = null;
+                try
+                {
+                    bmp = new BitmapImage();
+                    bmp.BeginInit();
+                    bmp.UriSource = CharacterTheme.AssetUri(_character, pose);
+                    bmp.CacheOption = BitmapCacheOption.OnLoad;
+                    bmp.EndInit();
+                    bmp.Freeze();
+                }
+                catch (Exception ex) when (ex is System.IO.IOException or NotSupportedException or InvalidOperationException or System.IO.FileFormatException)
+                {
+                    bmp = null;
+                }
             }
             _poseCache[key] = bmp;
         }
@@ -453,7 +574,8 @@ public sealed class CharacterStage : Border
         _move.X = x;
         _move.Y = y;
         // Idle 포즈에서만 산책한다. 게임/독서/티타임, 작업, 졸음 등은 오른쪽 아래에 고정한다.
-        _wander.X = _mood == Mood.Idle ? -18 * (1 - Math.Cos(_moodT * 2 * Math.PI / 12)) : 0;
+        // 왼쪽 말풍선 배치에서는 말풍선 자리를 침범하지 않도록 산책하지 않는다.
+        _wander.X = _mood == Mood.Idle && _placement == BubblePlacement.Above ? -18 * (1 - Math.Cos(_moodT * 2 * Math.PI / 12)) : 0;
         _shadow.Width = 92 * (1 + y / 60);
 
         UpdateBubble(dt);

@@ -1,4 +1,4 @@
-﻿using System.IO;
+using System.IO;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Windows;
@@ -22,7 +22,7 @@ internal static partial class Program
         var settingsBefore = File.Exists(Paths.SettingsFile) ? File.ReadAllBytes(Paths.SettingsFile) : null;
         var vm = new MainViewModel();
         vm.Update(CompactProviderCard("Claude", "TEST"), CompactProviderCard("Codex", "TEST"), "");
-        var window = new MainWindow(vm, new AppSettings { ShowCharacters = false, Topmost = false })
+        var window = new MainWindow(vm, new AppSettings { ShowCharacters = false, Topmost = false }, _ => { })
         {
             Opacity = 0, ShowActivated = false, ShowInTaskbar = false, AllowClose = true,
         };
@@ -32,7 +32,6 @@ internal static partial class Program
             PumpDisplay();
             CheckFits("initial window fits work area", window);
             var initialSize = new Size(window.Width, window.Height);
-            double initialScale = ((ScaleTransform)((FrameworkElement)window.Content).LayoutTransform).ScaleX;
             var hwnd = new WindowInteropHelper(window).Handle;
             foreach (var screen in System.Windows.Forms.Screen.AllScreens)
             {
@@ -43,7 +42,7 @@ internal static partial class Program
                 PumpDisplay();
                 Check("window movement selects the destination monitor",
                     System.Windows.Forms.Screen.FromHandle(hwnd).DeviceName == screen.DeviceName, screen.DeviceName);
-                CheckStable("monitor movement preserves size and content scale", window, initialSize, initialScale);
+                CheckStable("monitor movement preserves size without content zoom", window, initialSize);
             }
 
             foreach (var message in new[] { 0x007E, 0x001A })
@@ -51,7 +50,7 @@ internal static partial class Program
                 var parameter = message == 0x001A ? new IntPtr(0x002F) : IntPtr.Zero;
                 for (int i = 0; i < 5; i++) SendMessage(hwnd, message, parameter, IntPtr.Zero);
                 PumpDisplay();
-                CheckStable("display notifications preserve size and content scale", window, initialSize, initialScale);
+                CheckStable("display notifications preserve size without content zoom", window, initialSize);
             }
 
             // Exercise the DPI callback without changing the user's Windows display settings.
@@ -59,7 +58,7 @@ internal static partial class Program
             typeof(MainWindow).GetMethod("OnDpiChanged", BindingFlags.Instance | BindingFlags.NonPublic)!
                 .Invoke(window, [dpi, dpi]);
             PumpDisplay();
-            CheckStable("DPI callback does not change app zoom", window, initialSize, initialScale);
+            CheckStable("DPI callback does not change app zoom", window, initialSize);
 
             window.WindowState = WindowState.Minimized;
             PumpDisplay();
@@ -67,14 +66,14 @@ internal static partial class Program
             PumpDisplay();
             window.WindowState = WindowState.Normal;
             PumpDisplay();
-            CheckStable("restore preserves size and content scale", window, initialSize, initialScale);
+            CheckStable("restore preserves size without content zoom", window, initialSize);
             window.Hide();
             window.Show();
             PumpDisplay();
-            CheckStable("show preserves size and content scale", window, initialSize, initialScale);
+            CheckStable("show preserves size without content zoom", window, initialSize);
             window.ApplyCharacters(true);
             PumpDisplay();
-            CheckStable("character toggle preserves size and content scale", window, initialSize, initialScale);
+            CheckStable("character toggle preserves size without content zoom", window, initialSize);
         }
         finally { window.Close(); }
         var settingsAfter = File.Exists(Paths.SettingsFile) ? File.ReadAllBytes(Paths.SettingsFile) : null;
@@ -83,20 +82,37 @@ internal static partial class Program
             "settings file changed");
     }
 
-    static void CheckStable(string name, MainWindow window, Size size, double scale) =>
+    /// <summary>
+    /// 앱이 스스로 창 크기를 바꾸지 않았는지, 그리고 내용을 확대·축소(LayoutTransform)하지 않았는지 확인한다.
+    /// 바뀐 요구사항: 예전에는 배율(ScaleTransform)이 유지되는지도 봤으나, 이제는 배율 자체를 쓰지 않는다.
+    /// </summary>
+    static void CheckStable(string name, MainWindow window, Size size) =>
         Check(name, window.Width == size.Width && window.Height == size.Height &&
-            ((ScaleTransform)((FrameworkElement)window.Content).LayoutTransform).ScaleX == scale,
-            $"size={window.Width}/{window.Height}, expected={size}, scale={scale}");
+            ((FrameworkElement)window.Content).LayoutTransform.Value.IsIdentity,
+            $"size={window.Width}/{window.Height}, expected={size}");
 
+    // 압축 전 창의 1080p 크기 (기준 410×860 을 1.17배로 키운 615×1008). 기본 창은 이 면적의 절반 이하여야 한다.
+    const double PreviousWindowArea = 615 * 1008;
+
+    /// <summary>
+    /// 바뀐 요구사항: 이전 라운드는 "배율 1.0, 폭 600, 높이 = 내용 높이"였으나, 이제 창은 사용자가 크기를 바꾸는 반응형이다.
+    /// 저장된 크기가 없으면 기본 크기(640×480)로 작업 영역 안 오른쪽 아래에 열리고, 내용은 확대·축소하지 않으며,
+    /// 최소·최대 크기(작업 영역)가 걸려 있고, 기본 면적은 압축 전의 50% 이하인지 확인한다.
+    /// </summary>
     static void CheckFits(string name, MainWindow window)
     {
         var area = (Rect)typeof(MainWindow).GetMethod("CurrentWorkArea", BindingFlags.Instance | BindingFlags.NonPublic)!
             .Invoke(window, null)!;
-        double expectedHeight = Math.Ceiling(Math.Min(860 * 1.5, area.Height - 24));
+        var root = (FrameworkElement)window.Content;
         Check(name, window.Left >= area.Left + 11 && window.Top >= area.Top + 11 &&
             window.Left + window.Width <= area.Right - 11 && window.Top + window.Height <= area.Bottom - 11 &&
-            Math.Abs(window.Height - expectedHeight) <= 1,
-            $"window={window.Left}/{window.Top}/{window.Width}/{window.Height}, area={area}");
+            root.LayoutTransform.Value.IsIdentity && window.ResizeMode == ResizeMode.CanResize &&
+            window.Width == MainWindow.DefaultWidth && window.Height == MainWindow.DefaultHeight &&
+            window.MinWidth == MainWindow.MinWindowWidth && window.MinHeight == MainWindow.MinWindowHeight &&
+            Math.Abs(window.MaxWidth - area.Width) < 1 && Math.Abs(window.MaxHeight - area.Height) < 1 &&
+            window.Width * window.Height <= PreviousWindowArea * 0.5,
+            $"window={window.Left}/{window.Top}/{window.Width}/{window.Height}, max={window.MaxWidth}/{window.MaxHeight}, area={area}, " +
+            $"ratio={window.Width * window.Height / PreviousWindowArea:P0}");
     }
 
     static void PumpDisplay(int milliseconds = 150)
@@ -112,7 +128,7 @@ internal static partial class Program
     {
         var vm = new MainViewModel();
         vm.Update(CompactProviderCard("Claude", "TEST"), CompactProviderCard("Codex", "TEST"), "");
-        var window = new MainWindow(vm, new AppSettings { ShowCharacters = false, Topmost = false })
+        var window = new MainWindow(vm, new AppSettings { ShowCharacters = false, Topmost = false }, _ => { })
         {
             Opacity = 0, ShowActivated = false, ShowInTaskbar = false, AllowClose = true,
         };
@@ -125,7 +141,6 @@ internal static partial class Program
                 .Invoke(window, null)!;
             var baseline = new Size(window.Width, window.Height);
             var root = (FrameworkElement)window.Content;
-            double scale = ((ScaleTransform)root.LayoutTransform).ScaleX;
             int geometryChanges = 0;
             window.LocationChanged += (_, _) => geometryChanges++;
             window.SizeChanged += (_, _) => geometryChanges++;
@@ -145,7 +160,7 @@ internal static partial class Program
                     PresentationSource.FromVisual(window.Accounts) != PresentationSource.FromVisual(window), "shared HWND or taskbar entry");
                 window.SetAccountsOpen(false);
                 PumpDisplay();
-                CheckStable("open and close preserve main size and scale", window, baseline, scale);
+                CheckStable("open and close preserve main size", window, baseline);
                 Check("open and close never move or resize the owner", geometryChanges == 0 &&
                     new Point(window.Left, window.Top) == position && !flyout.IsVisible,
                     $"geometry events={geometryChanges}");
@@ -188,7 +203,7 @@ internal static partial class Program
             double movedMainLeft = window.Left;
             Button("CloseButton").RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Button.ClickEvent));
             PumpDisplay();
-            CheckStable("rapid toggles do not accumulate main window width", window, baseline, scale);
+            CheckStable("rapid toggles do not accumulate main window width", window, baseline);
             Check("closing after movement preserves owner position", !window.IsAccountsOpen && window.Left == movedMainLeft,
                 window.Left.ToString());
 

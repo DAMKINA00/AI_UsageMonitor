@@ -167,15 +167,41 @@ public static class CodexAppServer
     {
         readonly Process _process;
         readonly Queue<JsonElement> _logins = new();
+        readonly int _pid;
+        // app-server 가 띄운 자식까지 Dispose 때 함께 끝낸다
+        readonly KillOnCloseJob? _job;
         int _id;
 
         public Connection(string? exeOverride, string? codexHome)
         {
             var exe = FindExecutable(exeOverride) ?? throw new IOException("codex.exe를 찾지 못함");
-            _process = Process.Start(StartInfo(exe, codexHome)) ?? throw new IOException("프로세스 시작 실패");
-            // stderr may contain authentication diagnostics; drain it without persisting it.
-            _process.ErrorDataReceived += (_, _) => { };
-            _process.BeginErrorReadLine();
+            _job = KillOnCloseJob.TryCreate();
+            try
+            {
+                _process = Process.Start(StartInfo(exe, codexHome)) ?? throw new IOException("프로세스 시작 실패");
+            }
+            catch
+            {
+                _job?.Dispose();
+                throw;
+            }
+            try
+            {
+                // 조회용 app-server 가 Codex 실행 중 판정에 섞이지 않도록 한다.
+                _pid = _process.Id;
+                ProcessUtil.RegisterOwnProcess(_pid);
+                if (_job != null) _job.TryAdd(_process, "codex app-server");
+                else KillOnCloseJob.ReportUnavailable("codex app-server");
+                // stderr may contain authentication diagnostics; drain it without persisting it.
+                _process.ErrorDataReceived += (_, _) => { };
+                _process.BeginErrorReadLine();
+            }
+            catch
+            {
+                // 생성자가 실패하면 Dispose 가 불리지 않으므로 여기서 정리한다
+                Dispose();
+                throw;
+            }
         }
 
         public async Task InitializeAsync(CancellationToken ct)
@@ -227,6 +253,8 @@ public static class CodexAppServer
         public void Dispose()
         {
             try { if (!_process.HasExited) { _process.Kill(entireProcessTree: true); _process.WaitForExit(3000); } } catch { }
+            if (_pid != 0) ProcessUtil.UnregisterOwnProcess(_pid);
+            _job?.Dispose();
             _process.Dispose();
         }
     }

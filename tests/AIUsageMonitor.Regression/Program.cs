@@ -15,7 +15,36 @@ internal static partial class Program
     [STAThread]
     static int Main(string[] args)
     {
+        if (args.Contains("hold-pipe")) return HoldPipe();
+        if (args.Contains("/usage")) return FakeAgy(args);
         if (args.Contains("app-server")) return FakeCodexServer();
+
+        // 설정·로그·WebView·추가 계정 폴더를 임시 폴더로 돌린다. 가짜 agy·app-server 자식도 환경 변수를 물려받는다.
+        var userLog = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AIUsageMonitor", "monitor.log");
+        var userLogBefore = ReadShared(userLog);
+        var userLogTime = File.Exists(userLog) ? File.GetLastWriteTimeUtc(userLog) : (DateTime?)null;
+        var dataDir = Path.Combine(Path.GetTempPath(), $"AIUsageMonitor-Regression-{Guid.NewGuid():N}");
+        var previousDataDir = Environment.GetEnvironmentVariable(Paths.DataDirVariable);
+        Environment.SetEnvironmentVariable(Paths.DataDirVariable, dataDir);
+        var runMarker = $"regression run {Guid.NewGuid():N}";
+        Log.Write(runMarker);
+        try
+        {
+            RunAll();
+            CheckUserDataUntouched(userLog, userLogBefore, userLogTime, dataDir, runMarker);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(Paths.DataDirVariable, previousDataDir);
+            TryDelete(dataDir);
+        }
+
+        Console.WriteLine($"Totals: {s_assertions} assertions, {s_failures} failures.");
+        return s_failures == 0 ? 0 : 1;
+    }
+
+    static void RunAll()
+    {
         Run("Presenter Codex usage merge and failure notice", TestPresenterCodex);
         Run("Claude WebView initialization recovery", TestClaudeInitializationRecovery);
         Run("Codex local activity timestamps and incremental reads", TestCodexLocalReader);
@@ -32,9 +61,45 @@ internal static partial class Program
         Run("Account swap and Codex subagent filtering", TestAccountSwapAndCodexSubagents);
         Run("Codex stale file timestamps", TestCodexStaleFileTimes);
         Run("Codex browser login protocol and cancellation", () => TestCodexLoginProtocol().GetAwaiter().GetResult());
+        Run("Gemini agy usage parsing", TestAgyUsageParse);
+        Run("Gemini agy process control", () => TestAgyProcess().GetAwaiter().GetResult());
+        Run("Gemini local conversation summaries", TestGeminiLocal);
+        Run("Gemini monitor scheduling and busy recovery", () => TestGeminiMonitor().GetAwaiter().GetResult());
+        Run("Compact three-provider layout and Gemini row", TestCompactLayout);
+        Run("Resizable responsive layout, saved bounds and character default", TestResponsiveLayout);
+        Run("Dialogue repeat guard, Gemini unblock and login message", TestFinishing);
+        Run("Character dialogue rules", TestDialogue);
+    }
 
-        Console.WriteLine($"Totals: {s_assertions} assertions, {s_failures} failures.");
-        return s_failures == 0 ? 0 : 1;
+    static string ReadShared(string path)
+    {
+        try
+        {
+            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            using var reader = new StreamReader(stream);
+            return reader.ReadToEnd();
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return ""; }
+    }
+
+    /// <summary>
+    /// 테스트가 사용자의 실제 monitor.log 에 쓰지 않았는지 내용으로 확인한다.
+    /// (실행 중인 앱이 같은 파일에 쓸 수 있어 수정 시각만으로는 판단하지 않는다.)
+    /// </summary>
+    static void CheckUserDataUntouched(string userLog, string before, DateTime? beforeTime, string dataDir, string runMarker)
+    {
+        var testLog = ReadShared(Path.Combine(dataDir, "monitor.log"));
+        Check("tests write logs to the temporary data folder", Paths.AppData == dataDir && testLog.Contains(runMarker),
+            $"appData={Paths.AppData}, marker in test log={testLog.Contains(runMarker)}");
+
+        var after = ReadShared(userLog);
+        var appended = after.StartsWith(before, StringComparison.Ordinal) ? after[before.Length..] : after; // 1MB 넘으면 앱이 새로 시작한다
+        string[] testOnly = [runMarker, "regression run ", "fixture", "quota service unavailable", "missing-codex.exe", "AIUsageMonitor-Regression-", "block cleared by the user"];
+        var leaked = testOnly.Where(m => appended.Contains(m, StringComparison.Ordinal)).ToList();
+        var afterTime = File.Exists(userLog) ? File.GetLastWriteTimeUtc(userLog) : (DateTime?)null;
+        Check("tests leave no lines in the user's monitor.log", leaked.Count == 0,
+            $"leaked={string.Join(", ", leaked)}, user log changed={afterTime != beforeTime} (a running app may also write)");
+        Console.WriteLine($"INFO user monitor.log modified during tests: {afterTime != beforeTime} ({appended.Length} chars appended by other writers)");
     }
 
     static void Run(string name, Action test)

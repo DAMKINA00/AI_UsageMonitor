@@ -18,6 +18,14 @@ public sealed class Tray : IDisposable
     public event Action? AccountsRequested;
     public event Action<bool>? TopmostChanged, CharactersChanged, StartupChanged, UsageAlertsChanged, ActivityAlertsChanged;
     public event Action<bool>? ClaudeDesktopChanged;
+    public event Action? GeminiUnblockRequested;
+    readonly WinForms.ToolStripMenuItem _geminiUnblock;
+
+    /// <summary>'Gemini 조회 차단 해제' 메뉴를 차단됐을 때만 보인다.</summary>
+    public void SetGeminiBlocked(bool blocked)
+    {
+        if (_geminiUnblock.Visible != blocked) _geminiUnblock.Visible = blocked;
+    }
 
     public Tray(AppSettings s)
     {
@@ -41,6 +49,12 @@ public sealed class Tray : IDisposable
         _login = new WinForms.ToolStripMenuItem("Claude 웹 로그인 (보조 연결)…", null, (_, _) => LoginRequested?.Invoke());
         _logout = new WinForms.ToolStripMenuItem("Claude 로그아웃", null, (_, _) => LogoutRequested?.Invoke());
         menu.Items.AddRange([_login, _logout]);
+        // agy 가 /usage 미지원으로 판정돼 Gemini 조회가 막혔을 때만 보인다
+        _geminiUnblock = new WinForms.ToolStripMenuItem(GeminiBlockAction.MenuText + "…", null, (_, _) => GeminiUnblockRequested?.Invoke())
+        {
+            Visible = false,
+        };
+        menu.Items.Add(_geminiUnblock);
         menu.Items.Add("데이터 폴더 열기", null, (_, _) => OpenFolder(Paths.AppData));
         menu.Items.Add(new WinForms.ToolStripSeparator());
         menu.Items.Add("종료", null, (_, _) => ExitRequested?.Invoke());
@@ -48,7 +62,7 @@ public sealed class Tray : IDisposable
         _icon = new WinForms.NotifyIcon { ContextMenuStrip = menu, Text = "AI 사용량 모니터", Visible = true };
         _icon.MouseClick += (_, e) => { if (e.Button == WinForms.MouseButtons.Left) OpenRequested?.Invoke(); };
         SetLoggedIn(s.ClaudeWebEnabled);
-        UpdateIcon(null, null);
+        UpdateIcon(null, null, null);
     }
 
     WinForms.ToolStripMenuItem Check(string text, bool value, Action<bool> changed)
@@ -69,7 +83,50 @@ public sealed class Tray : IDisposable
         _logout.Enabled = !_desktop.Checked && v;
     }
 
-    public void SetTooltip(string text) => _icon.Text = text.Length > 127 ? text[..127] : text;
+    /// <summary>NotifyIcon 툴팁은 127자까지만 받는다.</summary>
+    public const int MaxTooltipLength = 127;
+
+    public void SetTooltip(string text) => _icon.Text = text.Length > MaxTooltipLength ? text[..MaxTooltipLength] : text;
+
+    /// <summary>
+    /// 서비스마다 한 줄: "Claude 주간 62% · 작업 2 · 대기 1". 화면 원과 같은 한도를 쓴다.
+    /// 세 줄을 합쳐 127자를 넘지 않도록 줄마다 길이를 나눠 자른다.
+    /// </summary>
+    public static string Tooltip(IReadOnlyList<ProviderCard> cards)
+    {
+        int perLine = (MaxTooltipLength - Math.Max(0, cards.Count - 1)) / Math.Max(1, cards.Count);
+        static string Line(ProviderCard c)
+        {
+            string usage = c.Usage.FirstOrDefault() is { } row
+                ? $"{row.Label.Replace(" 한도", "")} {(row.IsResetPending ? "확인 중" : Fmt.Pct(row.Value))}"
+                : c.Status.State switch
+                {
+                    StatusKind.NotInstalled => "agy 미설치",
+                    StatusKind.Unsupported => AgyCli.UnsupportedMessage,
+                    StatusKind.LoginRequired => "로그인 필요",
+                    StatusKind.Disabled => "꺼짐",
+                    _ => "사용량 미확인",
+                };
+            var work = c.WorkingCount > 0 ? $" · 작업 {c.WorkingCount}" : "";
+            var wait = c.NeedsInputCount > 0 ? $" · 대기 {c.NeedsInputCount}" : "";
+            var stale = c.Status.IsDimmed || c.UsageWarning != null ? " ⚠" : "";
+            return $"{c.Name} {usage}{stale}{work}{wait}";
+        }
+        return string.Join('\n', cards.Select(c =>
+        {
+            var line = Line(c);
+            return line.Length > perLine ? line[..perLine] : line;
+        }));
+    }
+
+    /// <summary>
+    /// 설정을 읽지 못해 기본값으로 시작했을 때 시작 풍선에 띄울 문구 (정상으로 읽었거나 파일이 없었으면 null).
+    /// 풍선은 255자까지만 보이므로 짧게 쓴다.
+    /// </summary>
+    public static string? SettingsLoadNotice(AppSettings s) => s.LoadedFrom != AppSettings.LoadResult.Failed ? null
+        : s.SaveBlocked || s.BackupFile == null ? "설정 파일을 읽을 수 없어 기본값으로 시작했습니다. 이번 실행의 변경은 저장되지 않습니다."
+        : $"설정을 읽지 못해 기본값으로 시작했습니다. 원본 백업: 데이터 폴더의 {System.IO.Path.GetFileName(s.BackupFile)}. " +
+          "다음 저장 때 settings.json 이 기본값으로 바뀌고 추가 계정 연결 목록도 비게 됩니다.";
 
     public void Balloon(string title, string text, bool warning) =>
         _icon.ShowBalloonTip(6000, title, text, warning ? WinForms.ToolTipIcon.Warning : WinForms.ToolTipIcon.Info);
@@ -82,11 +139,13 @@ public sealed class Tray : IDisposable
     [DllImport("user32.dll")]
     static extern bool DestroyIcon(IntPtr h);
 
-    /// <summary>왼쪽 막대 = Claude, 오른쪽 막대 = Codex. 채워진 높이 = 가장 많이 쓴 한도의 사용률.</summary>
-    public void UpdateIcon(double? claude, double? codex)
+    /// <summary>
+    /// 막대 세 개 = 왼쪽부터 Claude, Codex, Gemini. 채워진 높이 = 가장 많이 쓴 한도의 사용률.
+    /// </summary>
+    public void UpdateIcon(double? claude, double? codex, double? gemini)
     {
         var size = WinForms.SystemInformation.SmallIconSize.Width;
-        var sig = $"{size}:{claude:0}:{codex:0}";
+        var sig = $"{size}:{claude:0}:{codex:0}:{gemini:0}";
         if (sig == _iconSig) return;
         _iconSig = sig;
 
@@ -95,10 +154,11 @@ public sealed class Tray : IDisposable
         {
             g.SmoothingMode = SmoothingMode.AntiAlias;
             g.Clear(Color.Transparent);
-            float pad = size * 0.06f, gap = size * 0.12f;
-            float barW = (size - pad * 2 - gap) / 2f, barH = size - pad * 2;
+            float pad = size * 0.04f, gap = size * 0.07f;
+            float barW = (size - pad * 2 - gap * 2) / 3f, barH = size - pad * 2;
             DrawBar(g, pad, pad, barW, barH, claude, Color.FromArgb(0xD9, 0x77, 0x57));
             DrawBar(g, pad + barW + gap, pad, barW, barH, codex, Color.FromArgb(0x7A, 0xA2, 0xF7));
+            DrawBar(g, pad + (barW + gap) * 2, pad, barW, barH, gemini, Color.FromArgb(0xB4, 0x8C, 0xF2));
         }
 
         var h = bmp.GetHicon();

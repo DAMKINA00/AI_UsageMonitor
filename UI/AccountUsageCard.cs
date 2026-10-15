@@ -20,15 +20,16 @@ public sealed class AccountUsageCard
     public string Signature => string.Join('|', Id, ProviderName, DisplayName, Plan, Status, CanLogin, LoginText,
         string.Join(';', Usage.Select(x => $"{x.Label}|{x.Value}|{x.ResetText}")));
 
-    public static List<AccountUsageCard> Create(ProviderCard claude, ProviderCard codex, SecondaryAccountService service)
+    /// <param name="gemini">있으면 주 계정 카드만 덧붙인다 (Gemini 는 서브 계정을 지원하지 않는다).</param>
+    public static List<AccountUsageCard> Create(ProviderCard claude, ProviderCard codex, SecondaryAccountService service, ProviderCard? gemini = null)
     {
         var cards = new List<AccountUsageCard>();
-        foreach (var main in new[] { claude, codex })
+        foreach (var main in gemini == null ? new[] { claude, codex } : new[] { claude, codex, gemini })
         {
             cards.Add(new AccountUsageCard
             {
                 Id = "primary:" + main.Name, ProviderName = main.Name + " · 주 계정",
-                DisplayName = Fmt.AccountId(main.Account) ?? "계정 확인 중", Plan = main.Plan,
+                DisplayName = Fmt.AccountId(main.Account) ?? (main.Name == "Gemini" ? "ANTIGRAVITY CLI" : "계정 확인 중"), Plan = main.Plan,
                 Status = main.Notice ?? main.UsageEmpty ?? main.Footnote,
                 Usage = main.Usage,
             });

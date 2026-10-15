@@ -1,4 +1,4 @@
-"""참고 MV 그림체(단순한 플랫 채색, 얇은 갈색 선, 약 3.5등신 데포르메)로 클짱·짚짱 기본 디자인을 그린다."""
+"""참고 MV 그림체(단순한 플랫 채색, 얇은 갈색 선, 약 3.5등신 데포르메)로 클쨩·짚쨩 기본 디자인을 그린다."""
 import subprocess, sys
 
 STYLE = ("Flat 2D anime illustration in the style of a cute Japanese doujin music video: thin slightly wobbly warm dark-brown hand-drawn line art, "

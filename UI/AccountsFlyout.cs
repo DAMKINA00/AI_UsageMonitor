@@ -32,7 +32,8 @@ public sealed class AccountsFlyout : Window
     {
         const double margin = 12, gap = 8;
         Width = Math.Min(400, Math.Max(1, area.Width - margin * 2));
-        Height = Math.Min(900, Math.Min(owner.Height, Math.Max(1, area.Height - margin * 2)));
+        // 메인 창이 작아졌으므로 높이는 메인 창이 아니라 작업 영역에 맞춘다 (계정이 많으면 패널 안에서 스크롤)
+        Height = Math.Min(900, Math.Max(1, area.Height - margin * 2));
         double leftSpace = owner.Left - area.Left - margin;
         double rightSpace = area.Right - margin - owner.Left - owner.Width;
         bool onLeft = leftSpace >= Width + gap || leftSpace >= rightSpace;

@@ -256,19 +256,28 @@ internal static partial class Program
         stage.Measure(new Size(140, 280));
         stage.Arrange(new Rect(0, 0, 140, 280));
         var bubbleText = (System.Windows.Controls.TextBlock)PrivateField<CharacterStage>("_bubbleText").GetValue(stage)!;
-        foreach (var dialogue in new[] { "인간… 어이가 없군요. 지금 열심히 작업 중이에요.",
-            "그 정도는 금방 해. 결과만 기다려.", "공백이없는아주긴대사도잘리지않게표시합니다" })
+        double MaxLineWidth(string[] lines) => lines.Max(line => new FormattedText(line,
+            System.Globalization.CultureInfo.CurrentCulture, FlowDirection.LeftToRight,
+            new Typeface(bubbleText.FontFamily, bubbleText.FontStyle, bubbleText.FontWeight, bubbleText.FontStretch),
+            bubbleText.FontSize, bubbleText.Foreground, 1).WidthIncludingTrailingWhitespace);
+        foreach (var dialogue in new[] { "인간… 어이가 없군요. 지금 열심히 작업 중이에요.", "그 정도는 금방 해. 결과만 기다려." })
         {
             show.Invoke(stage, [dialogue]);
             var lines = bubbleText.Text.Split('\n');
-            double maxWidth = lines.Max(line => new FormattedText(line,
-                System.Globalization.CultureInfo.CurrentCulture, FlowDirection.LeftToRight,
-                new Typeface(bubbleText.FontFamily, bubbleText.FontStyle, bubbleText.FontWeight, bubbleText.FontStretch),
-                bubbleText.FontSize, bubbleText.Foreground, 1).WidthIncludingTrailingWhitespace);
+            double maxWidth = MaxLineWidth(lines);
             Check("dialogue wraps whole words within the bubble width",
-                string.Join(' ', lines) == dialogue && maxWidth <= 120.01 &&
+                string.Join(' ', lines) == dialogue && maxWidth <= 120.01 && bubbleText.FontSize == 13 &&
                 bubbleText.TextWrapping == TextWrapping.NoWrap && !lines.Contains("히") && !lines.Contains("해."),
                 $"width={maxWidth:0.##}, text={bubbleText.Text}");
         }
+
+        // 바뀐 요구사항: 최종 글자는 10 DIP 이상. 예전에는 공백 없는 긴 대사를 5px 대까지 줄여 한 줄에 넣었으나,
+        // 이제는 10 DIP 까지만 줄이고 남는 부분은 글자 단위로 나눈다 (글자는 빠지거나 바뀌지 않는다).
+        const string noSpaces = "공백이없는아주긴대사도잘리지않게표시합니다";
+        show.Invoke(stage, [noSpaces]);
+        var split = bubbleText.Text.Split('\n');
+        Check("unbreakable dialogue keeps a 10 DIP minimum and breaks by character",
+            bubbleText.FontSize >= 10 && split.Length > 1 && string.Concat(split) == noSpaces && MaxLineWidth(split) <= 120.01,
+            $"font={bubbleText.FontSize:0.##}, width={MaxLineWidth(split):0.##}, text={bubbleText.Text}");
     }
 }

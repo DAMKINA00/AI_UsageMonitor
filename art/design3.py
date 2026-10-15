@@ -1,4 +1,4 @@
-"""AI활용갤 밈 캐릭터(클짱=Claude, 짚짱=GPT/Codex)를 일반 소녀 비례 + 치비 스티커풍으로 그린다."""
+"""AI활용갤 밈 캐릭터(클쨩=Claude, 짚쨩=GPT/Codex)를 일반 소녀 비례 + 치비 스티커풍으로 그린다."""
 import subprocess, sys
 
 STYLE = ("Cute chibi-sticker anime art style: bold clean dark outlines, bright flat cel shading, soft rounded face, large glossy eyes, "

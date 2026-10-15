@@ -1,4 +1,4 @@
-"""참조 디자인(ref/claude.png=클짱, ref/codex.png=짚짱)으로 상태별 포즈를 만든다. 동작은 참고 MV의 손짓 연출을 따른다.
+"""참조 디자인(ref/claude.png=클쨩, ref/codex.png=짚쨩)으로 상태별 포즈를 만든다. 동작은 참고 MV의 손짓 연출을 따른다.
 python poses.py [pose|name ...]"""
 import subprocess, sys
 

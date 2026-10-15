@@ -25,6 +25,9 @@ public partial class App : Application
     string _accountsSignature = "";
     readonly MoodTracker _claudeMood = new("claude");
     readonly MoodTracker _codexMood = new("codex");
+    readonly MoodTracker _geminiMood = new("gemini");
+    // "N분 전"·남은 시간·오래됨 표시만 다시 그리는 시계 (카드를 교체하지 않는다)
+    DispatcherTimer? _clock;
     bool _firstUpdate = true;
     bool _demo;
 
@@ -48,10 +51,14 @@ public partial class App : Application
         };
 
         _settings = AppSettings.Load();
+        // 예전 설정을 새 형식으로 바꿨으면(캐릭터 기본 끔) 바로 저장해 한 번만 적용되게 한다
+        if (_settings.Migrated) _settings.Save();
         _vm = new MainViewModel();
         _monitor = new MonitorService(_settings);
         _window = new MainWindow(_vm, _settings);
         _tray = new Tray(_settings);
+        // 설정을 읽지 못했으면 시작할 때 한 번만 알린다
+        if (Tray.SettingsLoadNotice(_settings) is { } notice) _tray.Balloon("AI 사용량 모니터", notice, true);
         _alerts = new Alerts(_settings, _tray);
         _secondaryAccounts = new SecondaryAccountService(_settings);
 
@@ -67,6 +74,9 @@ public partial class App : Application
 
         _monitor.Start();
         _secondaryAccounts.Start();
+        _clock = new DispatcherTimer { Interval = TimeSpan.FromSeconds(15) };
+        _clock.Tick += (_, _) => _vm.Tick();
+        _clock.Start();
         if (!e.Args.Contains("--minimized")) _window.ShowAndActivate();
 
         // 진단용: 캐릭터 상태를 하나씩 띄워 PNG로 저장하고 종료
@@ -98,9 +108,16 @@ public partial class App : Application
         {
             _window.Claude.SetMood(mood, [$"[{mood}] 말풍선 테스트"]);
             _window.Codex.SetMood(mood, [$"[{mood}] 말풍선"]);
+            _window.Gemini.SetMood(mood, [$"[{mood}] 말풍선"]);
             await Task.Delay(1500);
-            if (mood == Mood.Working) { _window.Claude.PopText("+3%", System.Windows.Media.Color.FromRgb(0x9B, 0xF0, 0xC0)); _window.Codex.PopText("+1%", System.Windows.Media.Color.FromRgb(0xFF, 0xC8, 0x6B)); await Task.Delay(500); }
-            if (mood == Mood.Happy) { _window.Claude.Celebrate(); _window.Codex.Celebrate(); await Task.Delay(300); }
+            if (mood == Mood.Working)
+            {
+                _window.Claude.PopText("+3%", System.Windows.Media.Color.FromRgb(0x9B, 0xF0, 0xC0));
+                _window.Codex.PopText("+1%", System.Windows.Media.Color.FromRgb(0xFF, 0xC8, 0x6B));
+                _window.Gemini.PopText("+2%", System.Windows.Media.Color.FromRgb(0x9B, 0xF0, 0xC0));
+                await Task.Delay(500);
+            }
+            if (mood == Mood.Happy) { _window.Claude.Celebrate(); _window.Codex.Celebrate(); _window.Gemini.Celebrate(); await Task.Delay(300); }
             SaveWindowPng(System.IO.Path.Combine(dir, $"mood_{(int)mood}_{mood}.png"));
         }
         ExitApp();
@@ -173,6 +190,14 @@ public partial class App : Application
             _tray.SetLoggedIn(false);
         };
         _monitor.ClaudeWeb.LoginWindowClosed += () => _tray.SetLoggedIn(true);
+        _tray.GeminiUnblockRequested += async () =>
+        {
+            try
+            {
+                await GeminiBlockAction.RunAsync(_monitor, text => GeminiBlockAction.Confirm(_window, text));
+            }
+            catch (Exception ex) { Log.Write($"gemini unblock failed: {ex.Message}"); }
+        };
     }
 
     void SetTopmost(bool on)
@@ -207,13 +232,16 @@ public partial class App : Application
             }
             else _monitor.ClaudeWeb.ShowLogin();
         });
-        var codex = Presenter.Codex(_monitor);
+        var codex = Presenter.Codex(_monitor, _settings);
+        var gemini = Presenter.Gemini(_monitor, _settings);
         claude.AccountSlots = AccountUsageSlot.Create(claude, _secondaryAccounts.Accounts);
         codex.AccountSlots = AccountUsageSlot.Create(codex, _secondaryAccounts.Accounts);
-        _vm.Update(claude, codex, "");
+        // Gemini 는 서브 계정을 지원하지 않는다
+        gemini.AccountSlots = AccountUsageSlot.Create(gemini, _secondaryAccounts.Accounts, secondarySlots: 0);
+        _vm.Update(claude, codex, gemini, "");
         if (_window.IsAccountsOpen)
         {
-            var accounts = AccountUsageCard.Create(claude, codex, _secondaryAccounts);
+            var accounts = AccountUsageCard.Create(claude, codex, _secondaryAccounts, gemini);
             var signature = string.Join('\n', accounts.Select(x => x.Signature));
             if (_accountsSignature != signature)
             {
@@ -226,15 +254,20 @@ public partial class App : Application
         {
             Animate(_window.Claude, _claudeMood.Update(claude));
             Animate(_window.Codex, _codexMood.Update(codex));
+            Animate(_window.Gemini, _geminiMood.Update(gemini));
         }
 
-        _tray.UpdateIcon(claude.MaxUsed, codex.MaxUsed);
-        _tray.SetTooltip(Tooltip(claude, codex));
+        _tray.UpdateIcon(claude.MaxUsed, codex.MaxUsed, gemini.MaxUsed);
+        _tray.SetTooltip(Tray.Tooltip([claude, codex, gemini]));
+        _tray.SetGeminiBlocked(_monitor.GeminiUnsupported);
 
         _alerts.CheckUsage("Claude", claude.RawWindows);
         _alerts.CheckUsage("Codex", codex.RawWindows);
+        // Gemini 카드의 RawWindows 는 gemini 그룹 창만 담는다 (Claude·GPT 그룹은 툴팁 전용)
+        _alerts.CheckUsage("Gemini", gemini.RawWindows);
         if (_monitor.ClaudeLocal != null) _alerts.CheckActivity("Claude", Presenter.ClaudeSessions(_monitor));
         if (_monitor.CodexLocal is { } xl) _alerts.CheckActivity("Codex", xl.Threads);
+        if (_monitor.GeminiLocal is { } gl) _alerts.CheckActivity("Gemini", gl.Sessions);
         if (_firstUpdate && _monitor.ClaudeLocal != null && _monitor.CodexLocal != null)
         {
             _firstUpdate = false;
@@ -244,23 +277,9 @@ public partial class App : Application
 
     static void Animate(CharacterStage stage, MoodTracker.Result r)
     {
-        stage.SetMood(r.Mood, r.Lines);
+        stage.SetMood(r.Mood, r.Lines, r.Keys);
         if (r.Reset) stage.Celebrate();
         else if (r.UsageDelta is double d) stage.PopText($"+{Fmt.Pct(d)}", r.DeltaColor);
-    }
-
-    static string Tooltip(ProviderCard claude, ProviderCard codex)
-    {
-        static string Line(ProviderCard c)
-        {
-            var parts = c.RawWindows.Select(w => $"{Short(w.Label)} {Fmt.Pct(w.UsedPercent)}").Take(2).ToList();
-            var usage = parts.Count > 0 ? string.Join(" · ", parts) : "사용량 미확인";
-            var work = c.WorkingCount > 0 ? $" · 작업 {c.WorkingCount}" : "";
-            var wait = c.NeedsInputCount > 0 ? $" · 대기 {c.NeedsInputCount}" : "";
-            return $"{c.Name}: {usage}{work}{wait}";
-        }
-        static string Short(string label) => label.Replace(" 한도", "").Replace(" (전체)", "");
-        return $"{Line(claude)}\n{Line(codex)}";
     }
 
     void SyncStartupRegistration()
@@ -284,6 +303,8 @@ public partial class App : Application
     {
         _window.AllowClose = true;
         _settings.Save();
+        _clock?.Stop();
+        _monitor.Changed -= Render;
         _secondaryAccounts.Changed -= Render;
         _secondaryAccounts.Dispose();
         _monitor.Dispose();
