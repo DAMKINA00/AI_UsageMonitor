@@ -294,7 +294,7 @@ internal static partial class Program
         }
 
         // L5: 캐릭터 열의 말풍선은 첫 배치부터 글자 폭 120 DIP 이상이고, 그림 크기가 바뀌면 다시 줄바꿈한다
-        var stage = new CharacterStage { Character = "gemini", BubblePlacement = BubblePlacement.Left, FigureHeight = 150, Width = MainWindow.CharacterColumn };
+        var stage = new CharacterStage { Character = "gemini", BubblePlacement = BubblePlacement.Left, FigureHeight = 150, Width = 224 };
         var textWidth = PrivateMethod<CharacterStage>("BubbleTextWidth");
         double before = (double)textWidth.Invoke(stage, null)!;
         PrivateMethod<CharacterStage>("ShowBubble").Invoke(stage, ["사주세요… 아니,\n승인해 주세요!"]);
@@ -316,14 +316,14 @@ internal static partial class Program
         {
             window.Show();
             PumpDisplay();
-            var column = window.Resources["CharacterColumnWidth"];
+            var sessionVisibility = window.Resources["SessionListVisibility"];
             window.Width = 700;
             PumpDisplay();
-            var sameColumn = window.Resources["CharacterColumnWidth"];
+            var sameVisibility = window.Resources["SessionListVisibility"];
             window.Width = 500;
             PumpDisplay();
             Check("resizing within a layout band keeps the template resources",
-                ReferenceEquals(column, sameColumn) && !ReferenceEquals(sameColumn, window.Resources["CharacterColumnWidth"]) &&
+                ReferenceEquals(sessionVisibility, sameVisibility) && !ReferenceEquals(sameVisibility, window.Resources["SessionListVisibility"]) &&
                 window.Mode == LayoutMode.Medium, $"mode={window.Mode}");
 
             Rect Area() => (Rect)typeof(MainWindow).GetMethod("CurrentWorkArea", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!

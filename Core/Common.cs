@@ -88,6 +88,8 @@ public sealed class AppSettings
     /// <summary>진행 중이 아닌 Antigravity 대화를 세션 목록에 남겨 두는 시간.</summary>
     public int GeminiActiveHours { get; set; } = 12;
     public string? AgyExePath { get; set; }
+    /// <summary>agy가 구독 등급을 제공하지 않을 때 사용자가 선택한 표시값.</summary>
+    public string? GeminiPlanOverride { get; set; }
     /// <summary>/usage 를 명령으로 처리하지 않은 agy 실행 파일의 지문 (경로|크기|수정 시각). 같은 파일로는 조회하지 않는다.</summary>
     public string? AgyBlockedFingerprint { get; set; }
     public double? WindowLeft { get; set; }
@@ -98,6 +100,7 @@ public sealed class AppSettings
     public bool TrayHintShown { get; set; }
     /// <summary>캐릭터 표시. 기본은 끔 (트레이 메뉴 "캐릭터 표시"로 켠다).</summary>
     public bool ShowCharacters { get; set; }
+    public bool ShowSessions { get; set; } = true;
     public Dictionary<string, int> AlertState { get; set; } = new();
     public List<SecondaryAccountSettings> SecondaryAccounts { get; set; } = [];
 
@@ -439,6 +442,8 @@ public sealed class UsageSnapshot
     public DateTimeOffset AsOf { get; init; }
     public string Source { get; init; } = "";
     public string? Plan { get; init; }
+    /// <summary>서버가 Pro 계정의 기본 한도를 반환했고 5시간 창이 명시적으로 없을 때만 true.</summary>
+    public bool FiveHourUnlimited { get; init; }
     public List<string> Extras { get; init; } = [];
     public string? Warning { get; init; }
 }

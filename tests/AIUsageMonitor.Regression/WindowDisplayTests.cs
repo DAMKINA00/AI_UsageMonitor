@@ -6,6 +6,7 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using AIUsageMonitor.Core;
 using AIUsageMonitor.UI;
@@ -216,22 +217,31 @@ internal static partial class Program
                 flyout.Left + flyout.Width <= narrowArea.Right, $"panel={flyout.Left}/{flyout.Width}");
             flyout.PositionBeside(window, area);
 
+            var usageNow = DateTimeOffset.Now;
             var accounts = Enumerable.Range(0, 6).Select(i => new AccountUsageCard
             {
                 Id = i.ToString(), ProviderName = (i < 3 ? "Claude" : "Codex") + (i % 3 == 0 ? " · 주 계정" : " · 서브 계정"),
                 DisplayName = "ACCOUNT_" + i, Plan = "Max 20x", Status = "연결됨 · 화면 검증용 데이터",
                 IsSecondary = i % 3 != 0, CanLogin = true, LoginText = "다시 로그인",
-                Usage = [new UsageRow { Label = i == 5 ? "5시간 한도" : "주간 한도", Value = 25,
-                    UsedText = "25%", RemainText = "사용 · 75% 남음", ResetText = "리셋까지 5일 12시간 · 10-19(월) 08:09", LevelBrush = Palette.Ok }],
+                Usage = Presenter.AccountUsageRows([
+                    new UsageWindow($"account{i}:w300", "5시간 한도", 25, usageNow.AddHours(5)),
+                    new UsageWindow($"account{i}:w10080", "주간 한도", 25, usageNow.AddDays(5)),
+                ], asOf: usageNow),
             }).ToList();
             window.Accounts.Update(accounts, false);
             PumpDisplay();
             var scroll = (ScrollViewer)window.Accounts.FindName("AccountsScroll");
             var items = (ItemsControl)window.Accounts.FindName("AccountItems");
-            var last = (FrameworkElement)items.ItemContainerGenerator.ContainerFromIndex(5);
-            Check("all six compact account cards fit without scrolling", scroll.ScrollableHeight == 0 &&
-                last.TransformToAncestor(scroll).Transform(new Point(0, last.ActualHeight)).Y <= scroll.ActualHeight + 1,
-                $"extent={scroll.ExtentHeight}, viewport={scroll.ViewportHeight}, overflow={scroll.ScrollableHeight}");
+            var containers = Enumerable.Range(0, 6)
+                .Select(i => (FrameworkElement)items.ItemContainerGenerator.ContainerFromIndex(i)).ToList();
+            var cardHeights = containers.Select(c => Descendants(c).OfType<Border>().First(b => b.MinHeight >= 170).ActualHeight).ToList();
+            var last = containers[^1];
+            var lastBottom = last.TransformToAncestor(scroll).Transform(new Point(0, last.ActualHeight)).Y;
+            Check("six account cards keep equal fixed heights and require scrolling", cardHeights.Count == 6 &&
+                cardHeights.Max() - cardHeights.Min() <= 1 && scroll.ScrollableHeight > 0 &&
+                lastBottom > scroll.ActualHeight + 1,
+                $"heights={string.Join(",", cardHeights.Select(x => x.ToString("0.#")))}, extent={scroll.ExtentHeight}, viewport={scroll.ViewportHeight}, overflow={scroll.ScrollableHeight}");
+            RenderAccountsFixture(flyout, "accounts-two-rows");
 
             window.Hide();
             Check("hiding owner hides the account panel", !window.IsAccountsOpen && !flyout.IsVisible, "orphan panel");
@@ -249,5 +259,21 @@ internal static partial class Program
         }
         finally { window.Close(); }
         Check("closing owner cleans up floating panel", flyout == null || !flyout.IsVisible, "orphan window");
+    }
+
+    static void RenderAccountsFixture(AccountsFlyout flyout, string name)
+    {
+        if (flyout.Content is not FrameworkElement root) return;
+        int width = Math.Max(1, (int)Math.Ceiling(root.ActualWidth));
+        int height = Math.Max(1, (int)Math.Ceiling(root.ActualHeight));
+        var bitmap = new RenderTargetBitmap(width, height, 96, 96, PixelFormats.Pbgra32);
+        bitmap.Render(root);
+        var path = Path.Combine(Path.GetTempPath(), $"AIUsageMonitor-Regression-{name}-{Guid.NewGuid():N}.png");
+        var encoder = new PngBitmapEncoder();
+        encoder.Frames.Add(BitmapFrame.Create(bitmap));
+        using (var stream = File.Create(path)) encoder.Save(stream);
+        Check("two-row account panel fixture renders to PNG", File.Exists(path) && new FileInfo(path).Length > 0,
+            $"path={path}, size={width}x{height}");
+        Console.WriteLine($"INFO rendered {name} fixture: {path}");
     }
 }

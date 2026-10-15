@@ -24,9 +24,8 @@
         <SolidColorBrush x:Key="Fg" Color="#E8E8EA"/>
         <SolidColorBrush x:Key="Fg2" Color="#9A9DA6"/>
         <SolidColorBrush x:Key="Hover" Color="#2EFFFFFF"/>
-        <!-- 반응형 구간 리소스 (MainWindow.ApplyLayout 이 폭과 캐릭터 설정에 따라 바꾼다).
-             캐릭터 열 폭: 넓은 폭 + 캐릭터 켬일 때만 224, 그 밖에는 0 이라 세션 목록이 넓어진다. -->
-        <GridLength x:Key="CharacterColumnWidth">0</GridLength>
+        <GridLength x:Key="AccountColumnWidth">2*</GridLength>
+        <GridLength x:Key="SessionColumnWidth">3*</GridLength>
 
         <Style x:Key="IconButton" TargetType="Button">
             <Setter Property="Foreground" Value="{StaticResource Fg2}"/>
@@ -125,14 +124,13 @@
             </Setter>
         </Style>
 
-        <!-- 제공자 한 줄: [헤더 / 안내] + [계정 원 3개 | 세션 목록] + [캐릭터 자리] -->
+        <!-- 계정 세 칸은 세로 정렬 후 받은 공간에 비례해 확대한다. -->
         <DataTemplate x:Key="CardTemplate" DataType="{x:Type ui:ProviderCard}">
             <Border Background="{StaticResource CardBg}" CornerRadius="8" Padding="10,7,6,6" ClipToBounds="True">
                 <Grid>
                     <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="174"/>
-                        <ColumnDefinition Width="*"/>
-                        <ColumnDefinition Width="{DynamicResource CharacterColumnWidth}"/>
+                        <ColumnDefinition Width="{DynamicResource AccountColumnWidth}"/>
+                        <ColumnDefinition Width="{DynamicResource SessionColumnWidth}"/>
                     </Grid.ColumnDefinitions>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
@@ -170,16 +168,17 @@
                                    TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
                     </DockPanel>
 
-                    <!-- 계정 원: 메인 · 서브1 · 서브2 (Gemini 는 메인만) -->
-                    <ItemsControl Grid.Row="2" ItemsSource="{Binding AccountSlots}" VerticalAlignment="Top" Margin="0,2,0,0">
+                    <Viewbox x:Name="AccountScale" Grid.Row="2" Stretch="Uniform" Margin="4,3,12,2"
+                             HorizontalAlignment="Stretch" VerticalAlignment="Stretch" SizeChanged="AccountScale_SizeChanged">
+                    <ItemsControl ItemsSource="{Binding AccountSlots}" Width="168" Height="126">
                         <ItemsControl.ItemsPanel>
                             <ItemsPanelTemplate>
-                                <StackPanel Orientation="Horizontal"/>
+                                <UniformGrid Rows="3" Columns="1"/>
                             </ItemsPanelTemplate>
                         </ItemsControl.ItemsPanel>
                         <ItemsControl.ItemTemplate>
                             <DataTemplate DataType="{x:Type ui:AccountUsageSlot}">
-                                <Border Width="58" Height="80" ToolTip="{Binding ToolTipText}" Background="Transparent" CornerRadius="6"
+                                <Border ToolTip="{Binding ToolTipText}" Background="Transparent" CornerRadius="6" Margin="0,3"
                                         AllowDrop="True" PreviewMouseLeftButtonDown="Account_MouseDown" PreviewMouseMove="Account_MouseMove"
                                         DragOver="Account_DragOver" DragLeave="Account_DragLeave" Drop="Account_Drop">
                                     <Border.Style>
@@ -191,38 +190,44 @@
                                             </Style.Triggers>
                                         </Style>
                                     </Border.Style>
-                                    <StackPanel Visibility="{Binding ContentVisibility}">
-                                        <DockPanel Margin="1,0">
-                                            <TextBlock DockPanel.Dock="Right" Text="⚠" Foreground="#E5A54B" FontSize="10"
-                                                       Margin="2,0,0,0" Visibility="{Binding WarningVisibility}"
-                                                       AutomationProperties.Name="사용량 조회 실패 또는 오래된 값"/>
-                                            <TextBlock Text="{Binding Account}" Foreground="{StaticResource Fg}" FontSize="10" FontWeight="Bold"
-                                                       LineHeight="14" LineStackingStrategy="BlockLineHeight"
-                                                       TextAlignment="Center" TextTrimming="CharacterEllipsis"/>
-                                        </DockPanel>
-                                        <Grid Width="36" Height="36" HorizontalAlignment="Center" Margin="0,1,0,1"
+                                    <Grid Visibility="{Binding ContentVisibility}">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="40"/>
+                                            <ColumnDefinition Width="*"/>
+                                        </Grid.ColumnDefinitions>
+                                        <Grid Width="34" Height="34" HorizontalAlignment="Left"
                                               Opacity="{Binding UsageOpacity}"
                                               AutomationProperties.Name="{Binding ToolTipText}">
                                             <ui:UsageRing Remaining="{Binding Remaining}" Visibility="{Binding RingVisibility}"/>
                                             <TextBlock Text="{Binding RemainingText}" Foreground="{Binding LevelBrush}"
                                                        FontSize="11" FontWeight="SemiBold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
                                         </Grid>
+                                        <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                        <DockPanel>
+                                            <TextBlock DockPanel.Dock="Right" Text="⚠" Foreground="#E5A54B" FontSize="10"
+                                                       Margin="2,0,0,0" Visibility="{Binding WarningVisibility}"
+                                                       AutomationProperties.Name="사용량 조회 실패 또는 오래된 값"/>
+                                            <TextBlock Text="{Binding Account}" Foreground="{StaticResource Fg}" FontSize="12" FontWeight="Bold"
+                                                       LineHeight="13" LineStackingStrategy="BlockLineHeight" TextTrimming="CharacterEllipsis"/>
+                                        </DockPanel>
                                         <TextBlock Text="{Binding ShortLabel}" Foreground="{Binding LevelBrush}" FontSize="10"
-                                                   LineHeight="13" LineStackingStrategy="BlockLineHeight" HorizontalAlignment="Center"/>
+                                                   LineHeight="11" LineStackingStrategy="BlockLineHeight"/>
                                         <TextBlock Text="{Binding ResetTimer}" Foreground="{StaticResource Fg2}" FontSize="10"
-                                                   LineHeight="13" LineStackingStrategy="BlockLineHeight" HorizontalAlignment="Center"/>
-                                    </StackPanel>
+                                                   LineHeight="11" LineStackingStrategy="BlockLineHeight"/>
+                                        </StackPanel>
+                                    </Grid>
                                 </Border>
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
+                    </Viewbox>
 
                     <!-- 세션 목록: 한 줄에 제목과 상태. 부제·경과 시간은 툴팁 -->
-                    <Border Grid.Row="2" Grid.Column="1" BorderBrush="{StaticResource Line}" BorderThickness="1,0,0,0" Padding="8,0,0,0" Margin="0,2,4,0">
+                    <Border Grid.Row="2" Grid.Column="1" BorderBrush="{StaticResource Line}" BorderThickness="1,0,0,0" Padding="10,0,0,0" Margin="0,2,4,0"
+                            Visibility="{DynamicResource SessionListVisibility}">
                         <DockPanel>
                             <TextBlock DockPanel.Dock="Top" Text="{Binding SessionsHeader}" Foreground="{StaticResource Fg2}" FontSize="10" FontWeight="SemiBold"
-                                       TextWrapping="{DynamicResource SessionsHeaderWrapping}"/>
-                            <!-- 좁은 폭에서는 목록을 숨기고 위의 요약(세션 수·작업·대기)만 둔다 -->
+                                       TextTrimming="CharacterEllipsis"/>
                             <Border DockPanel.Dock="Top" Visibility="{DynamicResource SessionListVisibility}">
                                 <TextBlock Text="{Binding SessionsEmpty}" Visibility="{Binding SessionsEmptyVisibility}"
                                            Foreground="{StaticResource Fg2}" FontSize="10" Margin="0,3,0,0" TextWrapping="Wrap"/>
@@ -266,6 +271,8 @@
                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,0,6,0">
                     <Button x:Name="AccountsButton" Style="{StaticResource IconButton}" Content="계정" FontFamily="Segoe UI, Malgun Gothic" Width="40"
                             ToolTip="계정 패널 열기/닫기" AutomationProperties.Name="계정 패널 열기/닫기" Click="Accounts_Click"/>
+                    <Button x:Name="SessionsButton" Style="{StaticResource IconButton}" Content="&#xE8FD;" ToolTip="세션 목록 표시/숨기기"
+                            AutomationProperties.Name="세션 목록 표시/숨기기" Click="Sessions_Click"/>
                     <Button x:Name="RefreshButton" Style="{StaticResource IconButton}" Content="&#xE72C;" ToolTip="지금 새로고침"
                             AutomationProperties.Name="지금 새로고침" Click="Refresh_Click"/>
                     <Button x:Name="PinButton" Style="{StaticResource IconButton}" Content="&#xE718;" ToolTip="항상 위에 표시"
@@ -277,8 +284,7 @@
                 </StackPanel>
             </Grid>
 
-            <!-- Claude / Codex / Gemini 를 위에서 아래로. 세 행이 창 높이를 나눠 갖고, 넓은 폭에서만 각 행 오른쪽에 캐릭터가 선다.
-                 말풍선은 캐릭터 왼쪽(같은 열 안)에 뜬다. 폭 구간은 MainWindow.ApplyLayout 이 리소스로 바꾼다. -->
+            <!-- 캐릭터는 세션 오른쪽 아래의 오버레이이며 계정 영역 폭을 차지하지 않는다. -->
             <Grid x:Name="Rows" Margin="8,0,8,8">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="*" MinHeight="132"/>
@@ -291,21 +297,21 @@
                     <ContentControl Content="{Binding Claude}" ContentTemplate="{StaticResource CardTemplate}"
                                     HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch"/>
                     <ui:CharacterStage x:Name="ClaudeStage" Character="claude" BubblePlacement="Left" FigureHeight="150"
-                                       Width="224" HorizontalAlignment="Right" VerticalAlignment="Stretch" Margin="0,3,6,3"
+                                       Width="224" MaxHeight="150" HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,3,6,6"
                                        Panel.ZIndex="1" IsHitTestVisible="False"/>
                 </Grid>
                 <Grid Grid.Row="2">
                     <ContentControl Content="{Binding Codex}" ContentTemplate="{StaticResource CardTemplate}"
                                     HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch"/>
                     <ui:CharacterStage x:Name="CodexStage" Character="codex" BubblePlacement="Left" FigureHeight="150"
-                                       Width="224" HorizontalAlignment="Right" VerticalAlignment="Stretch" Margin="0,3,6,3"
+                                       Width="224" MaxHeight="150" HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,3,6,6"
                                        Panel.ZIndex="1" IsHitTestVisible="False"/>
                 </Grid>
                 <Grid Grid.Row="4">
                     <ContentControl Content="{Binding Gemini}" ContentTemplate="{StaticResource CardTemplate}"
                                     HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch"/>
                     <ui:CharacterStage x:Name="GeminiStage" Character="gemini" BubblePlacement="Left" FigureHeight="150"
-                                       Width="224" HorizontalAlignment="Right" VerticalAlignment="Stretch" Margin="0,3,6,3"
+                                       Width="224" MaxHeight="150" HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,3,6,6"
                                        Panel.ZIndex="1" IsHitTestVisible="False"/>
                 </Grid>
             </Grid>

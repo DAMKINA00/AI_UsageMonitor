@@ -314,6 +314,11 @@ public static class CodexAppServer
             AsOf = DateTimeOffset.Now,
             Source = "Codex 서버",
             Plan = plan,
+            FiveHourUnlimited = plan is "Pro 5x" or "Pro 20x" or "Pro Max" &&
+                limits.Any(l => (l.Str("limitId") ?? "codex") == "codex" &&
+                    l.TryGetProperty("primary", out var p) && l.TryGetProperty("secondary", out var s) &&
+                    (p.ValueKind == JsonValueKind.Null || s.ValueKind == JsonValueKind.Null)) &&
+                windows.Any(w => w.Key == "codex:w10080") && !windows.Any(w => w.Key == "codex:w300"),
             Extras = extras,
             Warning = warning,
         };

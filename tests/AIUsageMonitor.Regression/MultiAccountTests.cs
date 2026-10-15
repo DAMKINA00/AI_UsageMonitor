@@ -80,8 +80,8 @@ internal static partial class Program
         Check("primary and secondary cards show IDs without domains", claude.Account == "MAINCLAUDE" && codex.Account == "MAINCODEX" &&
             cards.All(x => !x.DisplayName.Contains('@')), string.Join(',', cards.Select(x => x.DisplayName)));
         Check("multiple accounts have independent displayed usage", cards.Count == 6 && cards.Count(x => x.IsSecondary) == 4 &&
-            cards.SelectMany(x => x.Usage).Select(x => x.Value).Order().SequenceEqual(new double[] { 10, 11, 12, 13, 60, 70 }),
-            string.Join(',', cards.SelectMany(x => x.Usage).Select(x => x.Value)));
+            cards.SelectMany(x => x.Usage).Where(x => !x.IsUnknown).Select(x => x.Value).Order().SequenceEqual(new double[] { 10, 11, 12, 13, 60, 70 }),
+            string.Join(',', cards.SelectMany(x => x.Usage).Where(x => !x.IsUnknown).Select(x => x.Value)));
         Apply(service.Accounts[0], false, true, null, null, null);
         Check("login loss clears only affected account", service.Accounts[0].Usage == null && service.Accounts[0].AccountName == null &&
             service.Accounts[1].Usage!.Windows[0].UsedPercent == 11 && claude.MaxUsed == 60 && codex.MaxUsed == 70,

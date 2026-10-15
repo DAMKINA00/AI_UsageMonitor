@@ -1,5 +1,7 @@
 using System.Text.Json;
+using System.Reflection;
 using AIUsageMonitor.Core;
+using AIUsageMonitor.UI;
 
 namespace AIUsageMonitor.Regression;
 
@@ -87,5 +89,76 @@ internal static partial class Program
                 System.IO.File.Exists(System.IO.Path.Combine(directory, "cancelled.txt")), $"cancelled={cancelled}");
         }
         finally { System.IO.Directory.Delete(directory, recursive: true); }
+    }
+
+    static void TestCodexRateLimitInference()
+    {
+        UsageSnapshot Parse(string json, string plan = "pro")
+        {
+            using var document = JsonDocument.Parse(json);
+            var method = typeof(CodexAppServer).GetMethod("ParseRateLimits", BindingFlags.Static | BindingFlags.NonPublic)
+                ?? throw new MissingMethodException(nameof(CodexAppServer), "ParseRateLimits");
+            return (UsageSnapshot)method.Invoke(null, [document.RootElement, plan])!;
+        }
+
+        var primaryNull = Parse("""
+            {"rateLimits":{"primary":{"usedPercent":5,"windowDurationMins":10080},"secondary":null}}
+            """);
+        var secondaryNull = Parse("""
+            {"rateLimits":{"primary":null,"secondary":{"usedPercent":7,"windowDurationMins":10080}}}
+            """);
+        Check("Codex Pro with an explicit missing primary window is unlimited", primaryNull.FiveHourUnlimited &&
+            primaryNull.Windows is [{ Key: "codex:w10080" }], DescribeWindows(primaryNull.Windows));
+        Check("Codex Pro with an explicit missing secondary window is unlimited", secondaryNull.FiveHourUnlimited &&
+            secondaryNull.Windows is [{ Key: "codex:w10080" }], DescribeWindows(secondaryNull.Windows));
+
+        var noLimits = Parse("{}");
+        var emptyLimits = Parse("{\"rateLimits\":{}}");
+        var missingWindow = Parse("{\"rateLimits\":{\"primary\":{\"usedPercent\":5}}}");
+        Check("Codex Pro without a rate-limit object is not inferred unlimited", !noLimits.FiveHourUnlimited && noLimits.Windows.Count == 0,
+            DescribeWindows(noLimits.Windows));
+        Check("Codex Pro with empty rate limits is not inferred unlimited", !emptyLimits.FiveHourUnlimited && emptyLimits.Windows.Count == 0,
+            DescribeWindows(emptyLimits.Windows));
+        Check("Codex Pro without a window duration is not inferred unlimited", !missingWindow.FiveHourUnlimited && missingWindow.Windows.Count == 1,
+            DescribeWindows(missingWindow.Windows));
+
+        var measuredFiveHour = Parse("""
+            {"rateLimits":{"primary":{"usedPercent":5,"windowDurationMins":300},"secondary":{"usedPercent":8,"windowDurationMins":10080}}}
+            """);
+        Check("an explicit five-hour window suppresses unlimited inference", !measuredFiveHour.FiveHourUnlimited &&
+            measuredFiveHour.Windows.Any(w => w.Key == "codex:w300"), DescribeWindows(measuredFiveHour.Windows));
+
+        var now = DateTimeOffset.UtcNow;
+        var server = new UsageSnapshot
+        {
+            Windows = [new UsageWindow("codex:w10080", "주간 한도", 20, now.AddDays(2))],
+            AsOf = now,
+            Source = "Codex 서버",
+            Plan = "Pro 20x",
+            FiveHourUnlimited = true,
+        };
+        var logWithoutFive = new UsageSnapshot
+        {
+            Windows = [new UsageWindow("codex:w10080", "주간 한도", 25, now.AddDays(2))],
+            AsOf = now.AddMinutes(1),
+            Source = "Codex 로그",
+        };
+        using var monitor = new MonitorService(new AppSettings());
+        SetProperty(monitor, nameof(MonitorService.CodexRemoteGood), new CodexRemoteResult { Ok = true, Usage = server });
+        SetProperty(monitor, nameof(MonitorService.CodexLocal), new CodexLocalState { LogUsage = logWithoutFive });
+        var kept = Presenter.Codex(monitor);
+        Check("newer log without a five-hour window keeps unlimited state", kept.AccountUsage[0].IsUnlimited && kept.AccountUsage[0].UsedText == "무제한",
+            DescribeRows(kept.AccountUsage));
+
+        var logWithFive = new UsageSnapshot
+        {
+            Windows = [new UsageWindow("codex:w300", "5시간 한도", 9, now.AddHours(1)), ..logWithoutFive.Windows],
+            AsOf = logWithoutFive.AsOf,
+            Source = logWithoutFive.Source,
+        };
+        SetProperty(monitor, nameof(MonitorService.CodexLocal), new CodexLocalState { LogUsage = logWithFive });
+        var measured = Presenter.Codex(monitor);
+        Check("newer log with a five-hour window clears unlimited state", !measured.AccountUsage[0].IsUnlimited &&
+            measured.AccountUsage[0].Value == 9, DescribeRows(measured.AccountUsage));
     }
 }

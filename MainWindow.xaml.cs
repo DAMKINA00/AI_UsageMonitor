@@ -14,11 +14,11 @@ namespace AIUsageMonitor;
 /// <summary>창 폭에 따른 레이아웃 구간.</summary>
 public enum LayoutMode
 {
-    /// <summary>계정 원 + 세션 요약(수·작업·대기)만. 앱 상태 글자는 숨긴다.</summary>
+    /// <summary>계정 원만. 세션과 앱 상태 글자는 숨긴다.</summary>
     Narrow,
     /// <summary>계정 원 | 세션 목록. 캐릭터는 켜져 있어도 숨긴다.</summary>
     Medium,
-    /// <summary>계정 원 | 세션 목록 | 캐릭터(켰을 때).</summary>
+    /// <summary>계정 원 | 세션 목록 위에 캐릭터 오버레이(켰을 때).</summary>
     Wide,
 }
 
@@ -26,12 +26,13 @@ public partial class MainWindow : Window
 {
     readonly AppSettings _settings;
     readonly Action<AppSettings> _saveSettings;
-    bool _showCharacters;
+    bool _showCharacters, _showSessions;
 
     public event Action? RefreshRequested;
     public event Action? AccountsRequested;
     public event Action<string, string>? SecondaryAccountSwapRequested;
     public event Action<bool>? TopmostToggled;
+    public event Action<bool>? SessionsToggled;
 
     public bool AllowClose { get; set; }
 
@@ -39,12 +40,10 @@ public partial class MainWindow : Window
     public const double DefaultWidth = 640, DefaultHeight = 480;
     /// <summary>세 행이 헤더·계정 원·안내 한 줄을 모두 보일 수 있는 최소 크기.</summary>
     public const double MinWindowWidth = 340, MinWindowHeight = 450;
-    /// <summary>이 폭 이상이면 캐릭터 열을 둘 수 있다 (계정 원 174 + 세션 최소 180 + 캐릭터 224 + 여백).</summary>
+    /// <summary>이 폭 이상이면 세션 영역에 캐릭터를 겹쳐 표시한다.</summary>
     public const double WideFrom = 620;
-    /// <summary>이 폭 미만이면 세션 목록 대신 요약만 보인다.</summary>
+    /// <summary>이 폭 미만이면 세션 영역을 숨긴다.</summary>
     public const double MediumFrom = 440;
-    /// <summary>캐릭터 열 폭. 말풍선 글자 폭이 120 DIP 이상이 되도록 정했다 (224 − 그림 최대 71 − 꼬리·여백 30).</summary>
-    public const double CharacterColumn = 224;
     /// <summary>캐릭터 그림 높이 상한 (행이 높아져도 이보다 크게 그리지 않는다).</summary>
     const double MaxFigureHeight = 150;
 
@@ -61,6 +60,7 @@ public partial class MainWindow : Window
         Height = DefaultHeight;
         ApplyTopmost(settings.Topmost);
         _showCharacters = settings.ShowCharacters;
+        _showSessions = settings.ShowSessions;
         ApplyLayout(Width);
         SourceInitialized += (_, _) =>
         {
@@ -125,7 +125,7 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// 캐릭터 켜기/끄기. 창 크기는 바꾸지 않고, 캐릭터 열을 비우거나 채워 세션 목록 폭만 달라진다.
+    /// 캐릭터 켜기/끄기. 세션 영역 크기는 바꾸지 않는다.
     /// </summary>
     public void ApplyCharacters(bool on)
     {
@@ -133,12 +133,19 @@ public partial class MainWindow : Window
         ApplyLayout(ActualWidth > 0 ? ActualWidth : Width);
     }
 
+    public bool SessionsShown => _showSessions && Mode != LayoutMode.Narrow;
+
+    public void ApplySessions(bool on)
+    {
+        _showSessions = on;
+        ApplyLayout(ActualWidth > 0 ? ActualWidth : Width);
+    }
+
     public static LayoutMode ModeFor(double width) =>
         width >= WideFrom ? LayoutMode.Wide : width >= MediumFrom ? LayoutMode.Medium : LayoutMode.Narrow;
 
     /// <summary>
-    /// 폭 구간에 맞춰 템플릿이 쓰는 리소스를 바꾼다. 글자를 줄이거나 내용을 확대·축소하지 않고,
-    /// 보일 요소만 고른다 (넓음 = 원 | 세션 | 캐릭터, 중간 = 원 | 세션, 좁음 = 원 + 세션 요약).
+    /// 계정 묶음은 받은 공간에 비례해 확대한다. 캐릭터에는 별도 열을 예약하지 않는다.
     /// </summary>
     void ApplyLayout(double width)
     {
@@ -146,23 +153,31 @@ public partial class MainWindow : Window
         Mode = ModeFor(width);
         bool characters = CharactersShown;
         // 크기를 끄는 동안 SizeChanged 가 계속 오므로 구간이 바뀔 때만 리소스를 바꾼다 (같은 구간이면 템플릿을 다시 계산하지 않는다)
-        if (_appliedLayout == (Mode, characters)) return;
-        _appliedLayout = (Mode, characters);
-        Resources["CharacterColumnWidth"] = new GridLength(characters ? CharacterColumn : 0);
-        Resources["SessionListVisibility"] = Mode == LayoutMode.Narrow ? Visibility.Collapsed : Visibility.Visible;
+        if (_appliedLayout == (Mode, characters, _showSessions)) return;
+        _appliedLayout = (Mode, characters, _showSessions);
+        Resources["AccountColumnWidth"] = new GridLength(SessionsShown || characters ? 2 : 1, GridUnitType.Star);
+        Resources["SessionColumnWidth"] = new GridLength(SessionsShown || characters ? 3 : 0, GridUnitType.Star);
+        Resources["SessionListVisibility"] = SessionsShown ? Visibility.Visible : Visibility.Collapsed;
         Resources["AppStatusVisibility"] = Mode == LayoutMode.Narrow ? Visibility.Collapsed : Visibility.Visible;
-        Resources["SessionsHeaderWrapping"] = Mode == LayoutMode.Narrow ? TextWrapping.Wrap : TextWrapping.NoWrap;
+        SessionsButton.Foreground = _showSessions ? Palette.Text : Palette.Muted;
         foreach (var stage in Stages) stage.Visibility = characters ? Visibility.Visible : Visibility.Collapsed;
         UpdateStages();
     }
 
-    (LayoutMode Mode, bool Characters)? _appliedLayout;
+    (LayoutMode Mode, bool Characters, bool Sessions)? _appliedLayout;
 
     /// <summary>행 높이에 맞춰 캐릭터 그림 크기를 정한다 (말풍선 글자 폭은 그림이 가장 커도 120 DIP 이상 남는다).</summary>
     static void FitFigure(CharacterStage stage)
     {
         if (stage.ActualHeight <= 0) return;
         stage.FigureHeight = Math.Min(MaxFigureHeight, Math.Max(40, stage.ActualHeight - 2));
+    }
+
+    void AccountScale_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        if (e.NewSize.Height <= 0 || sender is not FrameworkElement { DataContext: ProviderCard card }) return;
+        var stage = card.Name switch { "Claude" => Claude, "Codex" => Codex, _ => Gemini };
+        stage.Height = Math.Min(MaxFigureHeight, e.NewSize.Height);
     }
 
     Rect CurrentWorkArea()
@@ -323,6 +338,7 @@ public partial class MainWindow : Window
     }
 
     void Refresh_Click(object sender, RoutedEventArgs e) => RefreshRequested?.Invoke();
+    void Sessions_Click(object sender, RoutedEventArgs e) => SessionsToggled?.Invoke(!_showSessions);
 
     void Accounts_Click(object sender, RoutedEventArgs e)
     {

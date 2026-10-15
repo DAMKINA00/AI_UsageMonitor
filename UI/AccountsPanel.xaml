@@ -106,7 +106,7 @@
         </Style>
 
         <DataTemplate x:Key="AccountTemplate" DataType="{x:Type ui:AccountUsageCard}">
-            <Border Background="{StaticResource CardBg}" CornerRadius="8" Padding="10,8" Margin="0,0,0,6">
+            <Border Background="{StaticResource CardBg}" CornerRadius="8" Padding="10,8" Margin="0,0,0,8" MinHeight="170">
                 <StackPanel>
                     <DockPanel>
                         <TextBlock DockPanel.Dock="Right" Text="{Binding Plan, TargetNullValue=—}"
@@ -124,7 +124,7 @@
                     <ItemsControl ItemsSource="{Binding Usage}" Margin="0,5,0,0">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate DataType="{x:Type ui:UsageRow}">
-                                <StackPanel Margin="0,0,0,3">
+                                <StackPanel Height="44" Margin="0,0,0,3">
                                     <Grid>
                                         <TextBlock Text="{Binding Label}" Foreground="{StaticResource Fg}"/>
                                         <TextBlock HorizontalAlignment="Right">
@@ -132,7 +132,7 @@
                                             <Run Text="{Binding RemainText}" Foreground="{StaticResource Fg2}"/>
                                         </TextBlock>
                                     </Grid>
-                                    <ProgressBar Style="{StaticResource UsageBar}" Value="{Binding Value}"
+                                    <ProgressBar Style="{StaticResource UsageBar}" Value="{Binding Remaining, Mode=OneWay}"
                                                  Visibility="{Binding BarVisibility}"
                                                  Foreground="{Binding LevelBrush}" Margin="0,3,0,2"/>
                                     <TextBlock Text="{Binding ResetText}" Foreground="{StaticResource Fg2}" FontSize="10.5"
@@ -142,8 +142,17 @@
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
 
-                    <StackPanel Orientation="Horizontal" Visibility="{Binding IsSecondary, Converter={StaticResource BooleanToVisibilityConverter}}"
-                                Margin="0,3,0,0">
+                    <StackPanel Orientation="Horizontal" Margin="0,3,0,0">
+                        <StackPanel.Style>
+                            <Style TargetType="StackPanel">
+                                <Setter Property="Visibility" Value="Hidden"/>
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsSecondary}" Value="True">
+                                        <Setter Property="Visibility" Value="Visible"/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </StackPanel.Style>
                         <Button Content="{Binding LoginText}" Command="{Binding LoginCommand}" IsEnabled="{Binding CanLogin}"
                                 Style="{StaticResource SmallActionButton}"
                                 AutomationProperties.Name="{Binding LoginText}"

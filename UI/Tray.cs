@@ -9,7 +9,7 @@ namespace AIUsageMonitor.UI;
 public sealed class Tray : IDisposable
 {
     readonly WinForms.NotifyIcon _icon;
-    readonly WinForms.ToolStripMenuItem _topmost, _characters, _startup, _usageAlerts, _activityAlerts, _login, _logout, _desktop;
+    readonly WinForms.ToolStripMenuItem _topmost, _characters, _sessions, _startup, _usageAlerts, _activityAlerts, _login, _logout, _desktop;
     bool _webLoggedIn;
     IntPtr _hIcon;
     string _iconSig = "";
@@ -18,6 +18,9 @@ public sealed class Tray : IDisposable
     public event Action? AccountsRequested;
     public event Action<bool>? TopmostChanged, CharactersChanged, StartupChanged, UsageAlertsChanged, ActivityAlertsChanged;
     public event Action<bool>? ClaudeDesktopChanged;
+    public event Action<bool>? SessionsChanged;
+    public event Action<string?>? GeminiPlanChanged;
+    readonly List<WinForms.ToolStripMenuItem> _geminiPlans = [];
     public event Action? GeminiUnblockRequested;
     readonly WinForms.ToolStripMenuItem _geminiUnblock;
 
@@ -36,10 +39,11 @@ public sealed class Tray : IDisposable
         menu.Items.Add(new WinForms.ToolStripSeparator());
         _topmost = Check("항상 위에 표시", s.Topmost, v => TopmostChanged?.Invoke(v));
         _characters = Check("캐릭터 표시", s.ShowCharacters, v => CharactersChanged?.Invoke(v));
+        _sessions = Check("세션 목록 표시", s.ShowSessions, v => SessionsChanged?.Invoke(v));
         _startup = Check("Windows 시작 시 실행", s.StartWithWindows, v => StartupChanged?.Invoke(v));
         _usageAlerts = Check("사용량 경고 알림 (" + string.Join("/", s.AlertThresholds) + "%)", s.UsageAlerts, v => UsageAlertsChanged?.Invoke(v));
         _activityAlerts = Check("작업 완료·승인 대기 알림", s.ActivityAlerts, v => ActivityAlertsChanged?.Invoke(v));
-        menu.Items.AddRange([_topmost, _characters, _startup, _usageAlerts, _activityAlerts, new WinForms.ToolStripSeparator()]);
+        menu.Items.AddRange([_topmost, _characters, _sessions, _startup, _usageAlerts, _activityAlerts, new WinForms.ToolStripSeparator()]);
         _desktop = Check("Claude 데스크톱 로그인 자동 연결", s.ClaudeDesktopEnabled, value =>
         {
             ClaudeDesktopChanged?.Invoke(value);
@@ -55,6 +59,17 @@ public sealed class Tray : IDisposable
             Visible = false,
         };
         menu.Items.Add(_geminiUnblock);
+        var geminiPlan = new WinForms.ToolStripMenuItem("Gemini 계정 등급");
+        foreach (var plan in new[] { "자동 확인", "Free", "Google AI Pro", "Google AI Ultra" })
+        {
+            var value = plan == "자동 확인" ? null : plan;
+            var item = new WinForms.ToolStripMenuItem(plan) { Tag = value };
+            item.Click += (_, _) => GeminiPlanChanged?.Invoke(value);
+            _geminiPlans.Add(item);
+            geminiPlan.DropDownItems.Add(item);
+        }
+        SetGeminiPlan(s.GeminiPlanOverride);
+        menu.Items.Add(geminiPlan);
         menu.Items.Add("데이터 폴더 열기", null, (_, _) => OpenFolder(Paths.AppData));
         menu.Items.Add(new WinForms.ToolStripSeparator());
         menu.Items.Add("종료", null, (_, _) => ExitRequested?.Invoke());
@@ -73,6 +88,11 @@ public sealed class Tray : IDisposable
     }
 
     public void SetTopmost(bool v) => _topmost.Checked = v;
+    public void SetSessions(bool v) => _sessions.Checked = v;
+    public void SetGeminiPlan(string? plan)
+    {
+        foreach (var item in _geminiPlans) item.Checked = Equals(item.Tag, plan);
+    }
 
     public void SetLoggedIn(bool v)
     {

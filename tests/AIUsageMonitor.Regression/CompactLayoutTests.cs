@@ -1,4 +1,5 @@
 using System.IO;
+using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
@@ -60,6 +61,16 @@ internal static partial class Program
         var ok = new GeminiRemoteResult { Ok = true, Usage = GeminiUsage(now), At = now };
         using var monitor = GeminiMonitor(new AppSettings { GeminiEnabled = true }, GeminiLocalFixture(now), ok, ok);
         var card = Presenter.Gemini(monitor);
+        Check("Gemini does not infer a Pro tier from usage models", card.Plan == "등급 확인 불가" && card.Plan.Contains("Pro", StringComparison.OrdinalIgnoreCase) == false,
+            card.Plan ?? "null");
+        var explicitSettings = new AppSettings
+        {
+            GeminiEnabled = true, GeminiPlanOverride = "Google AI Pro", SettingsVersion = AppSettings.CurrentSettingsVersion,
+        };
+        var explicitCard = Presenter.Gemini(monitor, explicitSettings);
+        var roundtrip = AppSettings.Parse(JsonSerializer.Serialize(explicitSettings));
+        Check("Gemini tier override persists and appears in the card header", explicitCard.Plan == "Google AI Pro · 직접 지정" &&
+            roundtrip.GeminiPlanOverride == "Google AI Pro" && !roundtrip.Migrated, explicitCard.Plan ?? "null");
         Check("Gemini ring uses only the gemini group and shows the weekly limit",
             card.Usage is [{ Label: "주간 한도", Value: 35 }] && card.RawWindows.All(w => w.Key.StartsWith("gemini:")) &&
             card.RawWindows.Count == 2 && card.MaxUsed == 35, $"rows={DescribeRows(card.Usage)}, raw={DescribeWindows(card.RawWindows)}");
@@ -88,6 +99,8 @@ internal static partial class Program
         var panel = AccountUsageCard.Create(CompactProviderCard("Claude", "C"), CompactProviderCard("Codex", "X"), service, card);
         Check("account panel adds the Gemini main account only", panel.Count == 3 && panel[2] is { ProviderName: "Gemini · 주 계정", IsSecondary: false },
             string.Join(",", panel.Select(p => p.ProviderName)));
+        var explicitPanel = AccountUsageCard.Create(CompactProviderCard("Claude", "C"), CompactProviderCard("Codex", "X"), service, explicitCard);
+        Check("account card carries the explicit Gemini tier", explicitPanel[2].Plan == "Google AI Pro · 직접 지정", explicitPanel[2].Plan ?? "null");
     }
 
     static void TestStatusChipStates()
@@ -323,9 +336,9 @@ internal static partial class Program
             var size = new Size(window.Width, window.Height);
             window.ApplyCharacters(false);
             PumpDisplay();
-            Check("hiding characters keeps the window size and frees the column",
+            Check("hiding characters keeps the window size and overlay area",
                 window.Width == size.Width && window.Height == size.Height && !window.Claude.IsVisible &&
-                window.Resources["CharacterColumnWidth"] is GridLength { Value: 0 }, $"{window.Width}x{window.Height}");
+                window.Resources["SessionListVisibility"] is Visibility.Visible, $"{window.Width}x{window.Height}");
             window.ApplyCharacters(true);
         }
         finally { window.Close(); }

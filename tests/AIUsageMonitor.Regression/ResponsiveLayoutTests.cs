@@ -6,6 +6,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Interop;
 using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using AIUsageMonitor.Core;
 using AIUsageMonitor.UI;
 
@@ -29,6 +30,7 @@ internal static partial class Program
     static void TestCharacterDefaultMigration()
     {
         Check("characters are off by default", !new AppSettings().ShowCharacters, "default on");
+        Check("sessions are shown by default", new AppSettings().ShowSessions, "default hidden");
 
         var legacy = AppSettings.Parse("""{"ShowCharacters": true, "Topmost": true}""");
         Check("legacy settings turn characters off once and keep other values",
@@ -41,6 +43,10 @@ internal static partial class Program
         Check("characters turned on after migration stay on", reloaded.ShowCharacters && !reloaded.Migrated, $"show={reloaded.ShowCharacters}");
         var off = AppSettings.Parse(JsonSerializer.Serialize(new AppSettings { ShowCharacters = false, SettingsVersion = AppSettings.CurrentSettingsVersion }));
         Check("current settings keep characters off", !off.ShowCharacters && !off.Migrated, $"show={off.ShowCharacters}");
+        var sessionsOff = new AppSettings { ShowSessions = false, SettingsVersion = AppSettings.CurrentSettingsVersion };
+        var sessionsReloaded = AppSettings.Parse(JsonSerializer.Serialize(sessionsOff));
+        Check("session visibility preference survives settings roundtrip", !sessionsReloaded.ShowSessions && !sessionsReloaded.Migrated,
+            $"showSessions={sessionsReloaded.ShowSessions}");
         var empty = AppSettings.Parse("{}");
         Check("settings without a version are migrated", !empty.ShowCharacters && empty.Migrated, $"migrated={empty.Migrated}");
         Check("migration flag is not written to the file", !JsonSerializer.Serialize(legacy).Contains(nameof(AppSettings.Migrated)), "flag serialized");
@@ -233,9 +239,9 @@ internal static partial class Program
             var rings = Descendants(card).OfType<ItemsControl>().First(i => i.ItemsSource is List<AccountUsageSlot>);
             var sessions = Descendants(card).OfType<Border>().First(b => b.BorderThickness.Left == 1);
             if (Overlaps(BoundsIn(rings, window), BoundsIn(sessions, window))) problems.Add($"{name}: rings overlap sessions");
-            var stage = name switch { "Claude" => window.Claude, "Codex" => window.Codex, _ => window.Gemini };
-            if (stage.IsVisible && Overlaps(BoundsIn(stage, window), BoundsIn(sessions, window))) problems.Add($"{name}: character overlaps sessions");
-            if (stage.IsVisible && Overlaps(BoundsIn(stage, window), BoundsIn(rings, window))) problems.Add($"{name}: character overlaps rings");
+            // 캐릭터는 이제 세션 영역 위에 의도적으로 겹치는 오른쪽 아래 오버레이이므로
+            // 세션·원과의 겹침 자체를 레이아웃 오류로 보지 않는다. 오버레이의 위치와 크기는
+            // TestResponsiveSizes 에서 별도로 확인한다.
         }
         return problems;
     }
@@ -259,6 +265,7 @@ internal static partial class Program
                 ("wide", 1100, 760, LayoutMode.Wide),
             };
             var viewports = new Dictionary<string, double>();
+            (Rect Ring, Rect Text) compactUsage = default, wideUsage = default;
             foreach (var (name, w, h, mode) in sizes)
             {
                 window.Width = w;
@@ -279,12 +286,49 @@ internal static partial class Program
 
                 var lists = Descendants(root).OfType<ScrollViewer>().ToList();
                 bool characters = mode == LayoutMode.Wide;
+                bool sessionsShown = mode != LayoutMode.Narrow;
                 Check($"{name}: visible parts match the {mode} layout",
-                    lists.Count == 3 && lists.All(l => l.IsVisible == (mode != LayoutMode.Narrow)) &&
+                    lists.Count == 3 && lists.All(l => l.IsVisible == sessionsShown) && window.SessionsShown == sessionsShown &&
                     window.CharactersShown == characters && window.Claude.IsVisible == characters && window.Gemini.IsVisible == characters &&
-                    window.Resources["CharacterColumnWidth"] is GridLength { Value: var column } && column == (characters ? MainWindow.CharacterColumn : 0),
-                    $"lists={string.Join(",", lists.Select(l => l.IsVisible))}, characters={window.CharactersShown}");
+                    window.Resources["SessionListVisibility"] is Visibility listVisibility && listVisibility == (sessionsShown ? Visibility.Visible : Visibility.Collapsed),
+                    $"lists={string.Join(",", lists.Select(l => l.IsVisible))}, sessions={window.SessionsShown}, characters={window.CharactersShown}");
                 if (mode != LayoutMode.Narrow) viewports[name] = lists[0].ViewportHeight;
+
+                if (mode == LayoutMode.Medium) compactUsage = MeasureUsageVisual(window, "Claude");
+                if (mode == LayoutMode.Wide)
+                {
+                    wideUsage = MeasureUsageVisual(window, "Claude");
+                    var stageBounds = BoundsIn(window.Claude, window);
+                    var row = Descendants(root).OfType<ContentControl>().First(c => c.Content is ProviderCard p && p.Name == "Claude");
+                    var rowBounds = BoundsIn(row, window);
+                    var sessionRegion = Descendants(row).OfType<Border>().First(b => b.BorderThickness.Left == 1);
+                    var sessionBounds = BoundsIn(sessionRegion, window);
+                    Check($"{name}: character is a bottom-right overlay inside its session row",
+                        window.Claude.IsVisible && stageBounds.Width <= 224.5 && stageBounds.Height <= 150.5 &&
+                        stageBounds.Height >= Math.Min(120, sessionBounds.Height - 4) &&
+                        stageBounds.Left >= sessionBounds.Left - 0.5 && stageBounds.Top >= sessionBounds.Top - 0.5 &&
+                        stageBounds.Bottom <= sessionBounds.Bottom + 0.5 &&
+                        stageBounds.Right <= rowBounds.Right + 0.5 && stageBounds.Bottom <= rowBounds.Bottom + 0.5 &&
+                        stageBounds.Right >= rowBounds.Right - 230 && stageBounds.Bottom >= rowBounds.Bottom - 155,
+                        $"stage={stageBounds}, session={sessionBounds}, row={rowBounds}");
+                }
+
+                if (mode == LayoutMode.Wide)
+                {
+                    foreach (var content in Descendants(root).OfType<ContentControl>().Where(c => c.Content is ProviderCard))
+                    {
+                        var provider = ((ProviderCard)content.Content).Name;
+                        var usageRings = Descendants(content).OfType<UsageRing>().Where(r => r.IsVisible)
+                            .Select(r => BoundsIn(r, window)).ToList();
+                        var centers = usageRings.Select(r => r.Top + r.Height / 2).ToList();
+                        bool distinctCenters = centers.Count < 2 || centers.Zip(centers.Skip(1)).All(p => Math.Abs(p.First - p.Second) > 1);
+                        bool sameSize = usageRings.Count < 2 || usageRings.Max(r => r.Width) - usageRings.Min(r => r.Width) <= 1.0 &&
+                            usageRings.Max(r => r.Height) - usageRings.Min(r => r.Height) <= 1.0;
+                        Check($"{name}: {provider} account ring centers are vertically distinct and equal-sized",
+                            distinctCenters && sameSize,
+                            $"rings={string.Join(",", usageRings.Select(r => $"{r.Width:0.#}x{r.Height:0.#}@{r.Top + r.Height / 2:0.#}"))}");
+                    }
+                }
 
                 if (characters)
                 {
@@ -303,23 +347,92 @@ internal static partial class Program
             Check("taller windows show more session rows", viewports["wide"] > viewports["default"] && viewports["medium"] > viewports["default"],
                 string.Join(", ", viewports.Select(v => $"{v.Key}={v.Value:0}")));
 
-            // 캐릭터를 꺼도 창 크기는 그대로, 캐릭터 열은 세션 목록이 쓴다
+            Check("larger width and height enlarge transformed usage ring and text", wideUsage.Ring.Width > compactUsage.Ring.Width + 1 &&
+                wideUsage.Ring.Height > compactUsage.Ring.Height + 1 && wideUsage.Text.Width > compactUsage.Text.Width + 0.5 &&
+                wideUsage.Text.Height > compactUsage.Text.Height + 0.5,
+                $"ring={compactUsage.Ring}->{wideUsage.Ring}, text={compactUsage.Text}->{wideUsage.Text}");
+
+            // 이 상태는 캐릭터와 세션 목록이 모두 보이는 넓은 합성 화면이다.
+            RenderFixture(window, "wide-large");
+
+            // 캐릭터를 꺼도 창 크기와 세션 영역은 그대로다. 캐릭터는 별도 열을 예약하지 않는다.
             var before = new Size(window.Width, window.Height);
             var sessionsBefore = Descendants((FrameworkElement)window.Content).OfType<Border>().First(b => b.BorderThickness.Left == 1).ActualWidth;
             window.ApplyCharacters(false);
             PumpDisplay();
             var sessionsAfter = Descendants((FrameworkElement)window.Content).OfType<Border>().First(b => b.BorderThickness.Left == 1).ActualWidth;
-            Check("turning characters off keeps the size and widens the session list",
+            Check("turning characters off keeps the size and session geometry",
                 window.Width == before.Width && window.Height == before.Height && !window.Claude.IsVisible &&
-                sessionsAfter >= sessionsBefore + MainWindow.CharacterColumn - 1 && LayoutProblems(window).Count == 0,
+                Math.Abs(sessionsAfter - sessionsBefore) <= 1 && LayoutProblems(window).Count == 0,
                 $"size={window.Width}x{window.Height}, sessions={sessionsBefore:0}->{sessionsAfter:0}");
+            window.ApplyCharacters(true);
+            PumpDisplay();
+            var sizeBeforeSessions = new Size(window.Width, window.Height);
+            var positionBeforeSessions = new Point(window.Left, window.Top);
+            window.ApplySessions(false);
+            PumpDisplay();
+            var rootAfterHide = (FrameworkElement)window.Content;
+            var hiddenLists = Descendants(rootAfterHide).OfType<ScrollViewer>().ToList();
+            Check("hiding sessions keeps main bounds and hides the complete session area",
+                window.Width == sizeBeforeSessions.Width && window.Height == sizeBeforeSessions.Height &&
+                new Point(window.Left, window.Top) == positionBeforeSessions && !window.SessionsShown &&
+                hiddenLists.All(l => !l.IsVisible),
+                $"size={window.Width}x{window.Height}, position={window.Left}/{window.Top}, lists={string.Join(",", hiddenLists.Select(l => l.IsVisible))}");
+            var accountScaleWhileSessionsHidden = Descendants(rootAfterHide).OfType<Viewbox>().First(v => v.Name == "AccountScale").ActualWidth;
+            window.ApplyCharacters(false);
+            PumpDisplay();
+            var accountScaleExpanded = Descendants((FrameworkElement)window.Content).OfType<Viewbox>().First(v => v.Name == "AccountScale").ActualWidth;
+            bool sessionColumnCollapsed = window.Resources["SessionColumnWidth"] is GridLength { Value: 0 };
+            Check("hiding sessions expands usage when characters are also off",
+                accountScaleWhileSessionsHidden > 0 && (accountScaleExpanded > accountScaleWhileSessionsHidden + 1 || sessionColumnCollapsed),
+                $"account viewbox width={accountScaleWhileSessionsHidden:0.#}->{accountScaleExpanded:0.#}, sessionColumn0={sessionColumnCollapsed}");
+            window.ApplySessions(true);
+            PumpDisplay();
+            Check("restoring sessions keeps main bounds and restores the lists",
+                window.Width == sizeBeforeSessions.Width && window.Height == sizeBeforeSessions.Height &&
+                new Point(window.Left, window.Top) == positionBeforeSessions && window.SessionsShown &&
+                Descendants((FrameworkElement)window.Content).OfType<ScrollViewer>().All(l => l.IsVisible),
+                $"size={window.Width}x{window.Height}, sessions={window.SessionsShown}");
             Check("layout changes never save settings by themselves", saves == 0, $"saves={saves}");
+            window.ApplyCharacters(true);
+            PumpDisplay();
+            window.Width = 520;
+            window.Height = 560;
+            PumpDisplay();
+            RenderFixture(window, "compact");
         }
         finally
         {
             window.Close();
             cleanup.Dispose();
         }
+    }
+
+    static (Rect Ring, Rect Text) MeasureUsageVisual(MainWindow window, string provider)
+    {
+        var root = (FrameworkElement)window.Content;
+        var card = Descendants(root).OfType<ContentControl>()
+            .First(c => c.Content is ProviderCard p && p.Name == provider);
+        var ring = Descendants(card).OfType<UsageRing>().FirstOrDefault(r => r.IsVisible);
+        var text = Descendants(card).OfType<TextBlock>()
+            .FirstOrDefault(t => t.IsVisible && t.ActualWidth > 0 && t.Text.EndsWith('%'));
+        return (ring == null ? default : BoundsIn(ring, window), text == null ? default : BoundsIn(text, window));
+    }
+
+    static void RenderFixture(MainWindow window, string name)
+    {
+        var root = (FrameworkElement)window.Content;
+        int width = Math.Max(1, (int)Math.Ceiling(root.ActualWidth));
+        int height = Math.Max(1, (int)Math.Ceiling(root.ActualHeight));
+        var bitmap = new RenderTargetBitmap(width, height, 96, 96, PixelFormats.Pbgra32);
+        bitmap.Render(root);
+        var path = Path.Combine(Path.GetTempPath(), $"AIUsageMonitor-Regression-{name}-{Guid.NewGuid():N}.png");
+        var encoder = new PngBitmapEncoder();
+        encoder.Frames.Add(BitmapFrame.Create(bitmap));
+        using (var stream = File.Create(path)) encoder.Save(stream);
+        Check($"{name} synthetic fixture renders to PNG", File.Exists(path) && new FileInfo(path).Length > 0,
+            $"path={path}, size={width}x{height}");
+        Console.WriteLine($"INFO rendered {name} fixture: {path}");
     }
 
     static void TestBoundsPersistence()

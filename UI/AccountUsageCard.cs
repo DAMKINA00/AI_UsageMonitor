@@ -31,7 +31,7 @@ public sealed class AccountUsageCard
                 Id = "primary:" + main.Name, ProviderName = main.Name + " · 주 계정",
                 DisplayName = Fmt.AccountId(main.Account) ?? (main.Name == "Gemini" ? "ANTIGRAVITY CLI" : "계정 확인 중"), Plan = main.Plan,
                 Status = main.Notice ?? main.UsageEmpty ?? main.Footnote,
-                Usage = main.Usage,
+                Usage = main.AccountUsage.Count > 0 ? main.AccountUsage : Presenter.AccountUsageRows(main.RawWindows),
             });
             foreach (var account in service.Accounts.Where(x => x.Settings.Provider.ToString() == main.Name))
             {
@@ -40,7 +40,7 @@ public sealed class AccountUsageCard
                 {
                     Id = id, ProviderName = main.Name + " · 서브 계정",
                     DisplayName = Fmt.AccountId(account.AccountName) ?? "새 계정", Plan = account.Usage?.Plan,
-                    Status = account.Status, Usage = Presenter.DisplayUsage(account.Usage?.Windows ?? []),
+                    Status = account.Status, Usage = Presenter.AccountUsageRows(account.Usage?.Windows ?? [], account.Usage?.FiveHourUnlimited == true),
                     IsSecondary = true, CanLogin = !service.LoginBusy && !account.Removed,
                     LoginText = account.IsLoggingIn ? "로그인 진행 중…" : account.Usage == null ? "브라우저 로그인" : "다시 로그인",
                     LoginCommand = new RelayCommand(async () => await service.LoginAsync(id)),

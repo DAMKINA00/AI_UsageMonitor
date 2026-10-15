@@ -46,6 +46,7 @@ internal static partial class Program
     static void RunAll()
     {
         Run("Presenter Codex usage merge and failure notice", TestPresenterCodex);
+        Run("Codex rate-limit unlimited inference", TestCodexRateLimitInference);
         Run("Claude WebView initialization recovery", TestClaudeInitializationRecovery);
         Run("Codex local activity timestamps and incremental reads", TestCodexLocalReader);
         Run("Session identity and current click target", TestSessionIdentityAndViewModel);

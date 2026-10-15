@@ -57,7 +57,10 @@ public sealed class UsageRow
     /// <summary>리셋 시각. 남은 시간 글자를 카드 교체 없이 다시 계산할 때 쓴다.</summary>
     public DateTimeOffset? ResetsAt { get; init; }
     public bool IsResetPending { get; init; }
-    public Visibility BarVisibility => IsResetPending ? Visibility.Hidden : Visibility.Visible;
+    public bool IsUnknown { get; init; }
+    public bool IsUnlimited { get; init; }
+    public double Remaining => IsUnknown || IsResetPending ? 0 : 100 - Math.Clamp(Value, 0, 100);
+    public Visibility BarVisibility => IsResetPending || IsUnknown ? Visibility.Hidden : Visibility.Visible;
     public required Brush LevelBrush { get; init; }
 
     /// <summary>지금 시각 기준 "리셋까지 …" 문구. 리셋 시각이 지났으면 만들 때의 문구를 그대로 쓴다.</summary>
@@ -247,6 +250,7 @@ public sealed class ProviderCard
     public required Brush AppStatusBrush { get; init; }
     public string? Account { get; init; }
     public List<UsageRow> Usage { get; init; } = [];
+    public List<UsageRow> AccountUsage { get; init; } = [];
     public List<AccountUsageSlot> AccountSlots { get; set; } = [];
     public string? UsageEmpty { get; init; }
     public string? Extras { get; init; }
@@ -297,6 +301,8 @@ public sealed class ProviderCard
           .Append(SessionsHeader).Append('|').Append(SessionsEmpty).Append('|');
         foreach (var u in Usage)
             sb.Append(u.Label).Append(u.UsedText).Append(u.RemainText).Append(u.IsResetPending).Append(u.ResetsAt?.UtcTicks).Append(';');
+        foreach (var u in AccountUsage)
+            sb.Append(u.Label).Append(u.Value).Append(u.IsUnknown).Append(u.IsUnlimited).Append(u.IsResetPending).Append(u.ResetsAt?.UtcTicks).Append(';');
         foreach (var slot in AccountSlots) sb.Append(slot.Signature).Append(';');
         foreach (var s in Sessions) sb.Append(s.Id).Append('|').Append(s.OpenUri).Append('|')
             .Append(s.Title).Append(s.Subtitle).Append(s.StateText).Append(s.OpenCommand != null).Append(s.ActivityIsStateChange).Append(';');
@@ -499,19 +505,42 @@ public static class Presenter
         {
             UsedPercent = Math.Clamp(w.UsedPercent, 0, 100),
         }).ToList();
-        return PickDisplayWindows(effective, now).Select(w => new UsageRow
+        return PickDisplayWindows(effective, now).Select(w => UsageRowFor(w, now)).ToList();
+    }
+
+    static UsageRow UsageRowFor(UsageWindow w, DateTimeOffset now) => new()
+    {
+        Label = w.Label, Value = w.UsedPercent,
+        IsResetPending = IsExpired(w, now),
+        ResetsAt = w.ResetsAt,
+        UsedText = IsExpired(w, now) ? "확인 중" : Fmt.Pct(w.UsedPercent),
+        RemainText = IsExpired(w, now) ? "" : $" 사용 · {Fmt.Pct(100 - w.UsedPercent)} 남음",
+        ResetText = IsExpired(w, now)
+            ? "리셋 시각 경과 · 새 사용량 확인 중"
+            : w.ResetsAt is { } at ? $"리셋까지 {Fmt.Span(at - now)} · {Fmt.When(at)}" : "",
+        ResetShort = IsExpired(w, now) ? "확인 중" : w.ResetsAt is { } resets ? Fmt.ShortSpan(resets - now) : "—",
+        LevelBrush = IsExpired(w, now) ? Palette.Muted : Palette.Level(w.UsedPercent),
+    };
+
+    /// <summary>계정 메뉴는 원형 요약과 달리 5시간·주간 한도를 항상 같은 순서로 보여 준다.</summary>
+    public static List<UsageRow> AccountUsageRows(IEnumerable<UsageWindow> windows, bool fiveHourUnlimited = false, DateTimeOffset? asOf = null)
+    {
+        var all = windows.Select(w => w with { UsedPercent = Math.Clamp(w.UsedPercent, 0, 100) }).ToList();
+        var now = asOf ?? DateTimeOffset.Now;
+        UsageRow Row(bool five)
         {
-            Label = w.Label, Value = w.UsedPercent,
-            IsResetPending = IsExpired(w, now),
-            ResetsAt = w.ResetsAt,
-            UsedText = IsExpired(w, now) ? "확인 중" : Fmt.Pct(w.UsedPercent),
-            RemainText = IsExpired(w, now) ? "" : $" 사용 · {Fmt.Pct(100 - w.UsedPercent)} 남음",
-            ResetText = IsExpired(w, now)
-                ? "리셋 시각 경과 · 새 사용량 확인 중"
-                : w.ResetsAt is { } at ? $"리셋까지 {Fmt.Span(at - now)} · {Fmt.When(at)}" : "",
-            ResetShort = IsExpired(w, now) ? "확인 중" : w.ResetsAt is { } resets ? Fmt.ShortSpan(resets - now) : "—",
-            LevelBrush = IsExpired(w, now) ? Palette.Muted : Palette.Level(w.UsedPercent),
-        }).ToList();
+            var match = all.Where(w => five ? IsFiveHour(w) : IsWeekly(w)).OrderByDescending(w => w.UsedPercent).FirstOrDefault();
+            var label = five ? "5시간 한도" : "주간 한도";
+            if (match != null) return UsageRowFor(match with { Label = label }, now);
+            bool unlimited = five && fiveHourUnlimited;
+            return new UsageRow
+            {
+                Label = label, Value = 0, UsedText = unlimited ? "무제한" : "확인 중", RemainText = "",
+                ResetText = unlimited ? "5시간 제한 없음" : "한도 정보 없음", IsUnlimited = unlimited, IsUnknown = !unlimited,
+                LevelBrush = unlimited ? Palette.Ok : Palette.Muted,
+            };
+        }
+        return [Row(true), Row(false)];
     }
 
     public static ProviderCard Claude(MonitorService m, AppSettings s, Action login)
@@ -596,6 +625,8 @@ public static class Presenter
                 AsOf = log.AsOf,
                 Source = usage != null ? $"{log.Source} + {usage.Source} (이전 조회)" : log.Source,
                 Plan = log.Plan ?? usage?.Plan, Extras = extras, Warning = log.Warning,
+                FiveHourUnlimited = usage?.FiveHourUnlimited == true && !log.Windows.Any(IsFiveHour) &&
+                    (log.Plan == null || log.Plan == usage.Plan),
             };
         }
 
@@ -713,7 +744,8 @@ public static class Presenter
         var status = new StatusChip(state, usage?.AsOf, StaleAfter(s.GeminiPollSeconds, 120), m.GeminiRemoteBusy, detail);
         return Build("Gemini", Palette.Gemini, usage, local is { CliProcessCount: > 0 }, app, appBrush, null, notice, null, null, empty,
             Footnote(usage), local?.Sessions ?? [],
-            installed ? "최근 Antigravity 대화 없음" : "agy 를 설치하면 대화 상태를 표시합니다", status);
+            installed ? "최근 Antigravity 대화 없음" : "agy 를 설치하면 대화 상태를 표시합니다", status,
+            s.GeminiPlanOverride is { Length: > 0 } plan ? plan + " · 직접 지정" : "등급 확인 불가");
     }
 
     static readonly AppSettings DefaultSettings = new();
@@ -745,7 +777,7 @@ public static class Presenter
 
     static ProviderCard Build(string name, Brush accent, UsageSnapshot? usage, bool appRunning, string app, Brush appBrush, string? account,
         string? notice, string? action, ICommand? cmd, string? empty, string footnote, List<SessionInfo> sessions, string sessionsEmpty,
-        StatusChip status)
+        StatusChip status, string? planFallback = null)
     {
         var now = DateTimeOffset.Now;
         var rows = DisplayUsage(usage?.Windows ?? [], now);
@@ -772,11 +804,12 @@ public static class Presenter
         {
             Name = name,
             Accent = accent,
-            Plan = usage?.Plan,
+            Plan = usage?.Plan ?? planFallback,
             AppStatus = app,
             AppStatusBrush = appBrush,
             Account = Fmt.AccountId(account),
             Usage = rows,
+            AccountUsage = AccountUsageRows(usage?.Windows ?? [], usage?.FiveHourUnlimited == true, now),
             UsageEmpty = rows.Count == 0 ? empty ?? "사용량 데이터 없음" : null,
             Extras = usage is { Extras.Count: > 0 } ? string.Join(" · ", usage.Extras) : null,
             UsageWarning = usage?.Warning,

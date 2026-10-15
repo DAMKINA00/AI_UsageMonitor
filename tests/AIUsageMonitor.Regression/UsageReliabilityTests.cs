@@ -84,6 +84,7 @@ internal static partial class Program
         var allPending = Presenter.Claude(monitor, new AppSettings(), () => { });
         var management = AccountUsageCard.Create(allPending, CompactProviderCard("Codex", "MAIN"), service);
         Check("pending main quota stays visible in account management", allPending.MaxUsed == null && allPending.RawWindows.Count == 0 &&
-            management[0].Usage.Single().IsResetPending, "pending quota lost");
+            management[0].Usage.Count == 2 && management[0].Usage.Any(x => x.Label == "주간 한도" && x.IsResetPending),
+            DescribeRows(management[0].Usage));
     }
 }

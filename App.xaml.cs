@@ -168,6 +168,20 @@ public partial class App : Application
         _tray.AccountsRequested += ShowAccounts;
         _tray.ExitRequested += ExitApp;
         _tray.TopmostChanged += SetTopmost;
+        _window.SessionsToggled += v => _tray.SetSessions(v);
+        _tray.SessionsChanged += v =>
+        {
+            _settings.ShowSessions = v;
+            _settings.Save();
+            _window.ApplySessions(v);
+        };
+        _tray.GeminiPlanChanged += plan =>
+        {
+            _settings.GeminiPlanOverride = plan;
+            _settings.Save();
+            _tray.SetGeminiPlan(plan);
+            Render();
+        };
         _tray.CharactersChanged += v =>
         {
             _settings.ShowCharacters = v;

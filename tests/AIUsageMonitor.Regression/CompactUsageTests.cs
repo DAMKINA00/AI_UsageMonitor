@@ -11,6 +11,7 @@ internal static partial class Program
     static void TestCompactUsage()
     {
         TestDisplayUsage();
+        TestAccountUsageRows();
         TestAccountSlots();
         TestPaletteLevels();
         TestShortResetAndBubble();
@@ -71,6 +72,41 @@ internal static partial class Program
                 row is not null && row.Label == expected && row.Value == expectedValue,
                 DescribeRows(rows));
         }
+    }
+
+    static void TestAccountUsageRows()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var rows = Presenter.AccountUsageRows([
+            new UsageWindow("seven_day", "주간", 100, now.AddDays(2)),
+            new UsageWindow("five_hour", "5시간", 0, now.AddHours(1)),
+        ], asOf: now);
+        Check("account usage rows always order five-hour before weekly and expose 0/100 remaining",
+            rows.Select(x => x.Label).SequenceEqual(["5시간 한도", "주간 한도"]) &&
+            rows[0] is { Value: 0, Remaining: 100, IsUnknown: false, IsResetPending: false, BarVisibility: Visibility.Visible } &&
+            rows[1] is { Value: 100, Remaining: 0, IsUnknown: false, IsResetPending: false, BarVisibility: Visibility.Visible },
+            DescribeRows(rows));
+
+        var unknown = Presenter.AccountUsageRows([], asOf: now);
+        Check("missing account windows are explicit unknown placeholders",
+            unknown is [{ Label: "5시간 한도", IsUnknown: true, IsUnlimited: false, UsedText: "확인 중", BarVisibility: Visibility.Hidden },
+                { Label: "주간 한도", IsUnknown: true, IsUnlimited: false, UsedText: "확인 중", BarVisibility: Visibility.Hidden }],
+            DescribeRows(unknown));
+
+        var unlimited = Presenter.AccountUsageRows([], fiveHourUnlimited: true, asOf: now);
+        Check("only an explicit unlimited flag creates an unlimited five-hour row",
+            unlimited[0] is { Label: "5시간 한도", IsUnlimited: true, IsUnknown: false, UsedText: "무제한", Remaining: 100 } &&
+            unlimited[1].IsUnknown,
+            DescribeRows(unlimited));
+
+        var pending = Presenter.AccountUsageRows([
+            new UsageWindow("codex:w300", "5시간", 42, now.AddSeconds(-1)),
+            new UsageWindow("codex:w10080", "주간", 12, now.AddHours(2)),
+        ], asOf: now);
+        Check("expired account usage is pending while weekly remains usable",
+            pending[0] is { Label: "5시간 한도", Value: 42, IsResetPending: true, Remaining: 0, BarVisibility: Visibility.Hidden } &&
+            pending[1] is { Label: "주간 한도", Value: 12, IsResetPending: false, Remaining: 88, BarVisibility: Visibility.Visible },
+            DescribeRows(pending));
     }
 
     static void TestAccountSlots()
