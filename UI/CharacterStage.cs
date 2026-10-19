@@ -25,7 +25,7 @@ public sealed class CharacterStage : Border
     static readonly Brush Ink = Frozen(Color.FromRgb(0x5A, 0x3A, 0x28));
     static readonly FontFamily PopFont = new("Malgun Gothic");
     // 캐릭터 그림 영역의 원래 비율 (_figure 150×318 을 Viewbox 로 줄여 쓴다)
-    double FigureAspect => (_character == "grok" ? 200.0 : 150.0) / 318.0;
+    const double FigureAspect = 150.0 / 318.0;
 
     readonly Grid _root = new();
     readonly TranslateTransform _wander = new();
@@ -82,11 +82,13 @@ public sealed class CharacterStage : Border
         };
         _figure.Children.Add(_shadow);
 
-        _img.Margin = new Thickness(0, 0, 0, 12);
         _img.RenderTransformOrigin = new Point(0.5, 1);
         _img.RenderTransform = new TransformGroup { Children = { _scale, _rot, _move } };
         RenderOptions.SetBitmapScalingMode(_img, BitmapScalingMode.HighQuality);
-        _figure.Children.Add(_img);
+        // 누운 포즈가 세로 자세의 폭을 넘어도 WPF의 배치 클립에 잘리지 않게 한다.
+        var imageLayer = new Canvas { ClipToBounds = false };
+        imageLayer.Children.Add(_img);
+        _figure.Children.Add(imageLayer);
         _figure.Children.Add(_fx);
 
         // 말풍선: 흰 바탕 + 갈색 테두리 + 아래 꼬리
@@ -130,7 +132,6 @@ public sealed class CharacterStage : Border
             _pose = "";
             // 리셋 반짝이와 "+N%" 표시 색은 캐릭터 테마가 정한다
             var theme = CharacterTheme.For(value);
-            _figure.Width = value == "grok" ? 200 : 150;
             _figureBox.Width = _figureBox.Height * FigureAspect;
             _fxStroke = theme.FxStroke;
             _sparkles = theme.Sparkles;
@@ -411,7 +412,8 @@ public sealed class CharacterStage : Border
     string[] FramesFor(Mood m) => _character == "grok" ? m switch
     {
         Mood.Working or Mood.WorkingHard => ["work1"],
-        Mood.Sleeping or Mood.Tired or Mood.Exhausted => ["sleeping"],
+        Mood.Sleeping or Mood.Tired => ["sleeping"],
+        Mood.Exhausted => ["collapsed"],
         Mood.Panic => ["panic"],
         _ => ["idle"],
     } : m switch
@@ -447,6 +449,14 @@ public sealed class CharacterStage : Border
         _frameT = 0;
         var pose = frames[index];
         _pose = pose;
+        var bmp = LoadPose(pose);
+        _img.Source = bmp ?? _img.Source;
+        if (bmp != null) _bodyBounds = _visibleBounds[$"{_character}_{pose}"];
+        ApplyImageSize();
+    }
+
+    BitmapImage? LoadPose(string pose)
+    {
         var key = $"{_character}_{pose}";
         if (!_poseCache.TryGetValue(key, out var bmp))
         {
@@ -469,14 +479,9 @@ public sealed class CharacterStage : Border
                 }
             }
             _poseCache[key] = bmp;
+            if (bmp != null) _visibleBounds[key] = VisibleBounds(bmp);
         }
-        _img.Source = bmp ?? _img.Source;
-        if (bmp != null)
-        {
-            if (!_visibleBounds.TryGetValue(key, out _bodyBounds))
-                _visibleBounds[key] = _bodyBounds = VisibleBounds(bmp);
-        }
-        ApplyImageSize();
+        return bmp;
     }
 
     static Rect VisibleBounds(BitmapSource bitmap)
@@ -497,15 +502,18 @@ public sealed class CharacterStage : Border
             (double)(right - left + 1) / width, (double)(bottom - top + 1) / height);
     }
 
-    // 기존 에셋은 높이 620 기준, Grok 원본 네 포즈는 높이 1516 기준이다.
-
     void ApplyImageSize()
     {
-        if (_img.Source is not BitmapSource b || _figure.ActualHeight <= 0) return;
-        double canvasHeight = _character == "grok" ? 1516 : 620;
-        double k = (_figure.ActualHeight - 58) / canvasHeight;
+        if (_img.Source is not BitmapSource b || _figure.ActualHeight <= 0 || LoadPose("idle") is not { } idle) return;
+        // 모든 자세는 서 있는 몸 높이 기준으로 같은 배율을 쓰고, 실제 발끝과 오른쪽 외곽선을 맞춘다.
+        double standingHeight = idle.PixelHeight * _visibleBounds[$"{_character}_idle"].Height;
+        double k = 240 / standingHeight;
+        // 초기 두 기절 원화는 머리까지 축소돼 있어 대기 자세의 머리 크기에 맞춘다.
+        if (_pose == "collapsed") k *= _character switch { "claude" => 1.25, "codex" => 1.2, _ => 1 };
         _img.Width = b.PixelWidth * k;
         _img.Height = b.PixelHeight * k;
+        Canvas.SetLeft(_img, _figure.Width - 30 - _bodyBounds.Right * _img.Width);
+        Canvas.SetTop(_img, _figure.Height - 12 - _bodyBounds.Bottom * _img.Height);
     }
 
     void Frame()

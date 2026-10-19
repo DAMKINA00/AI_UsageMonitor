@@ -24,8 +24,6 @@
         <SolidColorBrush x:Key="Fg" Color="#E8E8EA"/>
         <SolidColorBrush x:Key="Fg2" Color="#9A9DA6"/>
         <SolidColorBrush x:Key="Hover" Color="#2EFFFFFF"/>
-        <GridLength x:Key="AccountColumnWidth">2*</GridLength>
-        <GridLength x:Key="CharacterColumnWidth">3*</GridLength>
 
         <Style x:Key="IconButton" TargetType="Button">
             <Setter Property="Foreground" Value="{StaticResource Fg2}"/>
@@ -69,14 +67,10 @@
             </Setter>
         </Style>
 
-        <!-- 계정 세 칸은 세로 정렬 후 받은 공간에 비례해 확대한다. 오른쪽 열은 캐릭터 자리다. -->
+        <!-- 사용량은 가로 배율을 유지한 채 왼쪽에 고정하고 작은 창에서도 캐릭터와 함께 표시한다. -->
         <DataTemplate x:Key="CardTemplate" DataType="{x:Type ui:ProviderCard}">
             <Border Background="{StaticResource CardBg}" CornerRadius="8" Padding="10,7,6,6" ClipToBounds="True">
                 <Grid>
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="{DynamicResource AccountColumnWidth}"/>
-                        <ColumnDefinition Width="{DynamicResource CharacterColumnWidth}"/>
-                    </Grid.ColumnDefinitions>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
@@ -84,7 +78,7 @@
                     </Grid.RowDefinitions>
 
                     <!-- 헤더: 이름 · 요금제 · 앱 상태 · 데이터 상태 칩 -->
-                    <DockPanel Grid.ColumnSpan="2" Height="20" Margin="0,0,4,0">
+                    <DockPanel Height="20" Margin="0,0,4,0">
                         <Ellipse DockPanel.Dock="Left" Width="8" Height="8" Fill="{Binding Accent}" VerticalAlignment="Center" Margin="0,1,7,0"/>
                         <TextBlock DockPanel.Dock="Left" Text="{Binding Name}" FontSize="13" FontWeight="SemiBold" Foreground="{StaticResource Fg}"
                                    VerticalAlignment="Center"/>
@@ -103,7 +97,7 @@
                     </DockPanel>
 
                     <!-- 안내 한 줄 (있을 때만): 오류·경고 문구와 로그인 버튼 -->
-                    <DockPanel Grid.Row="1" Grid.ColumnSpan="2" Visibility="{Binding NoticeRowVisibility}" Margin="0,1,4,2">
+                    <DockPanel Grid.Row="1" Visibility="{Binding NoticeRowVisibility}" Margin="0,1,4,2">
                         <Button DockPanel.Dock="Right" Style="{StaticResource LinkButton}" Visibility="{Binding ActionVisibility}"
                                 Command="{Binding ActionCommand}" FontSize="10" Margin="6,0,0,0"
                                 AutomationProperties.Name="{Binding ActionText}">
@@ -113,14 +107,24 @@
                                    TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
                     </DockPanel>
 
-                    <Viewbox x:Name="AccountScale" Grid.Row="2" Stretch="Uniform" Margin="4,3,12,2"
-                             HorizontalAlignment="Stretch" VerticalAlignment="Stretch" SizeChanged="AccountScale_SizeChanged">
-                    <ItemsControl ItemsSource="{Binding AccountSlots}" Width="168" Height="126">
+                    <Grid Grid.Row="2" SizeChanged="AccountBody_SizeChanged">
+                    <Viewbox x:Name="AccountScale" MaxWidth="168" Stretch="Uniform" StretchDirection="DownOnly" Margin="4,3,12,2"
+                             HorizontalAlignment="Left" VerticalAlignment="Center">
+                    <ItemsControl ItemsSource="{Binding AccountSlots}" MaxWidth="168">
                         <ItemsControl.ItemsPanel>
                             <ItemsPanelTemplate>
-                                <UniformGrid Rows="3" Columns="1"/>
+                                <StackPanel/>
                             </ItemsPanelTemplate>
                         </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemContainerStyle>
+                            <Style TargetType="ContentPresenter">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsEmpty}" Value="True">
+                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </ItemsControl.ItemContainerStyle>
                         <ItemsControl.ItemTemplate>
                             <DataTemplate DataType="{x:Type ui:AccountUsageSlot}">
                                 <Border ToolTip="{Binding ToolTipText}" Background="Transparent" CornerRadius="6" Margin="0,3"
@@ -166,6 +170,7 @@
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
                     </Viewbox>
+                    </Grid>
 
                 </Grid>
             </Border>
@@ -192,7 +197,7 @@
                 </StackPanel>
             </Grid>
 
-            <!-- 캐릭터는 계정 영역 오른쪽의 전용 열에 배치한다. -->
+            <!-- 캐릭터는 모든 창 폭에서 오른쪽에 고정하고 말풍선은 사용량 영역 위에 겹쳐 표시한다. -->
             <Grid x:Name="Rows" Margin="8,0,8,8">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="*" MinHeight="132"/>
@@ -207,28 +212,28 @@
                     <ContentControl Content="{Binding Claude}" ContentTemplate="{StaticResource CardTemplate}"
                                     HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch"/>
                     <ui:CharacterStage x:Name="ClaudeStage" Character="claude" BubblePlacement="Left" FigureHeight="150"
-                                       Width="224" MaxHeight="150" HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,3,6,6"
+                                       Width="224" MaxHeight="150" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,30,6,8"
                                        Panel.ZIndex="1" IsHitTestVisible="False"/>
                 </Grid>
                 <Grid Grid.Row="2">
                     <ContentControl Content="{Binding Codex}" ContentTemplate="{StaticResource CardTemplate}"
                                     HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch"/>
                     <ui:CharacterStage x:Name="CodexStage" Character="codex" BubblePlacement="Left" FigureHeight="150"
-                                       Width="224" MaxHeight="150" HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,3,6,6"
+                                       Width="224" MaxHeight="150" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,30,6,8"
                                        Panel.ZIndex="1" IsHitTestVisible="False"/>
                 </Grid>
                 <Grid Grid.Row="4">
                     <ContentControl Content="{Binding Gemini}" ContentTemplate="{StaticResource CardTemplate}"
                                     HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch"/>
                     <ui:CharacterStage x:Name="GeminiStage" Character="gemini" BubblePlacement="Left" FigureHeight="150"
-                                       Width="224" MaxHeight="150" HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,3,6,6"
+                                       Width="224" MaxHeight="150" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,30,6,8"
                                        Panel.ZIndex="1" IsHitTestVisible="False"/>
                 </Grid>
                 <Grid Grid.Row="6">
                     <ContentControl Content="{Binding Grok}" ContentTemplate="{StaticResource CardTemplate}"
                                     HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch"/>
                     <ui:CharacterStage x:Name="GrokStage" Character="grok" BubblePlacement="Left" FigureHeight="150"
-                                       Width="240" MaxHeight="150" HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,3,6,6"
+                                       Width="224" MaxHeight="150" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,30,6,8"
                                        Panel.ZIndex="1" IsHitTestVisible="False"/>
                 </Grid>
             </Grid>

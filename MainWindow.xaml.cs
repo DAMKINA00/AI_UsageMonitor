@@ -14,7 +14,7 @@ namespace AIUsageMonitor;
 /// <summary>창 폭에 따른 레이아웃 구간.</summary>
 public enum LayoutMode
 {
-    /// <summary>계정 원만. 캐릭터와 앱 상태 글자는 숨긴다.</summary>
+    /// <summary>계정 원과 캐릭터는 유지하고 앱 상태 글자만 숨긴다.</summary>
     Narrow,
     /// <summary>계정 원 | 캐릭터(켰을 때).</summary>
     Medium,
@@ -39,9 +39,9 @@ public partial class MainWindow : Window
     public const double DefaultWidth = 640, DefaultHeight = 640;
     /// <summary>네 행이 헤더·계정 원·안내 한 줄을 모두 보일 수 있는 최소 크기.</summary>
     public const double MinWindowWidth = 340, MinWindowHeight = 590;
-    /// <summary>이 폭 이상이면 오른쪽 캐릭터 영역을 표시할 수 있다.</summary>
+    /// <summary>넓은 창 레이아웃 구간.</summary>
     public const double WideFrom = 620;
-    /// <summary>이 폭 미만이면 캐릭터 영역을 숨긴다.</summary>
+    /// <summary>이 폭 미만이면 헤더의 앱 상태 글자를 숨긴다.</summary>
     public const double MediumFrom = 440;
     /// <summary>캐릭터 그림 높이 상한 (행이 높아져도 이보다 크게 그리지 않는다).</summary>
     const double MaxFigureHeight = 150;
@@ -89,8 +89,8 @@ public partial class MainWindow : Window
 
     /// <summary>지금 폭의 레이아웃 구간.</summary>
     public LayoutMode Mode { get; private set; } = LayoutMode.Wide;
-    /// <summary>캐릭터가 실제로 보이는지 (설정이 켜져 있고 캐릭터 열을 둘 수 있을 때).</summary>
-    public bool CharactersShown => _showCharacters && Mode != LayoutMode.Narrow;
+    /// <summary>창 폭과 관계없이 캐릭터 표시 설정을 따른다.</summary>
+    public bool CharactersShown => _showCharacters;
 
     public void SetAccountsOpen(bool open)
     {
@@ -124,7 +124,7 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// 캐릭터 켜기/끄기. 창 크기는 바꾸지 않고 캐릭터 열만 토글한다.
+    /// 캐릭터 켜기/끄기. 창 크기와 사용량 위치는 바꾸지 않는다.
     /// </summary>
     public void ApplyCharacters(bool on)
     {
@@ -136,7 +136,7 @@ public partial class MainWindow : Window
         width >= WideFrom ? LayoutMode.Wide : width >= MediumFrom ? LayoutMode.Medium : LayoutMode.Narrow;
 
     /// <summary>
-    /// 계정 묶음은 받은 공간에 비례해 확대하고, 표시 중인 캐릭터를 위한 오른쪽 공간을 둔다.
+    /// 사용량과 캐릭터 배치는 유지하고 헤더와 캐릭터의 표시 여부만 바꾼다.
     /// </summary>
     void ApplyLayout(double width)
     {
@@ -146,8 +146,6 @@ public partial class MainWindow : Window
         // 크기를 조정하는 동안 SizeChanged 가 계속 오므로 구간이 바뀔 때만 리소스를 바꾼다.
         if (_appliedLayout == (Mode, characters)) return;
         _appliedLayout = (Mode, characters);
-        Resources["AccountColumnWidth"] = new GridLength(characters ? 2 : 1, GridUnitType.Star);
-        Resources["CharacterColumnWidth"] = new GridLength(characters ? 3 : 0, GridUnitType.Star);
         Resources["AppStatusVisibility"] = Mode == LayoutMode.Narrow ? Visibility.Collapsed : Visibility.Visible;
         foreach (var stage in Stages) stage.Visibility = characters ? Visibility.Visible : Visibility.Collapsed;
         UpdateStages();
@@ -162,9 +160,9 @@ public partial class MainWindow : Window
         stage.FigureHeight = Math.Min(MaxFigureHeight, Math.Max(40, stage.ActualHeight - 2));
     }
 
-    void AccountScale_SizeChanged(object sender, SizeChangedEventArgs e)
+    void AccountBody_SizeChanged(object sender, SizeChangedEventArgs e)
     {
-        if (e.NewSize.Height <= 0 || sender is not FrameworkElement { DataContext: ProviderCard card }) return;
+        if (e.NewSize.Height <= 0 || sender is not FrameworkElement { DataContext: ProviderCard card } accountBody) return;
         var stage = card.Name switch
         {
             "Claude" => Claude,
@@ -172,7 +170,9 @@ public partial class MainWindow : Window
             "Gemini" => Gemini,
             _ => Grok,
         };
-        stage.Height = Math.Min(MaxFigureHeight, e.NewSize.Height);
+        stage.Height = Math.Min(MaxFigureHeight, e.NewSize.Height - 2);
+        // 오류 안내 줄 높이까지 반영해 사용량과 캐릭터의 세로 중심을 맞춘다.
+        stage.Margin = new Thickness(0, accountBody.TranslatePoint(new Point(), (UIElement)stage.Parent).Y, 6, 6);
     }
 
     Rect CurrentWorkArea()

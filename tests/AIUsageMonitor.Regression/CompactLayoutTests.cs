@@ -326,7 +326,7 @@ internal static partial class Program
             Check("Grok stage follows the art in the resources", window.Grok.HasArt == CharacterTheme.HasAsset("grok", "idle"),
                 window.Grok.HasArt.ToString());
 
-            // 말풍선은 캐릭터 왼쪽, 같은 행의 캐릭터 열 안에 뜬다
+            // 말풍선은 같은 행에서 캐릭터 왼쪽의 사용량 영역 위에 뜬다.
             window.Claude.SetMood(Mood.Working, ["코드 정리 중이에요. 잔소리는 사양할게요"]);
             PumpDisplay(400);
             var bubble = (Grid)PrivateField<CharacterStage>("_bubble").GetValue(window.Claude)!;
@@ -342,9 +342,9 @@ internal static partial class Program
             var size = new Size(window.Width, window.Height);
             window.ApplyCharacters(false);
             PumpDisplay();
-            Check("hiding characters keeps the window size and removes the character column",
-                window.Width == size.Width && window.Height == size.Height && !window.Claude.IsVisible && !window.Grok.IsVisible &&
-                window.Resources["CharacterColumnWidth"] is GridLength { Value: 0 }, $"{window.Width}x{window.Height}");
+            Check("hiding characters keeps the window size",
+                window.Width == size.Width && window.Height == size.Height && !window.Claude.IsVisible && !window.Grok.IsVisible,
+                $"{window.Width}x{window.Height}");
             window.ApplyCharacters(true);
         }
         finally { window.Close(); }

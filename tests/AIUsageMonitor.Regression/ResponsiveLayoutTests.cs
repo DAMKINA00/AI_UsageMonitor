@@ -260,7 +260,6 @@ internal static partial class Program
                 ("wide", 1100, 760, LayoutMode.Wide),
             };
             var rowHeights = new Dictionary<string, double>();
-            (Rect Ring, Rect Text) compactUsage = default, wideUsage = default;
             foreach (var (name, w, h, mode) in sizes)
             {
                 window.Width = w;
@@ -282,44 +281,35 @@ internal static partial class Program
                 Check($"{name}: text is at least 10 DIP without clipping or overlap", problems.Count == 0, string.Join("\n", problems.Take(6)));
 
                 var lists = Descendants(root).OfType<ScrollViewer>().ToList();
-                bool characters = mode != LayoutMode.Narrow;
-                var characterColumnValue = window.Resources["CharacterColumnWidth"];
-                Check($"{name}: visible parts match the {mode} layout",
-                    lists.Count == 0 && window.CharactersShown == characters &&
-                    window.Claude.IsVisible == characters && window.Codex.IsVisible == characters &&
-                    window.Gemini.IsVisible == characters && window.Grok.IsVisible == characters &&
-                    window.Resources["CharacterColumnWidth"] is GridLength characterColumn &&
-                    characterColumn.Value == (characters ? 3 : 0),
-                    $"lists={lists.Count}, characters={window.CharactersShown}, column={characterColumnValue}");
+                Check($"{name}: usage and all four characters remain visible without session lists",
+                    lists.Count == 0 && window.CharactersShown && window.Claude.IsVisible && window.Codex.IsVisible &&
+                    window.Gemini.IsVisible && window.Grok.IsVisible,
+                    $"lists={lists.Count}, characters={window.CharactersShown}");
 
-                if (mode == LayoutMode.Medium) compactUsage = MeasureUsageVisual(window, "Claude");
-                if (mode == LayoutMode.Wide)
+                foreach (var stage in new[] { window.Claude, window.Codex, window.Gemini, window.Grok })
                 {
-                    wideUsage = MeasureUsageVisual(window, "Claude");
-                    var stageBounds = BoundsIn(window.Claude, window);
-                    var row = Descendants(root).OfType<ContentControl>().First(c => c.Content is ProviderCard p && p.Name == "Claude");
+                    var stageBounds = BoundsIn(stage, window);
+                    var row = Descendants(root).OfType<ContentControl>().First(c => c.Content is ProviderCard p && p.Name.Equals(stage.Character, StringComparison.OrdinalIgnoreCase));
                     var rowBounds = BoundsIn(row, window);
                     var accountScale = Descendants(row).OfType<Viewbox>().First(v => v.Name == "AccountScale");
                     var accountBounds = BoundsIn(accountScale, window);
-                    Check($"{name}: character is inside the right-side character area",
-                        window.Claude.IsVisible && stageBounds.Width <= 224.5 && stageBounds.Height <= 150.5 &&
-                        stageBounds.Height >= Math.Min(rowBounds.Height * .5, rowBounds.Height - 4) &&
-                        stageBounds.Left >= accountBounds.Right - 1 && stageBounds.Top >= rowBounds.Top - 0.5 &&
+                    Check($"{name}: usage stays left and {stage.Character} stays at the right edge",
+                        stageBounds.Height <= 150.5 && Math.Abs(rowBounds.Right - stageBounds.Right - 6) <= 1 &&
+                        accountBounds.Width is > 40 and <= 168.5 &&
+                        Math.Abs(accountBounds.Left - rowBounds.Left - 14) <= 1 &&
+                        stageBounds.Top >= rowBounds.Top - 0.5 &&
                         stageBounds.Bottom <= rowBounds.Bottom + 0.5 &&
-                        stageBounds.Right <= rowBounds.Right + 0.5 && stageBounds.Bottom <= rowBounds.Bottom + 0.5 &&
-                        stageBounds.Right >= rowBounds.Right - 230 && stageBounds.Bottom >= rowBounds.Bottom - 155,
+                        accountBounds.Left >= rowBounds.Left && accountBounds.Right <= rowBounds.Right,
                         $"stage={stageBounds}, account={accountBounds}, row={rowBounds}");
-
-                    // Stage의 외곽 크기만 맞아도 큰 PNG 캔버스가 행 밖으로 잘릴 수 있으므로,
-                    // Grok의 실제 Image 렌더 경계가 자기 행 안에 들어오는지 확인한다.
-                    var grokRow = Descendants(root).OfType<ContentControl>().First(c => c.Content is ProviderCard p && p.Name == "Grok");
-                    var grokRowBounds = BoundsIn(grokRow, window);
-                    var grokImage = (Image)PrivateField<CharacterStage>("_img").GetValue(window.Grok)!;
-                    var grokImageBounds = BoundsIn(grokImage, window);
-                    Check($"{name}: Grok rendered image stays inside its provider row",
-                        window.Grok.IsVisible && grokImage.IsVisible && grokImage.ActualHeight > 0 &&
-                        grokImageBounds.Top >= grokRowBounds.Top - 1 && grokImageBounds.Bottom <= grokRowBounds.Bottom + 1,
-                        $"image={grokImageBounds}, row={grokRowBounds}");
+                    var image = (Image)PrivateField<CharacterStage>("_img").GetValue(stage)!;
+                    var body = (Rect)PrivateField<CharacterStage>("_bodyBounds").GetValue(stage)!;
+                    var imageBounds = image.TransformToAncestor(window).TransformBounds(new Rect(
+                        body.X * image.ActualWidth, body.Y * image.ActualHeight,
+                        body.Width * image.ActualWidth, body.Height * image.ActualHeight));
+                    Check($"{name}: {stage.Character} rendered image stays inside its row",
+                        image.IsVisible && image.ActualHeight > 0 && imageBounds.Top >= rowBounds.Top - 1 &&
+                        imageBounds.Bottom <= rowBounds.Bottom + 1 && imageBounds.Right <= rowBounds.Right + 1,
+                        $"image={imageBounds}, row={rowBounds}");
                 }
 
                 if (mode == LayoutMode.Wide)
@@ -339,7 +329,6 @@ internal static partial class Program
                     }
                 }
 
-                if (characters)
                 {
                     var widths = new[] { window.Claude, window.Codex, window.Gemini, window.Grok }
                         .Select(s => (double)typeof(CharacterStage).GetMethod("BubbleTextWidth", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(s, null)!).ToList();
@@ -352,39 +341,41 @@ internal static partial class Program
                         bubbleRect.Left >= -0.5 && bubbleRect.Top >= -0.5 && bubbleRect.Bottom <= window.Gemini.ActualHeight + 0.5,
                         $"widths={string.Join(",", widths.Select(x => x.ToString("0.#")))}, bubble={bubbleRect}");
                 }
+                if (name == "minimum") RenderFixture(window, "minimum");
             }
             Check("taller windows give each provider row more room", rowHeights["wide"] > rowHeights["default"] && rowHeights["narrow and tall"] > rowHeights["default"],
                 string.Join(", ", rowHeights.Select(v => $"{v.Key}={v.Value:0}")));
 
-            Check("larger width and height enlarge transformed usage ring and text", wideUsage.Ring.Width > compactUsage.Ring.Width + 1 &&
-                wideUsage.Ring.Height > compactUsage.Ring.Height + 1 && wideUsage.Text.Width > compactUsage.Text.Width + 0.5 &&
-                wideUsage.Text.Height > compactUsage.Text.Height + 0.5,
-                $"ring={compactUsage.Ring}->{wideUsage.Ring}, text={compactUsage.Text}->{wideUsage.Text}");
-
             // 이 상태는 네 캐릭터와 계정 슬롯이 보이는 넓은 합성 화면이다.
             RenderFixture(window, "wide-large");
 
-            // 캐릭터를 끄면 오른쪽 열도 없애 계정 영역이 빈 공간을 남기지 않는다.
+            // 폭만 줄여도 원·글자는 같은 크기이고 사용량은 왼쪽 위치를 유지한다.
+            foreach (var provider in new[] { "Claude", "Codex", "Gemini", "Grok" })
+            {
+                window.Width = 1100;
+                PumpDisplay();
+                var wideUsage = MeasureUsageVisual(window, provider);
+                window.Width = MainWindow.MinWindowWidth;
+                PumpDisplay();
+                var narrowUsage = MeasureUsageVisual(window, provider);
+                Check($"{provider}: width changes preserve rendered usage ring and text sizes",
+                    Math.Abs(wideUsage.Ring.Width - narrowUsage.Ring.Width) <= 0.5 &&
+                    Math.Abs(wideUsage.Ring.Height - narrowUsage.Ring.Height) <= 0.5 &&
+                    Math.Abs(wideUsage.Text.Width - narrowUsage.Text.Width) <= 0.5 &&
+                    Math.Abs(wideUsage.Text.Height - narrowUsage.Text.Height) <= 0.5 &&
+                    Math.Abs(wideUsage.Ring.Left - narrowUsage.Ring.Left) <= 1,
+                    $"ring={wideUsage.Ring}->{narrowUsage.Ring}, text={wideUsage.Text}->{narrowUsage.Text}");
+            }
+
             var before = new Size(window.Width, window.Height);
-            var rootBeforeCharacters = (FrameworkElement)window.Content;
-            var cardBeforeCharacters = Descendants(rootBeforeCharacters).OfType<ContentControl>()
-                .First(c => c.Content is ProviderCard p && p.Name == "Claude");
-            var cardGridBeforeCharacters = Descendants(cardBeforeCharacters).OfType<Grid>()
-                .First(g => g.RowDefinitions.Count == 3 && g.ColumnDefinitions.Count == 2);
-            var accountColumnBefore = cardGridBeforeCharacters.ColumnDefinitions[0].ActualWidth;
+            var usageBefore = MeasureUsageVisual(window, "Claude");
             window.ApplyCharacters(false);
             PumpDisplay();
-            var rootAfterCharacters = (FrameworkElement)window.Content;
-            var cardAfterCharacters = Descendants(rootAfterCharacters).OfType<ContentControl>()
-                .First(c => c.Content is ProviderCard p && p.Name == "Claude");
-            var cardGridAfterCharacters = Descendants(cardAfterCharacters).OfType<Grid>()
-                .First(g => g.RowDefinitions.Count == 3 && g.ColumnDefinitions.Count == 2);
-            var accountColumnAfter = cardGridAfterCharacters.ColumnDefinitions[0].ActualWidth;
+            var usageAfter = MeasureUsageVisual(window, "Claude");
             Check("turning characters off keeps the size and account geometry",
                 window.Width == before.Width && window.Height == before.Height && !window.Claude.IsVisible && !window.Grok.IsVisible &&
-                accountColumnAfter > accountColumnBefore + 1 && window.Resources["CharacterColumnWidth"] is GridLength { Value: 0 } &&
-                LayoutProblems(window).Count == 0,
-                $"size={window.Width}x{window.Height}, account column={accountColumnBefore:0}->{accountColumnAfter:0}");
+                usageBefore == usageAfter && LayoutProblems(window).Count == 0,
+                $"size={window.Width}x{window.Height}, usage={usageBefore}->{usageAfter}");
             window.ApplyCharacters(true);
             PumpDisplay();
             Check("layout changes never save settings by themselves", saves == 0, $"saves={saves}");
