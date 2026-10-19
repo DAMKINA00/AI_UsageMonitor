@@ -22,7 +22,8 @@ internal static partial class Program
     {
         var settingsBefore = File.Exists(Paths.SettingsFile) ? File.ReadAllBytes(Paths.SettingsFile) : null;
         var vm = new MainViewModel();
-        vm.Update(CompactProviderCard("Claude", "TEST"), CompactProviderCard("Codex", "TEST"), "");
+        UpdateViewModel(vm, CompactProviderCard("Claude", "TEST"), CompactProviderCard("Codex", "TEST"),
+            CompactProviderCard("Gemini", "TEST"), CompactProviderCard("Grok", "TEST"), "");
         var window = new MainWindow(vm, new AppSettings { ShowCharacters = false, Topmost = false }, _ => { })
         {
             Opacity = 0, ShowActivated = false, ShowInTaskbar = false, AllowClose = true,
@@ -92,13 +93,13 @@ internal static partial class Program
             ((FrameworkElement)window.Content).LayoutTransform.Value.IsIdentity,
             $"size={window.Width}/{window.Height}, expected={size}");
 
-    // 압축 전 창의 1080p 크기 (기준 410×860 을 1.17배로 키운 615×1008). 기본 창은 이 면적의 절반 이하여야 한다.
+    // 네 행으로 늘어난 기본 창도 이전 압축 화면보다 작게 유지한다.
     const double PreviousWindowArea = 615 * 1008;
 
     /// <summary>
     /// 바뀐 요구사항: 이전 라운드는 "배율 1.0, 폭 600, 높이 = 내용 높이"였으나, 이제 창은 사용자가 크기를 바꾸는 반응형이다.
-    /// 저장된 크기가 없으면 기본 크기(640×480)로 작업 영역 안 오른쪽 아래에 열리고, 내용은 확대·축소하지 않으며,
-    /// 최소·최대 크기(작업 영역)가 걸려 있고, 기본 면적은 압축 전의 50% 이하인지 확인한다.
+    /// 저장된 크기가 없으면 기본 크기(640×640)로 작업 영역 안 오른쪽 아래에 열리고, 내용은 확대·축소하지 않으며,
+    /// 최소·최대 크기(작업 영역)가 걸려 있고, 네 행의 기본 면적은 이전 화면보다 작은지 확인한다.
     /// </summary>
     static void CheckFits(string name, MainWindow window)
     {
@@ -111,7 +112,7 @@ internal static partial class Program
             window.Width == MainWindow.DefaultWidth && window.Height == MainWindow.DefaultHeight &&
             window.MinWidth == MainWindow.MinWindowWidth && window.MinHeight == MainWindow.MinWindowHeight &&
             Math.Abs(window.MaxWidth - area.Width) < 1 && Math.Abs(window.MaxHeight - area.Height) < 1 &&
-            window.Width * window.Height <= PreviousWindowArea * 0.5,
+            window.Width * window.Height < PreviousWindowArea,
             $"window={window.Left}/{window.Top}/{window.Width}/{window.Height}, max={window.MaxWidth}/{window.MaxHeight}, area={area}, " +
             $"ratio={window.Width * window.Height / PreviousWindowArea:P0}");
     }
@@ -128,7 +129,8 @@ internal static partial class Program
     static void TestAccountsPanel()
     {
         var vm = new MainViewModel();
-        vm.Update(CompactProviderCard("Claude", "TEST"), CompactProviderCard("Codex", "TEST"), "");
+        UpdateViewModel(vm, CompactProviderCard("Claude", "TEST"), CompactProviderCard("Codex", "TEST"),
+            CompactProviderCard("Gemini", "TEST"), CompactProviderCard("Grok", "TEST"), "");
         var window = new MainWindow(vm, new AppSettings { ShowCharacters = false, Topmost = false }, _ => { })
         {
             Opacity = 0, ShowActivated = false, ShowInTaskbar = false, AllowClose = true,

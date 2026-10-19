@@ -25,7 +25,7 @@
         <SolidColorBrush x:Key="Fg2" Color="#9A9DA6"/>
         <SolidColorBrush x:Key="Hover" Color="#2EFFFFFF"/>
         <GridLength x:Key="AccountColumnWidth">2*</GridLength>
-        <GridLength x:Key="SessionColumnWidth">3*</GridLength>
+        <GridLength x:Key="CharacterColumnWidth">3*</GridLength>
 
         <Style x:Key="IconButton" TargetType="Button">
             <Setter Property="Foreground" Value="{StaticResource Fg2}"/>
@@ -69,68 +69,13 @@
             </Setter>
         </Style>
 
-        <!-- 세션 줄: 열 수 있는 세션이면 마우스를 올렸을 때 살짝 밝아지고 손가락 커서 -->
-        <Style x:Key="RowButton" TargetType="Button">
-            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
-            <Setter Property="Template">
-                <Setter.Value>
-                    <ControlTemplate TargetType="Button">
-                        <Border x:Name="b" Background="Transparent" CornerRadius="4" Margin="-3,0,-3,0" Padding="3,0,3,0">
-                            <ContentPresenter/>
-                        </Border>
-                        <ControlTemplate.Triggers>
-                            <MultiTrigger>
-                                <MultiTrigger.Conditions>
-                                    <Condition Property="IsMouseOver" Value="True"/>
-                                    <Condition Property="IsEnabled" Value="True"/>
-                                </MultiTrigger.Conditions>
-                                <Setter TargetName="b" Property="Background" Value="#14FFFFFF"/>
-                                <Setter Property="Cursor" Value="Hand"/>
-                            </MultiTrigger>
-                        </ControlTemplate.Triggers>
-                    </ControlTemplate>
-                </Setter.Value>
-            </Setter>
-        </Style>
-
-        <!-- 어두운 테마용 얇은 스크롤바 -->
-        <Style x:Key="ThinThumb" TargetType="Thumb">
-            <Setter Property="Template">
-                <Setter.Value>
-                    <ControlTemplate TargetType="Thumb">
-                        <Border x:Name="t" Background="#3DFFFFFF" CornerRadius="2"/>
-                        <ControlTemplate.Triggers>
-                            <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="t" Property="Background" Value="#66FFFFFF"/>
-                            </Trigger>
-                        </ControlTemplate.Triggers>
-                    </ControlTemplate>
-                </Setter.Value>
-            </Setter>
-        </Style>
-        <Style TargetType="ScrollBar">
-            <Setter Property="Width" Value="4"/>
-            <Setter Property="MinWidth" Value="4"/>
-            <Setter Property="Template">
-                <Setter.Value>
-                    <ControlTemplate TargetType="ScrollBar">
-                        <Track x:Name="PART_Track" IsDirectionReversed="True">
-                            <Track.Thumb>
-                                <Thumb Style="{StaticResource ThinThumb}"/>
-                            </Track.Thumb>
-                        </Track>
-                    </ControlTemplate>
-                </Setter.Value>
-            </Setter>
-        </Style>
-
-        <!-- 계정 세 칸은 세로 정렬 후 받은 공간에 비례해 확대한다. -->
+        <!-- 계정 세 칸은 세로 정렬 후 받은 공간에 비례해 확대한다. 오른쪽 열은 캐릭터 자리다. -->
         <DataTemplate x:Key="CardTemplate" DataType="{x:Type ui:ProviderCard}">
             <Border Background="{StaticResource CardBg}" CornerRadius="8" Padding="10,7,6,6" ClipToBounds="True">
                 <Grid>
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="{DynamicResource AccountColumnWidth}"/>
-                        <ColumnDefinition Width="{DynamicResource SessionColumnWidth}"/>
+                        <ColumnDefinition Width="{DynamicResource CharacterColumnWidth}"/>
                     </Grid.ColumnDefinitions>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
@@ -222,41 +167,6 @@
                     </ItemsControl>
                     </Viewbox>
 
-                    <!-- 세션 목록: 한 줄에 제목과 상태. 부제·경과 시간은 툴팁 -->
-                    <Border Grid.Row="2" Grid.Column="1" BorderBrush="{StaticResource Line}" BorderThickness="1,0,0,0" Padding="10,0,0,0" Margin="0,2,4,0"
-                            Visibility="{DynamicResource SessionListVisibility}">
-                        <DockPanel>
-                            <TextBlock DockPanel.Dock="Top" Text="{Binding SessionsHeader}" Foreground="{StaticResource Fg2}" FontSize="10" FontWeight="SemiBold"
-                                       TextTrimming="CharacterEllipsis"/>
-                            <Border DockPanel.Dock="Top" Visibility="{DynamicResource SessionListVisibility}">
-                                <TextBlock Text="{Binding SessionsEmpty}" Visibility="{Binding SessionsEmptyVisibility}"
-                                           Foreground="{StaticResource Fg2}" FontSize="10" Margin="0,3,0,0" TextWrapping="Wrap"/>
-                            </Border>
-                            <ScrollViewer Visibility="{DynamicResource SessionListVisibility}" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Margin="0,1,-6,0" Padding="0,0,6,0">
-                                <ItemsControl ItemsSource="{Binding Sessions}">
-                                    <ItemsControl.ItemTemplate>
-                                        <DataTemplate DataType="{x:Type ui:SessionRow}">
-                                            <Button Style="{StaticResource RowButton}" Command="{Binding OpenCommand}" ToolTip="{Binding ToolTipText}"
-                                                    AutomationProperties.Name="{Binding ToolTipText}">
-                                                <Grid Height="17">
-                                                    <Grid.ColumnDefinitions>
-                                                        <ColumnDefinition Width="11"/>
-                                                        <ColumnDefinition Width="*"/>
-                                                        <ColumnDefinition Width="Auto"/>
-                                                    </Grid.ColumnDefinitions>
-                                                    <Ellipse Width="6" Height="6" Fill="{Binding StateBrush}" VerticalAlignment="Center" HorizontalAlignment="Left"/>
-                                                    <TextBlock Grid.Column="1" Text="{Binding Title}" Foreground="{StaticResource Fg}" FontSize="11"
-                                                               TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
-                                                    <TextBlock Grid.Column="2" Text="{Binding StateText}" Foreground="{Binding StateBrush}"
-                                                               FontSize="10" FontWeight="SemiBold" Margin="6,0,0,0" VerticalAlignment="Center"/>
-                                                </Grid>
-                                            </Button>
-                                        </DataTemplate>
-                                    </ItemsControl.ItemTemplate>
-                                </ItemsControl>
-                            </ScrollViewer>
-                        </DockPanel>
-                    </Border>
                 </Grid>
             </Border>
         </DataTemplate>
@@ -271,8 +181,6 @@
                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,0,6,0">
                     <Button x:Name="AccountsButton" Style="{StaticResource IconButton}" Content="계정" FontFamily="Segoe UI, Malgun Gothic" Width="40"
                             ToolTip="계정 패널 열기/닫기" AutomationProperties.Name="계정 패널 열기/닫기" Click="Accounts_Click"/>
-                    <Button x:Name="SessionsButton" Style="{StaticResource IconButton}" Content="&#xE8FD;" ToolTip="세션 목록 표시/숨기기"
-                            AutomationProperties.Name="세션 목록 표시/숨기기" Click="Sessions_Click"/>
                     <Button x:Name="RefreshButton" Style="{StaticResource IconButton}" Content="&#xE72C;" ToolTip="지금 새로고침"
                             AutomationProperties.Name="지금 새로고침" Click="Refresh_Click"/>
                     <Button x:Name="PinButton" Style="{StaticResource IconButton}" Content="&#xE718;" ToolTip="항상 위에 표시"
@@ -284,9 +192,11 @@
                 </StackPanel>
             </Grid>
 
-            <!-- 캐릭터는 세션 오른쪽 아래의 오버레이이며 계정 영역 폭을 차지하지 않는다. -->
+            <!-- 캐릭터는 계정 영역 오른쪽의 전용 열에 배치한다. -->
             <Grid x:Name="Rows" Margin="8,0,8,8">
                 <Grid.RowDefinitions>
+                    <RowDefinition Height="*" MinHeight="132"/>
+                    <RowDefinition Height="6"/>
                     <RowDefinition Height="*" MinHeight="132"/>
                     <RowDefinition Height="6"/>
                     <RowDefinition Height="*" MinHeight="132"/>
@@ -312,6 +222,13 @@
                                     HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch"/>
                     <ui:CharacterStage x:Name="GeminiStage" Character="gemini" BubblePlacement="Left" FigureHeight="150"
                                        Width="224" MaxHeight="150" HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,3,6,6"
+                                       Panel.ZIndex="1" IsHitTestVisible="False"/>
+                </Grid>
+                <Grid Grid.Row="6">
+                    <ContentControl Content="{Binding Grok}" ContentTemplate="{StaticResource CardTemplate}"
+                                    HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch"/>
+                    <ui:CharacterStage x:Name="GrokStage" Character="grok" BubblePlacement="Left" FigureHeight="150"
+                                       Width="240" MaxHeight="150" HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,3,6,6"
                                        Panel.ZIndex="1" IsHitTestVisible="False"/>
                 </Grid>
             </Grid>

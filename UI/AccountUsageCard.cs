@@ -21,10 +21,10 @@ public sealed class AccountUsageCard
         string.Join(';', Usage.Select(x => $"{x.Label}|{x.Value}|{x.ResetText}")));
 
     /// <param name="gemini">있으면 주 계정 카드만 덧붙인다 (Gemini 는 서브 계정을 지원하지 않는다).</param>
-    public static List<AccountUsageCard> Create(ProviderCard claude, ProviderCard codex, SecondaryAccountService service, ProviderCard? gemini = null)
+    public static List<AccountUsageCard> Create(ProviderCard claude, ProviderCard codex, SecondaryAccountService service, ProviderCard? gemini = null, ProviderCard? grok = null)
     {
         var cards = new List<AccountUsageCard>();
-        foreach (var main in gemini == null ? new[] { claude, codex } : new[] { claude, codex, gemini })
+        foreach (var main in new[] { claude, codex, gemini, grok }.OfType<ProviderCard>())
         {
             cards.Add(new AccountUsageCard
             {

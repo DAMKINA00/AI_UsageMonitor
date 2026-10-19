@@ -98,6 +98,22 @@ public sealed class MoodTracker(string character)
     // 말풍선 규칙: 글자 폭 120 DIP·13px 굵은 글꼴에서 3줄 이하, 어절이 한 줄을 넘지 않게 (DialogueTests).
     static string[] Templates(string character, Mood mood, bool limit)
     {
+        // Original monitor persona: dry, playful short replies; quota facts stay in the UI.
+        if (character == "grok") return mood switch
+        {
+            Mood.Working => ["좋아, 어디 한번 해보자.", "태블릿 켰다. 시작해."],
+            Mood.WorkingHard => ["벌써 {w}?\n제법 달렸네.", "이 속도면 야근인데.", "잠깐, 숨 좀 돌리자."],
+            Mood.Waiting => ["딸깍 한 번만 해줘.", "승인 기다리는 중이야."],
+            Mood.Playing => ["잠깐 쉬는 것도 실력이야.", "오늘은 좀 느긋하게 가자."],
+            Mood.Idle => ["부르면 바로 간다.", "그쨩, 준비 끝."],
+            Mood.Sleeping => ["조용하네. 잠깐 눈 좀 붙일게.", "다음 일 생기면 불러."],
+            Mood.Tired => ["{w}나 썼어?\n살살 가자.", "슬슬 눈이 감기네.", "잠깐 쉬었다 하자."],
+            Mood.Exhausted => ["오늘 꽤 달렸네…", "충전이 필요한 시간이야.", "리셋까지 {r}…\n좀 누워 있을게."],
+            Mood.Panic => limit ? ["한도 끝! 잠깐 멈추자.", "지금은 충전 대기야.", "리셋까지 {r}.\n그때 다시 보자."]
+                : ["한도가 얼마 안 남았어!", "야, 속도 좀 줄여!", "{w}라고?\n진짜 빠르네!"],
+            Mood.Happy => ["충전 끝. 다시 달려보자.", "그쨩 부활! 할 일 줘."],
+            _ => [],
+        };
         if (character == "codex")
         {
             return mood switch

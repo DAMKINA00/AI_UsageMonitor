@@ -71,7 +71,7 @@ internal static partial class Program
                 AppSettings.Load(vanishing).LoadedFrom == AppSettings.LoadResult.Loaded && Backups("vanishing.json").Length == 0,
                 $"file={vanished.LoadedFrom}, dir={vanishedDir.LoadedFrom}");
 
-            // 빈 파일·BOM 만 있는 파일·공백뿐인 파일은 없는 파일처럼: 기본값, 버전 2 저장, 경고·0바이트 백업 없음
+            // 빈 파일·BOM 만 있는 파일·공백뿐인 파일은 없는 파일처럼: 기본값, 현재 버전 저장, 경고·0바이트 백업 없음
             var emptyCases = new (string Name, byte[] Bytes)[]
             {
                 ("empty.json", []),
@@ -88,13 +88,13 @@ internal static partial class Program
                 var loaded = AppSettings.Load(path);
                 if (loaded.Migrated) loaded.Save();
                 var reloaded = AppSettings.Load(path);
-                bool ok = loaded is { LoadedFrom: AppSettings.LoadResult.Missing, Migrated: true, SaveBlocked: false, BackupFile: null, ShowCharacters: false } &&
+                bool ok = loaded is { LoadedFrom: AppSettings.LoadResult.Missing, Migrated: true, SaveBlocked: false, BackupFile: null, ShowCharacters: true } &&
                     Tray.SettingsLoadNotice(loaded) == null && Backups(name).Length == 0 &&
                     reloaded is { LoadedFrom: AppSettings.LoadResult.Loaded, SettingsVersion: AppSettings.CurrentSettingsVersion };
                 emptyOk &= ok;
                 emptyResults.Add($"{name}={loaded.LoadedFrom}/{reloaded.LoadedFrom}");
             }
-            Check("empty, BOM-only and whitespace-only settings start like a missing file and save version 2 without a backup",
+            Check("empty, BOM-only and whitespace-only settings start like a missing file and save current version without a backup",
                 emptyOk, string.Join(", ", emptyResults));
 
             // 1MB 를 넘으면 읽지 않고 실패로 보되 원본은 복사해 백업한다
@@ -202,13 +202,14 @@ internal static partial class Program
 
             // 메모장·PowerShell 이 붙이는 BOM 이 있어도 정상 파일로 읽는다 (백업 없음, 마이그레이션 규칙 그대로)
             var bomCurrent = Path.Combine(dir, "bom-current.json");
-            File.WriteAllBytes(bomCurrent, [0xEF, 0xBB, 0xBF, .. System.Text.Encoding.UTF8.GetBytes("{\"ShowCharacters\": true, \"SettingsVersion\": 2}")]);
+            var currentJson = System.Text.Json.JsonSerializer.Serialize(new { ShowCharacters = true, SettingsVersion = AppSettings.CurrentSettingsVersion });
+            File.WriteAllBytes(bomCurrent, [0xEF, 0xBB, 0xBF, .. System.Text.Encoding.UTF8.GetBytes(currentJson)]);
             var bomOld = Path.Combine(dir, "bom-old.json");
             File.WriteAllBytes(bomOld, [0xEF, 0xBB, 0xBF, .. System.Text.Encoding.UTF8.GetBytes("{\"ShowCharacters\": true, \"Topmost\": false}")]);
             var bomUtf16 = Path.Combine(dir, "bom-utf16.json");
-            File.WriteAllText(bomUtf16, "{\"ShowCharacters\": true, \"SettingsVersion\": 2}", System.Text.Encoding.Unicode);
+            File.WriteAllText(bomUtf16, currentJson, System.Text.Encoding.Unicode);
             var bomUtf16Be = Path.Combine(dir, "bom-utf16be.json");
-            File.WriteAllText(bomUtf16Be, "{\"ShowCharacters\": true, \"SettingsVersion\": 2, \"AgyBlockedFingerprint\": \"한글\"}",
+            File.WriteAllText(bomUtf16Be, System.Text.Json.JsonSerializer.Serialize(new { ShowCharacters = true, SettingsVersion = AppSettings.CurrentSettingsVersion, AgyBlockedFingerprint = "한글" }),
                 System.Text.Encoding.BigEndianUnicode);
             var current = AppSettings.Load(bomCurrent);
             var old = AppSettings.Load(bomOld);
@@ -217,7 +218,7 @@ internal static partial class Program
             Check("a settings file with a BOM (UTF-8, UTF-16 LE/BE) loads normally without a backup and keeps the migration rules",
                 File.ReadAllBytes(bomUtf16Be) is [0xFE, 0xFF, ..] &&
                 current is { LoadedFrom: AppSettings.LoadResult.Loaded, Migrated: false, ShowCharacters: true, BackupFile: null } &&
-                old is { LoadedFrom: AppSettings.LoadResult.Loaded, Migrated: true, ShowCharacters: false, Topmost: false, SettingsVersion: AppSettings.CurrentSettingsVersion } &&
+                old is { LoadedFrom: AppSettings.LoadResult.Loaded, Migrated: true, ShowCharacters: true, Topmost: false, SettingsVersion: AppSettings.CurrentSettingsVersion } &&
                 utf16 is { LoadedFrom: AppSettings.LoadResult.Loaded, Migrated: false, ShowCharacters: true } &&
                 utf16Be is { LoadedFrom: AppSettings.LoadResult.Loaded, Migrated: false, ShowCharacters: true, AgyBlockedFingerprint: "한글" } &&
                 Directory.GetFiles(dir, "bom-*.bak-*").Length == 0,
@@ -242,13 +243,13 @@ internal static partial class Program
                 Tray.SettingsLoadNotice(AppSettings.Load(Path.Combine(dir, "none.json"))) == null && !current.SaveBlocked,
                 "");
 
-            // 파일이 없으면 기본값으로 시작하고, 시작할 때처럼 저장하면 버전 2 로 기록된다
+            // 파일이 없으면 기본값으로 시작하고, 시작할 때처럼 저장하면 현재 버전으로 기록된다
             var missingFile = Path.Combine(dir, "missing.json");
             var fresh = AppSettings.Load(missingFile);
             if (fresh.Migrated) fresh.Save();
             var written = File.Exists(missingFile) ? AppSettings.Load(missingFile) : null;
-            Check("a missing settings file starts with defaults and saves version 2",
-                fresh is { LoadedFrom: AppSettings.LoadResult.Missing, Migrated: true, ShowCharacters: false } &&
+            Check("a missing settings file starts with defaults and saves current version",
+                fresh is { LoadedFrom: AppSettings.LoadResult.Missing, Migrated: true, ShowCharacters: true } &&
                 written is { LoadedFrom: AppSettings.LoadResult.Loaded, SettingsVersion: AppSettings.CurrentSettingsVersion, Migrated: false },
                 $"written={written?.SettingsVersion}");
         }
@@ -316,14 +317,14 @@ internal static partial class Program
         {
             window.Show();
             PumpDisplay();
-            var sessionVisibility = window.Resources["SessionListVisibility"];
+            var appVisibility = window.Resources["AppStatusVisibility"];
             window.Width = 700;
             PumpDisplay();
-            var sameVisibility = window.Resources["SessionListVisibility"];
+            var sameVisibility = window.Resources["AppStatusVisibility"];
             window.Width = 500;
             PumpDisplay();
             Check("resizing within a layout band keeps the template resources",
-                ReferenceEquals(sessionVisibility, sameVisibility) && !ReferenceEquals(sameVisibility, window.Resources["SessionListVisibility"]) &&
+                ReferenceEquals(appVisibility, sameVisibility) && !ReferenceEquals(sameVisibility, window.Resources["AppStatusVisibility"]) &&
                 window.Mode == LayoutMode.Medium, $"mode={window.Mode}");
 
             Rect Area() => (Rect)typeof(MainWindow).GetMethod("CurrentWorkArea", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!

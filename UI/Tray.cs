@@ -9,7 +9,7 @@ namespace AIUsageMonitor.UI;
 public sealed class Tray : IDisposable
 {
     readonly WinForms.NotifyIcon _icon;
-    readonly WinForms.ToolStripMenuItem _topmost, _characters, _sessions, _startup, _usageAlerts, _activityAlerts, _login, _logout, _desktop;
+    readonly WinForms.ToolStripMenuItem _topmost, _characters, _startup, _usageAlerts, _activityAlerts, _login, _logout, _desktop;
     bool _webLoggedIn;
     IntPtr _hIcon;
     string _iconSig = "";
@@ -18,7 +18,6 @@ public sealed class Tray : IDisposable
     public event Action? AccountsRequested;
     public event Action<bool>? TopmostChanged, CharactersChanged, StartupChanged, UsageAlertsChanged, ActivityAlertsChanged;
     public event Action<bool>? ClaudeDesktopChanged;
-    public event Action<bool>? SessionsChanged;
     public event Action<string?>? GeminiPlanChanged;
     readonly List<WinForms.ToolStripMenuItem> _geminiPlans = [];
     public event Action? GeminiUnblockRequested;
@@ -39,11 +38,10 @@ public sealed class Tray : IDisposable
         menu.Items.Add(new WinForms.ToolStripSeparator());
         _topmost = Check("항상 위에 표시", s.Topmost, v => TopmostChanged?.Invoke(v));
         _characters = Check("캐릭터 표시", s.ShowCharacters, v => CharactersChanged?.Invoke(v));
-        _sessions = Check("세션 목록 표시", s.ShowSessions, v => SessionsChanged?.Invoke(v));
         _startup = Check("Windows 시작 시 실행", s.StartWithWindows, v => StartupChanged?.Invoke(v));
         _usageAlerts = Check("사용량 경고 알림 (" + string.Join("/", s.AlertThresholds) + "%)", s.UsageAlerts, v => UsageAlertsChanged?.Invoke(v));
         _activityAlerts = Check("작업 완료·승인 대기 알림", s.ActivityAlerts, v => ActivityAlertsChanged?.Invoke(v));
-        menu.Items.AddRange([_topmost, _characters, _sessions, _startup, _usageAlerts, _activityAlerts, new WinForms.ToolStripSeparator()]);
+        menu.Items.AddRange([_topmost, _characters, _startup, _usageAlerts, _activityAlerts, new WinForms.ToolStripSeparator()]);
         _desktop = Check("Claude 데스크톱 로그인 자동 연결", s.ClaudeDesktopEnabled, value =>
         {
             ClaudeDesktopChanged?.Invoke(value);
@@ -88,7 +86,6 @@ public sealed class Tray : IDisposable
     }
 
     public void SetTopmost(bool v) => _topmost.Checked = v;
-    public void SetSessions(bool v) => _sessions.Checked = v;
     public void SetGeminiPlan(string? plan)
     {
         foreach (var item in _geminiPlans) item.Checked = Equals(item.Tag, plan);
@@ -121,7 +118,7 @@ public sealed class Tray : IDisposable
                 ? $"{row.Label.Replace(" 한도", "")} {(row.IsResetPending ? "확인 중" : Fmt.Pct(row.Value))}"
                 : c.Status.State switch
                 {
-                    StatusKind.NotInstalled => "agy 미설치",
+                    StatusKind.NotInstalled => c.Name == "Grok" ? "CLI 미설치" : "agy 미설치",
                     StatusKind.Unsupported => AgyCli.UnsupportedMessage,
                     StatusKind.LoginRequired => "로그인 필요",
                     StatusKind.Disabled => "꺼짐",
@@ -160,12 +157,12 @@ public sealed class Tray : IDisposable
     static extern bool DestroyIcon(IntPtr h);
 
     /// <summary>
-    /// 막대 세 개 = 왼쪽부터 Claude, Codex, Gemini. 채워진 높이 = 가장 많이 쓴 한도의 사용률.
+    /// 왼쪽부터 Claude, Codex, Gemini, Grok 계정 사용률.
     /// </summary>
-    public void UpdateIcon(double? claude, double? codex, double? gemini)
+    public void UpdateIcon(double? claude, double? codex, double? gemini, double? grok = null)
     {
         var size = WinForms.SystemInformation.SmallIconSize.Width;
-        var sig = $"{size}:{claude:0}:{codex:0}:{gemini:0}";
+        var sig = $"{size}:{claude:0}:{codex:0}:{gemini:0}:{grok:0}";
         if (sig == _iconSig) return;
         _iconSig = sig;
 
@@ -175,10 +172,11 @@ public sealed class Tray : IDisposable
             g.SmoothingMode = SmoothingMode.AntiAlias;
             g.Clear(Color.Transparent);
             float pad = size * 0.04f, gap = size * 0.07f;
-            float barW = (size - pad * 2 - gap * 2) / 3f, barH = size - pad * 2;
+            float barW = (size - pad * 2 - gap * 3) / 4f, barH = size - pad * 2;
             DrawBar(g, pad, pad, barW, barH, claude, Color.FromArgb(0xD9, 0x77, 0x57));
             DrawBar(g, pad + barW + gap, pad, barW, barH, codex, Color.FromArgb(0x7A, 0xA2, 0xF7));
             DrawBar(g, pad + (barW + gap) * 2, pad, barW, barH, gemini, Color.FromArgb(0xB4, 0x8C, 0xF2));
+            DrawBar(g, pad + (barW + gap) * 3, pad, barW, barH, grok, Color.FromArgb(0xD8, 0xBD, 0x72));
         }
 
         var h = bmp.GetHicon();

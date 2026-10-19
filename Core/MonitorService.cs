@@ -20,6 +20,7 @@ public sealed class MonitorService : IDisposable
     DispatcherTimer? _timer;
     bool _localBusy;
     DateTime _nextCodex = DateTime.MinValue;
+    DateTime _nextGrok = DateTime.MinValue;
     DateTime _nextGemini = DateTime.MinValue;
     DateTime _lastGeminiQuery = DateTime.MinValue;
     int _geminiFailures;
@@ -78,6 +79,10 @@ public sealed class MonitorService : IDisposable
     public ClaudeWebResult? ClaudeWebGood { get; private set; }
     public CodexRemoteResult? CodexRemoteLast { get; private set; }
     public CodexRemoteResult? CodexRemoteGood { get; private set; }
+    public GrokRemoteResult? GrokRemoteLast { get; private set; }
+    public GrokRemoteResult? GrokRemoteGood { get; private set; }
+    public bool GrokRemoteBusy { get; private set; }
+    public int GrokProcessCount { get; private set; }
 
     public GeminiLocalState? GeminiLocal { get; private set; }
     /// <summary>마지막 `agy /usage` 결과 (실패 포함).</summary>
@@ -142,6 +147,7 @@ public sealed class MonitorService : IDisposable
     {
         _ = RefreshLocalAsync();
         if (DateTime.UtcNow >= _nextCodex) _ = RefreshCodexRemoteAsync();
+        if (DateTime.UtcNow >= _nextGrok) _ = RefreshGrokRemoteAsync();
         if (GeminiEnabled && DateTime.UtcNow >= _nextGemini) _ = RefreshGeminiRemoteAsync();
 
         bool fastChats = ClaudeEnabled && FastChatPolling;
@@ -200,6 +206,7 @@ public sealed class MonitorService : IDisposable
     {
         _ = RefreshLocalAsync();
         _ = RefreshCodexRemoteAsync();
+        _ = RefreshGrokRemoteAsync();
         if (GeminiEnabled) _ = RefreshGeminiRemoteAsync(manual: true);
         if (ClaudeEnabled) _ = RefreshClaudeWebAsync(); // 대화 목록도 함께 읽는다
     }
@@ -214,7 +221,7 @@ public sealed class MonitorService : IDisposable
             int geminiHours = Math.Max(1, _settings.GeminiActiveHours);
             var agyPath = _settings.AgyExePath;
             // 소스마다 따로 읽어 한 소스의 실패가 나머지 갱신을 막지 않게 한다
-            var (claude, codex, gemini, errors) = await Task.Run(() =>
+            var (claude, codex, gemini, grokCount, errors) = await Task.Run(() =>
             {
                 var failures = new Dictionary<string, Exception>();
                 T? Safe<T>(string name, Func<T> read) where T : class
@@ -222,12 +229,16 @@ public sealed class MonitorService : IDisposable
                     try { return read(); }
                     catch (Exception ex) { failures[name] = ex; return null; }
                 }
+                int grokCount = GrokProcessCount;
+                try { grokCount = ProcessUtil.ProcessesByName("grok").Count; }
+                catch (Exception ex) { failures["grok"] = ex; }
                 return (Safe("claude", _claudeLocal.Read), Safe("codex", () => _codexLocal.Read(hours)),
-                    Safe("gemini", () => _geminiLocal.Read(geminiHours, agyPath)), failures);
+                    Safe("gemini", () => _geminiLocal.Read(geminiHours, agyPath)), grokCount, failures);
             });
             ReportLocalErrors(errors);
             if (claude != null) ClaudeLocal = claude;
             if (codex != null) CodexLocal = codex;
+            GrokProcessCount = grokCount;
             if (gemini != null)
             {
                 OnGeminiLocalChanged(GeminiLocal, gemini);
@@ -283,7 +294,7 @@ public sealed class MonitorService : IDisposable
     /// <summary>같은 오류가 1초마다 로그에 쌓이지 않도록 소스별로 바뀐 오류만 남긴다.</summary>
     void ReportLocalErrors(Dictionary<string, Exception> errors)
     {
-        foreach (var name in new[] { "claude", "codex", "gemini" })
+        foreach (var name in new[] { "claude", "codex", "gemini", "grok" })
         {
             if (errors.TryGetValue(name, out var ex))
             {
@@ -313,6 +324,28 @@ public sealed class MonitorService : IDisposable
         {
             CodexRemoteBusy = false;
             Changed?.Invoke();
+        }
+    }
+
+    public async Task RefreshGrokRemoteAsync()
+    {
+        if (GrokRemoteBusy || _lifetime.IsCancellationRequested) return;
+        GrokRemoteBusy = true;
+        _nextGrok = DateTime.UtcNow.AddSeconds(Math.Max(120, _settings.GrokPollSeconds));
+        try
+        {
+            Changed?.Invoke();
+            var token = _lifetime.Token;
+            var result = await Task.Run(() => GrokCli.QueryAsync(_settings.GrokExePath, token));
+            if (_lifetime.IsCancellationRequested) return;
+            GrokRemoteLast = result;
+            if (result.Ok) GrokRemoteGood = result;
+            else if (result.LoginRequired) GrokRemoteGood = null;
+        }
+        finally
+        {
+            GrokRemoteBusy = false;
+            if (!_lifetime.IsCancellationRequested) Changed?.Invoke();
         }
     }
 

@@ -9,7 +9,7 @@ namespace AIUsageMonitor.Regression;
 
 internal static partial class Program
 {
-    static readonly string[] DialogueCharacters = ["claude", "codex", "gemini"];
+    static readonly string[] DialogueCharacters = ["claude", "codex", "gemini", "grok"];
 
     /// <summary>Mood.cs 의 분기 그대로: Panic 은 한도 도달(limit)과 작업 중 90% 이상 두 묶음.</summary>
     static readonly (Mood Mood, bool Limit, string Name)[] DialogueBranches =

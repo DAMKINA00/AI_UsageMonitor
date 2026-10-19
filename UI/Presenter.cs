@@ -19,6 +19,7 @@ public static class Palette
     public static readonly SolidColorBrush Claude = B("#D97757");
     public static readonly SolidColorBrush Codex = B("#7AA2F7");
     public static readonly SolidColorBrush Gemini = B("#B48CF2");
+    public static readonly SolidColorBrush Grok = B("#D8BD72");
     public static readonly SolidColorBrush Ok = B("#5BB98C");
     public static readonly SolidColorBrush Warn = B("#E5A54B");
     public static readonly SolidColorBrush Bad = B("#E5534B");
@@ -155,7 +156,7 @@ public sealed class StatusChip : INotifyPropertyChanged
     public string TextAt(DateTimeOffset now) => KindAt(now) switch
     {
         StatusKind.LoginRequired => "로그인 필요",
-        StatusKind.NotInstalled => "agy 미설치",
+        StatusKind.NotInstalled => Detail?.StartsWith("Grok") == true ? "Grok 미설치" : "agy 미설치",
         StatusKind.Unsupported => AgyCli.UnsupportedMessage,
         StatusKind.Disabled => "꺼짐",
         StatusKind.Failed => "⚠ 조회 실패",
@@ -335,13 +336,14 @@ public sealed class RelayCommand(Action run) : ICommand
 
 public sealed class MainViewModel : INotifyPropertyChanged
 {
-    ProviderCard? _claude, _codex, _gemini;
+    ProviderCard? _claude, _codex, _gemini, _grok;
     string _footer = "";
-    string _claudeSig = "", _codexSig = "", _geminiSig = "";
+    string _claudeSig = "", _codexSig = "", _geminiSig = "", _grokSig = "";
 
     public ProviderCard? Claude => _claude;
     public ProviderCard? Codex => _codex;
     public ProviderCard? Gemini => _gemini;
+    public ProviderCard? Grok => _grok;
     public string Footer => _footer;
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -349,10 +351,14 @@ public sealed class MainViewModel : INotifyPropertyChanged
     public void Update(ProviderCard claude, ProviderCard codex, string footer) => Update(claude, codex, null, footer);
 
     public void Update(ProviderCard claude, ProviderCard codex, ProviderCard? gemini, string footer)
+        => Update(claude, codex, gemini, null, footer);
+
+    public void Update(ProviderCard claude, ProviderCard codex, ProviderCard? gemini, ProviderCard? grok, string footer)
     {
         Apply(ref _claude, ref _claudeSig, claude, nameof(Claude));
         Apply(ref _codex, ref _codexSig, codex, nameof(Codex));
         if (gemini != null) Apply(ref _gemini, ref _geminiSig, gemini, nameof(Gemini));
+        if (grok != null) Apply(ref _grok, ref _grokSig, grok, nameof(Grok));
         if (footer != _footer) { _footer = footer; Raise(nameof(Footer)); }
     }
 
@@ -375,6 +381,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         _claude?.Tick();
         _codex?.Tick();
         _gemini?.Tick();
+        _grok?.Tick();
     }
 
     void Raise(string name) => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
@@ -474,7 +481,7 @@ public static class Presenter
     }
 
     static bool IsFiveHour(UsageWindow w) => w.Key is "five_hour" || HasWindowPart(w.Key, "w300");
-    static bool IsWeekly(UsageWindow w) => w.Key is "seven_day" || HasWindowPart(w.Key, "w10080");
+    static bool IsWeekly(UsageWindow w) => w.Key is "seven_day" or "weekly" || HasWindowPart(w.Key, "w10080");
 
     /// <summary>"codex:w300", "gemini:w300", "gemini:w300:&lt;id&gt;" 처럼 콜론으로 나눈 조각 중 그룹 이름 뒤에 창 길이가 있는지.</summary>
     static bool HasWindowPart(string key, string window) =>
@@ -494,6 +501,7 @@ public static class Presenter
         }
         var weekly = windows.FirstOrDefault(IsWeekly);
         if (weekly != null) yield return weekly with { Label = "주간 한도" };
+        else if (windows.FirstOrDefault(w => w.Key == "monthly") is { } monthly) yield return monthly with { Label = "월간 한도" };
         else if (windows.FirstOrDefault(w => IsFiveHour(w) && IsExpired(w, now) && w.UsedPercent >= 90) is { } pending)
             yield return pending with { Label = "5시간 한도" };
     }
@@ -529,8 +537,8 @@ public static class Presenter
         var now = asOf ?? DateTimeOffset.Now;
         UsageRow Row(bool five)
         {
-            var match = all.Where(w => five ? IsFiveHour(w) : IsWeekly(w)).OrderByDescending(w => w.UsedPercent).FirstOrDefault();
-            var label = five ? "5시간 한도" : "주간 한도";
+            var match = all.Where(w => five ? IsFiveHour(w) : IsWeekly(w) || w.Key == "monthly").OrderByDescending(w => w.UsedPercent).FirstOrDefault();
+            var label = five ? "5시간 한도" : match?.Key == "monthly" ? "월간 한도" : "주간 한도";
             if (match != null) return UsageRowFor(match with { Label = label }, now);
             bool unlimited = five && fiveHourUnlimited;
             return new UsageRow
@@ -745,7 +753,20 @@ public static class Presenter
         return Build("Gemini", Palette.Gemini, usage, local is { CliProcessCount: > 0 }, app, appBrush, null, notice, null, null, empty,
             Footnote(usage), local?.Sessions ?? [],
             installed ? "최근 Antigravity 대화 없음" : "agy 를 설치하면 대화 상태를 표시합니다", status,
-            s.GeminiPlanOverride is { Length: > 0 } plan ? plan + " · 직접 지정" : "등급 확인 불가");
+            s.GeminiPlanOverride is { Length: > 0 } plan ? plan : "등급 확인 불가");
+    }
+
+    public static ProviderCard Grok(MonitorService monitor, AppSettings? settings = null)
+    {
+        settings ??= DefaultSettings;
+        var last = monitor.GrokRemoteLast;
+        var usage = monitor.GrokRemoteGood?.Usage;
+        var state = last is { Installed: false } ? StatusKind.NotInstalled : last is { LoginRequired: true } ? StatusKind.LoginRequired :
+            last is { Ok: false } ? StatusKind.Failed : StatusKind.None;
+        var status = new StatusChip(state, usage?.AsOf, StaleAfter(settings.GrokPollSeconds, 120), monitor.GrokRemoteBusy, last?.Error);
+        bool running = monitor.GrokProcessCount > 0;
+        return Build("Grok", Palette.Grok, usage, running, running ? "CLI 실행 중" : "CLI 실행 안 됨", running ? Palette.Ok : Palette.Muted, "GROK CLI", last?.Error,
+            null, null, monitor.GrokRemoteBusy ? "사용량을 불러오는 중…" : "사용량 데이터 없음", Footnote(usage), [], "", status);
     }
 
     static readonly AppSettings DefaultSettings = new();

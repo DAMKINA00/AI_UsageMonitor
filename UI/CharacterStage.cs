@@ -25,7 +25,7 @@ public sealed class CharacterStage : Border
     static readonly Brush Ink = Frozen(Color.FromRgb(0x5A, 0x3A, 0x28));
     static readonly FontFamily PopFont = new("Malgun Gothic");
     // 캐릭터 그림 영역의 원래 비율 (_figure 150×318 을 Viewbox 로 줄여 쓴다)
-    const double FigureAspect = 150.0 / 318.0;
+    double FigureAspect => (_character == "grok" ? 200.0 : 150.0) / 318.0;
 
     readonly Grid _root = new();
     readonly TranslateTransform _wander = new();
@@ -130,6 +130,8 @@ public sealed class CharacterStage : Border
             _pose = "";
             // 리셋 반짝이와 "+N%" 표시 색은 캐릭터 테마가 정한다
             var theme = CharacterTheme.For(value);
+            _figure.Width = value == "grok" ? 200 : 150;
+            _figureBox.Width = _figureBox.Height * FigureAspect;
             _fxStroke = theme.FxStroke;
             _sparkles = theme.Sparkles;
             AutomationProperties.SetName(this, theme.DisplayName);
@@ -406,7 +408,13 @@ public sealed class CharacterStage : Border
     // 작업 중: 짚쨩은 홀로그램 타이핑, 클쨩은 수첩 메모. 1→2→1→3 순서로 손이 움직이고 가끔 눈을 깜빡인다
     static readonly string[] WorkFrames = ["work1", "work2", "work1", "work3"];
 
-    static string[] FramesFor(Mood m) => m switch
+    string[] FramesFor(Mood m) => _character == "grok" ? m switch
+    {
+        Mood.Working or Mood.WorkingHard => ["work1"],
+        Mood.Sleeping or Mood.Tired or Mood.Exhausted => ["sleeping"],
+        Mood.Panic => ["panic"],
+        _ => ["idle"],
+    } : m switch
     {
         Mood.Working or Mood.WorkingHard => WorkFrames,
         Mood.Playing => ["playing"],
@@ -489,14 +497,13 @@ public sealed class CharacterStage : Border
             (double)(right - left + 1) / width, (double)(bottom - top + 1) / height);
     }
 
-    // 에셋은 두 캐릭터 모두 "기본 자세의 키가 같은 픽셀 수"로 맞춰져 있다 (art/build_assets.py).
-    // 그래서 무대에 맞춰 늘리지 않고 픽셀 크기에 같은 배율을 곱하면 두 캐릭터·모든 동작의 체형이 같게 보인다.
-    const double RefCanvasHeight = 620;
+    // 기존 에셋은 높이 620 기준, Grok 원본 네 포즈는 높이 1516 기준이다.
 
     void ApplyImageSize()
     {
         if (_img.Source is not BitmapSource b || _figure.ActualHeight <= 0) return;
-        double k = Math.Max(0.2, (_figure.ActualHeight - 58) / RefCanvasHeight);
+        double canvasHeight = _character == "grok" ? 1516 : 620;
+        double k = (_figure.ActualHeight - 58) / canvasHeight;
         _img.Width = b.PixelWidth * k;
         _img.Height = b.PixelHeight * k;
     }

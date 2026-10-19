@@ -18,6 +18,8 @@ internal static partial class Program
         if (args.Contains("hold-pipe")) return HoldPipe();
         if (args.Contains("/usage")) return FakeAgy(args);
         if (args.Contains("app-server")) return FakeCodexServer();
+        if (args.Contains("stdio") && Environment.GetEnvironmentVariable(FakeGrokDirectory) is { Length: > 0 })
+            return FakeGrokAcp(args);
 
         // 설정·로그·WebView·추가 계정 폴더를 임시 폴더로 돌린다. 가짜 agy·app-server 자식도 환경 변수를 물려받는다.
         var userLog = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AIUsageMonitor", "monitor.log");
@@ -66,6 +68,8 @@ internal static partial class Program
         Run("Gemini agy process control", () => TestAgyProcess().GetAwaiter().GetResult());
         Run("Gemini local conversation summaries", TestGeminiLocal);
         Run("Gemini monitor scheduling and busy recovery", () => TestGeminiMonitor().GetAwaiter().GetResult());
+        Run("Grok billing parsing", TestGrokBilling);
+        Run("Grok ACP process control", () => TestGrokAcpProcess().GetAwaiter().GetResult());
         Run("Compact three-provider layout and Gemini row", TestCompactLayout);
         Run("Resizable responsive layout, saved bounds and character default", TestResponsiveLayout);
         Run("Dialogue repeat guard, Gemini unblock and login message", TestFinishing);

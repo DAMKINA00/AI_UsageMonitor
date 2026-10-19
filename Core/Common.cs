@@ -81,6 +81,8 @@ public sealed class AppSettings
     public bool ClaudeWebEnabled { get; set; }
     public bool ClaudeDesktopEnabled { get; set; } = true;
     public string? CodexExePath { get; set; }
+    public string? GrokExePath { get; set; }
+    public int GrokPollSeconds { get; set; } = 300;
     /// <summary>Gemini(Antigravity CLI) 사용량 조회. null 이면 agy 실행 파일을 찾았을 때만 켠다.</summary>
     public bool? GeminiEnabled { get; set; }
     /// <summary>`agy -p /usage` 를 실행하는 간격 (최소 120초).</summary>
@@ -98,18 +100,17 @@ public sealed class AppSettings
     public double? WindowWidth { get; set; }
     public double? WindowHeight { get; set; }
     public bool TrayHintShown { get; set; }
-    /// <summary>캐릭터 표시. 기본은 끔 (트레이 메뉴 "캐릭터 표시"로 켠다).</summary>
-    public bool ShowCharacters { get; set; }
-    public bool ShowSessions { get; set; } = true;
+    /// <summary>세션 목록을 대신하는 캐릭터 표시.</summary>
+    public bool ShowCharacters { get; set; } = true;
     public Dictionary<string, int> AlertState { get; set; } = new();
     public List<SecondaryAccountSettings> SecondaryAccounts { get; set; } = [];
 
     /// <summary>
     /// 설정 파일 형식 버전. 키가 없는 예전 파일은 0 으로 읽혀 <see cref="Migrate"/> 가 한 번 적용된다.
-    /// 2: 캐릭터 기본값을 끔으로 바꿈 (예전 파일에는 ShowCharacters=true 가 항상 저장돼 있었다).
+    /// 3: 세션 목록을 제거하고 캐릭터를 기본으로 표시한다.
     /// </summary>
     public int SettingsVersion { get; set; }
-    public const int CurrentSettingsVersion = 2;
+    public const int CurrentSettingsVersion = 3;
 
     /// <summary>이번 실행에서 마이그레이션을 적용했는지 (저장하지 않는다). 읽기에 실패한 경우는 true 가 되지 않는다.</summary>
     [System.Text.Json.Serialization.JsonIgnore]
@@ -147,7 +148,7 @@ public sealed class AppSettings
     public static AppSettings Load() => Load(Paths.SettingsFile);
 
     /// <summary>
-    /// 설정을 읽는다. 파일이 없거나 비어 있으면(공백·BOM 만 있어도) 기본값(버전 2, Migrated)이고,
+    /// 설정을 읽는다. 파일이 없거나 비어 있으면(공백·BOM 만 있어도) 기본값(Migrated)이고,
     /// 읽기·해석에 실패하면(잘못된 UTF-8 바이트, 1MB 초과 포함) 기본값으로 시작하되 Migrated 로 표시하지 않고,
     /// 덮어쓰기 전에 원본을 settings.json.bak-&lt;시각&gt; 으로 남긴다 (같은 내용의 백업이 있으면 다시 만들지 않는다).
     /// 다른 프로그램이 잠깐 잠근 경우를 위해 짧게 다시 읽어 본다.
@@ -211,7 +212,7 @@ public sealed class AppSettings
 
         Log.Write($"settings load failed: {error?.Message}");
         var fallback = new AppSettings { _file = file, LoadedFrom = LoadResult.Failed };
-        // 기본값이 버전 2 형식이므로 버전만 맞추고 Migrated 로 표시하지 않는다 (시작하자마자 저장하지 않게)
+        // 기본값의 버전만 맞추고 Migrated 로 표시하지 않는다 (시작하자마자 저장하지 않게)
         fallback.SettingsVersion = CurrentSettingsVersion;
         if (raw != null || tooLarge) fallback.BackupFile = Backup(file, raw);
         // 원본을 읽지도 백업하지도 못했으면 이번 실행에서는 저장하지 않는다 (원본을 덮어쓰지 않게)
@@ -318,13 +319,12 @@ public sealed class AppSettings
     }
 
     /// <summary>
-    /// 예전 버전 설정을 현재 형식으로 바꾼다. 버전 2 로 올리면서 캐릭터를 한 번 끈다.
-    /// 다음 저장부터 버전 2 가 기록되므로 그 뒤에 사용자가 켠 값은 유지된다.
+    /// 세션 목록 제거 버전으로 올리면서 캐릭터를 한 번 켠다. 이후 사용자의 표시 선택은 유지한다.
     /// </summary>
     public void Migrate()
     {
         if (SettingsVersion >= CurrentSettingsVersion) return;
-        if (SettingsVersion < 2) ShowCharacters = false;
+        if (SettingsVersion < 3) ShowCharacters = true;
         SettingsVersion = CurrentSettingsVersion;
         Migrated = true;
     }

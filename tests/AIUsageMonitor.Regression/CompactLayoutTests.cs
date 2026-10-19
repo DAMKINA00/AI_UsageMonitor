@@ -69,7 +69,7 @@ internal static partial class Program
         };
         var explicitCard = Presenter.Gemini(monitor, explicitSettings);
         var roundtrip = AppSettings.Parse(JsonSerializer.Serialize(explicitSettings));
-        Check("Gemini tier override persists and appears in the card header", explicitCard.Plan == "Google AI Pro · 직접 지정" &&
+        Check("Gemini tier override persists and appears in the card header", explicitCard.Plan == "Google AI Pro" &&
             roundtrip.GeminiPlanOverride == "Google AI Pro" && !roundtrip.Migrated, explicitCard.Plan ?? "null");
         Check("Gemini ring uses only the gemini group and shows the weekly limit",
             card.Usage is [{ Label: "주간 한도", Value: 35 }] && card.RawWindows.All(w => w.Key.StartsWith("gemini:")) &&
@@ -100,7 +100,7 @@ internal static partial class Program
         Check("account panel adds the Gemini main account only", panel.Count == 3 && panel[2] is { ProviderName: "Gemini · 주 계정", IsSecondary: false },
             string.Join(",", panel.Select(p => p.ProviderName)));
         var explicitPanel = AccountUsageCard.Create(CompactProviderCard("Claude", "C"), CompactProviderCard("Codex", "X"), service, explicitCard);
-        Check("account card carries the explicit Gemini tier", explicitPanel[2].Plan == "Google AI Pro · 직접 지정", explicitPanel[2].Plan ?? "null");
+        Check("account card carries the explicit Gemini tier", explicitPanel[2].Plan == "Google AI Pro", explicitPanel[2].Plan ?? "null");
     }
 
     static void TestStatusChipStates()
@@ -242,24 +242,26 @@ internal static partial class Program
             WorkingCount = 123456, NeedsInputCount = 654321,
             Status = new StatusChip(StatusKind.Failed, now, TimeSpan.FromMinutes(5), false, "offline"),
         };
-        var text = Tray.Tooltip([Busy("Claude"), Busy("Codex"), Busy("Gemini")]);
-        Check("tray tooltip has three lines within the 127 character limit", text.Length <= Tray.MaxTooltipLength &&
-            text.Split('\n') is [var a, var b, var c] && a.StartsWith("Claude 5시간") && b.StartsWith("Codex") && c.StartsWith("Gemini"),
+        var text = Tray.Tooltip([Busy("Claude"), Busy("Codex"), Busy("Gemini"), Busy("Grok")]);
+        Check("tray tooltip has four lines within the 127 character limit", text.Length <= Tray.MaxTooltipLength &&
+            text.Split('\n') is [var a, var b, var c, var d] && a.StartsWith("Claude 5시간") && b.StartsWith("Codex") &&
+            c.StartsWith("Gemini") && d.StartsWith("Grok"),
             $"{text.Length}: {text}");
 
         using var monitor = GeminiMonitor(new AppSettings(), GeminiLocalFixture(now, installed: false), null, null);
         var missing = Presenter.Gemini(monitor);
         var normal = Tray.Tooltip([CompactProviderCard("Claude", "C", usage: Presenter.DisplayUsage([Window("seven_day", 62, now.AddDays(2))], now)),
-            CompactProviderCard("Codex", "X"), missing]);
-        Check("tray tooltip names the Gemini state", normal == "Claude 주간 62%\nCodex 사용량 미확인\nGemini agy 미설치", normal);
+            CompactProviderCard("Codex", "X"), missing, CompactProviderCard("Grok", "G")]);
+        Check("tray tooltip names the Gemini state", normal == "Claude 주간 62%\nCodex 사용량 미확인\nGemini agy 미설치\nGrok 사용량 미확인", normal);
     }
 
     static void TestCharacterThemes()
     {
         var themes = CharacterTheme.All;
-        Check("three character themes with new nicknames", themes.Select(t => t.Key).SequenceEqual(["claude", "codex", "gemini"]) &&
-            themes.Select(t => t.DisplayName).SequenceEqual(["클쨩", "짚쨩", "젬쨩"]) &&
-            CharacterTheme.For("unknown") == CharacterTheme.Claude && CharacterTheme.For("GEMINI") == CharacterTheme.Gemini,
+        Check("four character themes with new nicknames", themes.Select(t => t.Key).SequenceEqual(["claude", "codex", "gemini", "grok"]) &&
+            themes.Take(3).Select(t => t.DisplayName).SequenceEqual(["클쨩", "짚쨩", "젬쨩"]) && themes[3].DisplayName == "그쨩" &&
+            CharacterTheme.For("unknown") == CharacterTheme.Claude && CharacterTheme.For("GEMINI") == CharacterTheme.Gemini &&
+            CharacterTheme.For("GROK") == CharacterTheme.Grok,
             string.Join(",", themes.Select(t => t.DisplayName)));
         Check("Gemini effects use the character palette", CharacterTheme.Gemini.Sparkles.Contains(Color.FromRgb(0x1C, 0x99, 0xA0)) &&
             !CharacterTheme.Gemini.Sparkles.SequenceEqual(CharacterTheme.Claude.Sparkles), "palette");
@@ -295,7 +297,9 @@ internal static partial class Program
         using var monitor = GeminiMonitor(new AppSettings { GeminiEnabled = true }, GeminiLocalFixture(now), ok, ok);
         var gemini = Presenter.Gemini(monitor);
         gemini.AccountSlots = AccountUsageSlot.Create(gemini, [], 0);
-        vm.Update(claude, CompactProviderCard("Codex", "TEST"), gemini, "");
+        var codex = CompactProviderCard("Codex", "TEST");
+        var grok = CompactProviderCard("Grok", "TEST", usage: Presenter.DisplayUsage([Window("grok:w10080", 35, now.AddDays(2))], now));
+        UpdateViewModel(vm, claude, codex, gemini, grok, "");
 
         var window = new MainWindow(vm, new AppSettings { ShowCharacters = true, Topmost = false }, _ => { })
         {
@@ -307,7 +311,7 @@ internal static partial class Program
             PumpDisplay();
             var root = (FrameworkElement)window.Content;
             var rows = Descendants(root).OfType<ContentControl>().Where(c => c.Content is ProviderCard).Select(c => ((ProviderCard)c.Content).Name).ToList();
-            Check("three provider rows are stacked top to bottom", rows.SequenceEqual(["Claude", "Codex", "Gemini"]), string.Join(",", rows));
+            Check("four provider rows are stacked top to bottom", rows.SequenceEqual(["Claude", "Codex", "Gemini", "Grok"]), string.Join(",", rows));
 
             var small = Descendants(root).OfType<TextBlock>()
                 .Where(t => t.IsVisible && t.ActualWidth > 0 && t.FontSize < 10)
@@ -319,6 +323,8 @@ internal static partial class Program
 
             Check("Gemini stage follows the art in the resources", window.Gemini.HasArt == CharacterTheme.HasAsset("gemini", "idle"),
                 window.Gemini.HasArt.ToString());
+            Check("Grok stage follows the art in the resources", window.Grok.HasArt == CharacterTheme.HasAsset("grok", "idle"),
+                window.Grok.HasArt.ToString());
 
             // 말풍선은 캐릭터 왼쪽, 같은 행의 캐릭터 열 안에 뜬다
             window.Claude.SetMood(Mood.Working, ["코드 정리 중이에요. 잔소리는 사양할게요"]);
@@ -336,9 +342,9 @@ internal static partial class Program
             var size = new Size(window.Width, window.Height);
             window.ApplyCharacters(false);
             PumpDisplay();
-            Check("hiding characters keeps the window size and overlay area",
-                window.Width == size.Width && window.Height == size.Height && !window.Claude.IsVisible &&
-                window.Resources["SessionListVisibility"] is Visibility.Visible, $"{window.Width}x{window.Height}");
+            Check("hiding characters keeps the window size and removes the character column",
+                window.Width == size.Width && window.Height == size.Height && !window.Claude.IsVisible && !window.Grok.IsVisible &&
+                window.Resources["CharacterColumnWidth"] is GridLength { Value: 0 }, $"{window.Width}x{window.Height}");
             window.ApplyCharacters(true);
         }
         finally { window.Close(); }

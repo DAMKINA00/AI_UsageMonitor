@@ -29,26 +29,21 @@ internal static partial class Program
 
     static void TestCharacterDefaultMigration()
     {
-        Check("characters are off by default", !new AppSettings().ShowCharacters, "default on");
-        Check("sessions are shown by default", new AppSettings().ShowSessions, "default hidden");
+        Check("characters are on by default", new AppSettings().ShowCharacters, "default off");
 
         var legacy = AppSettings.Parse("""{"ShowCharacters": true, "Topmost": true}""");
-        Check("legacy settings turn characters off once and keep other values",
-            !legacy.ShowCharacters && legacy.Migrated && legacy.SettingsVersion == AppSettings.CurrentSettingsVersion && legacy.Topmost,
+        Check("legacy settings turn characters on once and keep other values",
+            legacy.ShowCharacters && legacy.Migrated && legacy.SettingsVersion == AppSettings.CurrentSettingsVersion && legacy.Topmost,
             $"show={legacy.ShowCharacters}, migrated={legacy.Migrated}, version={legacy.SettingsVersion}");
 
-        // 마이그레이션 뒤 사용자가 켜면 다음 실행에도 켜진 채로 남는다
-        legacy.ShowCharacters = true;
+        // 마이그레이션 뒤 사용자가 끄면 다음 실행에도 꺼진 채로 남는다
+        legacy.ShowCharacters = false;
         var reloaded = AppSettings.Parse(JsonSerializer.Serialize(legacy));
-        Check("characters turned on after migration stay on", reloaded.ShowCharacters && !reloaded.Migrated, $"show={reloaded.ShowCharacters}");
+        Check("characters turned off after migration stay off", !reloaded.ShowCharacters && !reloaded.Migrated, $"show={reloaded.ShowCharacters}");
         var off = AppSettings.Parse(JsonSerializer.Serialize(new AppSettings { ShowCharacters = false, SettingsVersion = AppSettings.CurrentSettingsVersion }));
         Check("current settings keep characters off", !off.ShowCharacters && !off.Migrated, $"show={off.ShowCharacters}");
-        var sessionsOff = new AppSettings { ShowSessions = false, SettingsVersion = AppSettings.CurrentSettingsVersion };
-        var sessionsReloaded = AppSettings.Parse(JsonSerializer.Serialize(sessionsOff));
-        Check("session visibility preference survives settings roundtrip", !sessionsReloaded.ShowSessions && !sessionsReloaded.Migrated,
-            $"showSessions={sessionsReloaded.ShowSessions}");
         var empty = AppSettings.Parse("{}");
-        Check("settings without a version are migrated", !empty.ShowCharacters && empty.Migrated, $"migrated={empty.Migrated}");
+        Check("settings without a version are migrated", empty.ShowCharacters && empty.Migrated, $"migrated={empty.Migrated}");
         Check("migration flag is not written to the file", !JsonSerializer.Serialize(legacy).Contains(nameof(AppSettings.Migrated)), "flag serialized");
     }
 
@@ -132,7 +127,7 @@ internal static partial class Program
             files.Count > 30 && bad.Count == 0 && correct > 0, $"files={files.Count}, U+CA29 nicknames={correct}, bad={string.Join(", ", bad.Take(8))}");
     }
 
-    /// <summary>세 서비스 모두 값·안내·세션이 있는 화면 (잘림·겹침이 생기기 쉬운 상태).</summary>
+    /// <summary>네 서비스 모두 값·안내가 있는 화면 (잘림·겹침이 생기기 쉬운 상태).</summary>
     static MainViewModel BusyViewModel(out IDisposable cleanup)
     {
         var now = DateTimeOffset.Now;
@@ -174,11 +169,23 @@ internal static partial class Program
         var monitor = GeminiMonitor(new AppSettings { GeminiEnabled = true }, GeminiLocalFixture(now), ok, ok);
         var gemini = Presenter.Gemini(monitor);
         gemini.AccountSlots = AccountUsageSlot.Create(gemini, [], 0);
+        var grok = new ProviderCard
+        {
+            Name = "Grok", Accent = Palette.Codex, Plan = "SuperGrok", AppStatus = "CLI 실행 중", AppStatusBrush = Palette.Ok,
+            Account = "GROK", Usage = Presenter.DisplayUsage([Window("grok:w10080", 54, now.AddDays(2))], now),
+            Footnote = "출처: fixture", SessionsHeader = "", Status = new StatusChip(StatusKind.None, now, TimeSpan.FromMinutes(5), false),
+        };
+        grok.AccountSlots = AccountUsageSlot.Create(grok, [], 0);
         var vm = new MainViewModel();
-        vm.Update(claude, codex, gemini, "");
+        UpdateViewModel(vm, claude, codex, gemini, grok, "");
         cleanup = new Disposables(service, monitor);
         return vm;
     }
+
+    /// <summary>네 제공자 카드를 뷰 모델에 넣는다.</summary>
+    static void UpdateViewModel(MainViewModel vm, ProviderCard claude, ProviderCard codex, ProviderCard? gemini,
+        ProviderCard? grok, string footer)
+        => vm.Update(claude, codex, gemini, grok, footer);
 
     sealed class Disposables(params IDisposable[] items) : IDisposable
     {
@@ -215,33 +222,21 @@ internal static partial class Program
             var name = ((ProviderCard)content.Content).Name;
             var card = Descendants(content).OfType<Border>().First();
             var cardRect = BoundsIn(card, window);
-            // 스크롤 목록 안의 줄은 목록이 잘라 보여 주므로 제외하고, 나머지 글자는 카드 안에 있어야 한다
-            var scrolls = Descendants(card).OfType<ScrollViewer>().ToList();
             foreach (var text in Descendants(card).OfType<TextBlock>().Where(t => t.IsVisible && t.ActualWidth > 0 &&
-                         !scrolls.Any(s => s.IsAncestorOf(t))))
+                         t.Text != null))
             {
                 var r = BoundsIn(text, window);
                 if (r.Left < cardRect.Left - 0.5 || r.Right > cardRect.Right + 0.5 || r.Top < cardRect.Top - 0.5 || r.Bottom > cardRect.Bottom + 0.5)
                     problems.Add($"{name}: outside card: {text.Text} {r} / {cardRect}");
             }
-            foreach (var scroll in scrolls.Where(s => s.IsVisible))
-            {
-                var r = BoundsIn(scroll, window);
-                if (r.Bottom > cardRect.Bottom + 0.5 || r.Right > cardRect.Right + 0.5) problems.Add($"{name}: list outside card");
-            }
-
             var header = Descendants(card).OfType<DockPanel>().First();
             var parts = header.Children.OfType<FrameworkElement>().Where(e => e.IsVisible && e.ActualWidth > 0).Select(e => (e, r: BoundsIn(e, window))).ToList();
             for (int i = 0; i < parts.Count; i++)
                 for (int j = i + 1; j < parts.Count; j++)
                     if (Overlaps(parts[i].r, parts[j].r)) problems.Add($"{name}: header overlap {parts[i].e.GetType().Name}/{parts[j].e.GetType().Name}");
 
-            var rings = Descendants(card).OfType<ItemsControl>().First(i => i.ItemsSource is List<AccountUsageSlot>);
-            var sessions = Descendants(card).OfType<Border>().First(b => b.BorderThickness.Left == 1);
-            if (Overlaps(BoundsIn(rings, window), BoundsIn(sessions, window))) problems.Add($"{name}: rings overlap sessions");
-            // 캐릭터는 이제 세션 영역 위에 의도적으로 겹치는 오른쪽 아래 오버레이이므로
-            // 세션·원과의 겹침 자체를 레이아웃 오류로 보지 않는다. 오버레이의 위치와 크기는
-            // TestResponsiveSizes 에서 별도로 확인한다.
+            var rings = Descendants(card).OfType<ItemsControl>().FirstOrDefault(i => i.ItemsSource is List<AccountUsageSlot>);
+            if (rings == null) problems.Add($"{name}: account slots missing");
         }
         return problems;
     }
@@ -260,11 +255,11 @@ internal static partial class Program
             {
                 ("minimum", MainWindow.MinWindowWidth, MainWindow.MinWindowHeight, LayoutMode.Narrow),
                 ("default", MainWindow.DefaultWidth, MainWindow.DefaultHeight, LayoutMode.Wide),
-                ("medium", 520, 560, LayoutMode.Medium),
+                ("medium", 520, MainWindow.MinWindowHeight, LayoutMode.Medium),
                 ("narrow and tall", 360, 900, LayoutMode.Narrow),
                 ("wide", 1100, 760, LayoutMode.Wide),
             };
-            var viewports = new Dictionary<string, double>();
+            var rowHeights = new Dictionary<string, double>();
             (Rect Ring, Rect Text) compactUsage = default, wideUsage = default;
             foreach (var (name, w, h, mode) in sizes)
             {
@@ -274,25 +269,28 @@ internal static partial class Program
                 var root = (FrameworkElement)window.Content;
                 var rows = Descendants(root).OfType<ContentControl>().Where(c => c.Content is ProviderCard)
                     .Select(c => (Name: ((ProviderCard)c.Content).Name, Rect: BoundsIn(c, window))).ToList();
-                Check($"{name}: rows are Claude, Codex, Gemini from top to bottom and share the height",
-                    rows.Select(r => r.Name).SequenceEqual(["Claude", "Codex", "Gemini"]) &&
+                Check($"{name}: rows are Claude, Codex, Gemini, Grok from top to bottom and share the height",
+                    rows.Select(r => r.Name).SequenceEqual(["Claude", "Codex", "Gemini", "Grok"]) &&
                     rows[0].Rect.Top < rows[1].Rect.Top && rows[1].Rect.Top < rows[2].Rect.Top &&
-                    rows.Max(r => r.Rect.Height) - rows.Min(r => r.Rect.Height) <= 1 && rows[2].Rect.Bottom <= window.ActualHeight,
+                    rows[2].Rect.Top < rows[3].Rect.Top &&
+                    rows.Max(r => r.Rect.Height) - rows.Min(r => r.Rect.Height) <= 1 && rows[3].Rect.Bottom <= window.ActualHeight,
                     string.Join(", ", rows.Select(r => $"{r.Name}:{r.Rect.Top:0}+{r.Rect.Height:0}")));
+                rowHeights[name] = rows[0].Rect.Height;
                 Check($"{name}: layout mode follows the width", window.Mode == mode && window.ActualWidth == w && window.ActualHeight == h,
                     $"mode={window.Mode}, size={window.ActualWidth}x{window.ActualHeight}");
                 var problems = LayoutProblems(window);
                 Check($"{name}: text is at least 10 DIP without clipping or overlap", problems.Count == 0, string.Join("\n", problems.Take(6)));
 
                 var lists = Descendants(root).OfType<ScrollViewer>().ToList();
-                bool characters = mode == LayoutMode.Wide;
-                bool sessionsShown = mode != LayoutMode.Narrow;
+                bool characters = mode != LayoutMode.Narrow;
+                var characterColumnValue = window.Resources["CharacterColumnWidth"];
                 Check($"{name}: visible parts match the {mode} layout",
-                    lists.Count == 3 && lists.All(l => l.IsVisible == sessionsShown) && window.SessionsShown == sessionsShown &&
-                    window.CharactersShown == characters && window.Claude.IsVisible == characters && window.Gemini.IsVisible == characters &&
-                    window.Resources["SessionListVisibility"] is Visibility listVisibility && listVisibility == (sessionsShown ? Visibility.Visible : Visibility.Collapsed),
-                    $"lists={string.Join(",", lists.Select(l => l.IsVisible))}, sessions={window.SessionsShown}, characters={window.CharactersShown}");
-                if (mode != LayoutMode.Narrow) viewports[name] = lists[0].ViewportHeight;
+                    lists.Count == 0 && window.CharactersShown == characters &&
+                    window.Claude.IsVisible == characters && window.Codex.IsVisible == characters &&
+                    window.Gemini.IsVisible == characters && window.Grok.IsVisible == characters &&
+                    window.Resources["CharacterColumnWidth"] is GridLength characterColumn &&
+                    characterColumn.Value == (characters ? 3 : 0),
+                    $"lists={lists.Count}, characters={window.CharactersShown}, column={characterColumnValue}");
 
                 if (mode == LayoutMode.Medium) compactUsage = MeasureUsageVisual(window, "Claude");
                 if (mode == LayoutMode.Wide)
@@ -301,16 +299,27 @@ internal static partial class Program
                     var stageBounds = BoundsIn(window.Claude, window);
                     var row = Descendants(root).OfType<ContentControl>().First(c => c.Content is ProviderCard p && p.Name == "Claude");
                     var rowBounds = BoundsIn(row, window);
-                    var sessionRegion = Descendants(row).OfType<Border>().First(b => b.BorderThickness.Left == 1);
-                    var sessionBounds = BoundsIn(sessionRegion, window);
-                    Check($"{name}: character is a bottom-right overlay inside its session row",
+                    var accountScale = Descendants(row).OfType<Viewbox>().First(v => v.Name == "AccountScale");
+                    var accountBounds = BoundsIn(accountScale, window);
+                    Check($"{name}: character is inside the right-side character area",
                         window.Claude.IsVisible && stageBounds.Width <= 224.5 && stageBounds.Height <= 150.5 &&
-                        stageBounds.Height >= Math.Min(120, sessionBounds.Height - 4) &&
-                        stageBounds.Left >= sessionBounds.Left - 0.5 && stageBounds.Top >= sessionBounds.Top - 0.5 &&
-                        stageBounds.Bottom <= sessionBounds.Bottom + 0.5 &&
+                        stageBounds.Height >= Math.Min(rowBounds.Height * .5, rowBounds.Height - 4) &&
+                        stageBounds.Left >= accountBounds.Right - 1 && stageBounds.Top >= rowBounds.Top - 0.5 &&
+                        stageBounds.Bottom <= rowBounds.Bottom + 0.5 &&
                         stageBounds.Right <= rowBounds.Right + 0.5 && stageBounds.Bottom <= rowBounds.Bottom + 0.5 &&
                         stageBounds.Right >= rowBounds.Right - 230 && stageBounds.Bottom >= rowBounds.Bottom - 155,
-                        $"stage={stageBounds}, session={sessionBounds}, row={rowBounds}");
+                        $"stage={stageBounds}, account={accountBounds}, row={rowBounds}");
+
+                    // Stage의 외곽 크기만 맞아도 큰 PNG 캔버스가 행 밖으로 잘릴 수 있으므로,
+                    // Grok의 실제 Image 렌더 경계가 자기 행 안에 들어오는지 확인한다.
+                    var grokRow = Descendants(root).OfType<ContentControl>().First(c => c.Content is ProviderCard p && p.Name == "Grok");
+                    var grokRowBounds = BoundsIn(grokRow, window);
+                    var grokImage = (Image)PrivateField<CharacterStage>("_img").GetValue(window.Grok)!;
+                    var grokImageBounds = BoundsIn(grokImage, window);
+                    Check($"{name}: Grok rendered image stays inside its provider row",
+                        window.Grok.IsVisible && grokImage.IsVisible && grokImage.ActualHeight > 0 &&
+                        grokImageBounds.Top >= grokRowBounds.Top - 1 && grokImageBounds.Bottom <= grokRowBounds.Bottom + 1,
+                        $"image={grokImageBounds}, row={grokRowBounds}");
                 }
 
                 if (mode == LayoutMode.Wide)
@@ -332,7 +341,7 @@ internal static partial class Program
 
                 if (characters)
                 {
-                    var widths = new[] { window.Claude, window.Codex, window.Gemini }
+                    var widths = new[] { window.Claude, window.Codex, window.Gemini, window.Grok }
                         .Select(s => (double)typeof(CharacterStage).GetMethod("BubbleTextWidth", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(s, null)!).ToList();
                     window.Gemini.SetMood(Mood.Waiting, ["사주세요… 아니,\n승인해 주세요!"]);
                     PumpDisplay(400);
@@ -344,55 +353,40 @@ internal static partial class Program
                         $"widths={string.Join(",", widths.Select(x => x.ToString("0.#")))}, bubble={bubbleRect}");
                 }
             }
-            Check("taller windows show more session rows", viewports["wide"] > viewports["default"] && viewports["medium"] > viewports["default"],
-                string.Join(", ", viewports.Select(v => $"{v.Key}={v.Value:0}")));
+            Check("taller windows give each provider row more room", rowHeights["wide"] > rowHeights["default"] && rowHeights["narrow and tall"] > rowHeights["default"],
+                string.Join(", ", rowHeights.Select(v => $"{v.Key}={v.Value:0}")));
 
             Check("larger width and height enlarge transformed usage ring and text", wideUsage.Ring.Width > compactUsage.Ring.Width + 1 &&
                 wideUsage.Ring.Height > compactUsage.Ring.Height + 1 && wideUsage.Text.Width > compactUsage.Text.Width + 0.5 &&
                 wideUsage.Text.Height > compactUsage.Text.Height + 0.5,
                 $"ring={compactUsage.Ring}->{wideUsage.Ring}, text={compactUsage.Text}->{wideUsage.Text}");
 
-            // 이 상태는 캐릭터와 세션 목록이 모두 보이는 넓은 합성 화면이다.
+            // 이 상태는 네 캐릭터와 계정 슬롯이 보이는 넓은 합성 화면이다.
             RenderFixture(window, "wide-large");
 
-            // 캐릭터를 꺼도 창 크기와 세션 영역은 그대로다. 캐릭터는 별도 열을 예약하지 않는다.
+            // 캐릭터를 끄면 오른쪽 열도 없애 계정 영역이 빈 공간을 남기지 않는다.
             var before = new Size(window.Width, window.Height);
-            var sessionsBefore = Descendants((FrameworkElement)window.Content).OfType<Border>().First(b => b.BorderThickness.Left == 1).ActualWidth;
+            var rootBeforeCharacters = (FrameworkElement)window.Content;
+            var cardBeforeCharacters = Descendants(rootBeforeCharacters).OfType<ContentControl>()
+                .First(c => c.Content is ProviderCard p && p.Name == "Claude");
+            var cardGridBeforeCharacters = Descendants(cardBeforeCharacters).OfType<Grid>()
+                .First(g => g.RowDefinitions.Count == 3 && g.ColumnDefinitions.Count == 2);
+            var accountColumnBefore = cardGridBeforeCharacters.ColumnDefinitions[0].ActualWidth;
             window.ApplyCharacters(false);
             PumpDisplay();
-            var sessionsAfter = Descendants((FrameworkElement)window.Content).OfType<Border>().First(b => b.BorderThickness.Left == 1).ActualWidth;
-            Check("turning characters off keeps the size and session geometry",
-                window.Width == before.Width && window.Height == before.Height && !window.Claude.IsVisible &&
-                Math.Abs(sessionsAfter - sessionsBefore) <= 1 && LayoutProblems(window).Count == 0,
-                $"size={window.Width}x{window.Height}, sessions={sessionsBefore:0}->{sessionsAfter:0}");
+            var rootAfterCharacters = (FrameworkElement)window.Content;
+            var cardAfterCharacters = Descendants(rootAfterCharacters).OfType<ContentControl>()
+                .First(c => c.Content is ProviderCard p && p.Name == "Claude");
+            var cardGridAfterCharacters = Descendants(cardAfterCharacters).OfType<Grid>()
+                .First(g => g.RowDefinitions.Count == 3 && g.ColumnDefinitions.Count == 2);
+            var accountColumnAfter = cardGridAfterCharacters.ColumnDefinitions[0].ActualWidth;
+            Check("turning characters off keeps the size and account geometry",
+                window.Width == before.Width && window.Height == before.Height && !window.Claude.IsVisible && !window.Grok.IsVisible &&
+                accountColumnAfter > accountColumnBefore + 1 && window.Resources["CharacterColumnWidth"] is GridLength { Value: 0 } &&
+                LayoutProblems(window).Count == 0,
+                $"size={window.Width}x{window.Height}, account column={accountColumnBefore:0}->{accountColumnAfter:0}");
             window.ApplyCharacters(true);
             PumpDisplay();
-            var sizeBeforeSessions = new Size(window.Width, window.Height);
-            var positionBeforeSessions = new Point(window.Left, window.Top);
-            window.ApplySessions(false);
-            PumpDisplay();
-            var rootAfterHide = (FrameworkElement)window.Content;
-            var hiddenLists = Descendants(rootAfterHide).OfType<ScrollViewer>().ToList();
-            Check("hiding sessions keeps main bounds and hides the complete session area",
-                window.Width == sizeBeforeSessions.Width && window.Height == sizeBeforeSessions.Height &&
-                new Point(window.Left, window.Top) == positionBeforeSessions && !window.SessionsShown &&
-                hiddenLists.All(l => !l.IsVisible),
-                $"size={window.Width}x{window.Height}, position={window.Left}/{window.Top}, lists={string.Join(",", hiddenLists.Select(l => l.IsVisible))}");
-            var accountScaleWhileSessionsHidden = Descendants(rootAfterHide).OfType<Viewbox>().First(v => v.Name == "AccountScale").ActualWidth;
-            window.ApplyCharacters(false);
-            PumpDisplay();
-            var accountScaleExpanded = Descendants((FrameworkElement)window.Content).OfType<Viewbox>().First(v => v.Name == "AccountScale").ActualWidth;
-            bool sessionColumnCollapsed = window.Resources["SessionColumnWidth"] is GridLength { Value: 0 };
-            Check("hiding sessions expands usage when characters are also off",
-                accountScaleWhileSessionsHidden > 0 && (accountScaleExpanded > accountScaleWhileSessionsHidden + 1 || sessionColumnCollapsed),
-                $"account viewbox width={accountScaleWhileSessionsHidden:0.#}->{accountScaleExpanded:0.#}, sessionColumn0={sessionColumnCollapsed}");
-            window.ApplySessions(true);
-            PumpDisplay();
-            Check("restoring sessions keeps main bounds and restores the lists",
-                window.Width == sizeBeforeSessions.Width && window.Height == sizeBeforeSessions.Height &&
-                new Point(window.Left, window.Top) == positionBeforeSessions && window.SessionsShown &&
-                Descendants((FrameworkElement)window.Content).OfType<ScrollViewer>().All(l => l.IsVisible),
-                $"size={window.Width}x{window.Height}, sessions={window.SessionsShown}");
             Check("layout changes never save settings by themselves", saves == 0, $"saves={saves}");
             window.ApplyCharacters(true);
             PumpDisplay();
@@ -455,24 +449,24 @@ internal static partial class Program
             var area = Area(probe);
             probe.Close();
 
-            var saved = new AppSettings { WindowLeft = area.Left + 50, WindowTop = area.Top + 40, WindowWidth = 700, WindowHeight = 520 };
+            var saved = new AppSettings { WindowLeft = area.Left + 50, WindowTop = area.Top + 40, WindowWidth = 700, WindowHeight = 620 };
             var restored = Open(saved, _ => saves++);
             Check("saved size and position are restored", restored.Left == area.Left + 50 && restored.Top == area.Top + 40 &&
-                restored.Width == 700 && restored.Height == 520, $"{restored.Left}/{restored.Top}/{restored.Width}/{restored.Height}");
+                restored.Width == 700 && restored.Height == 620, $"{restored.Left}/{restored.Top}/{restored.Width}/{restored.Height}");
 
             // 사용자가 끌어 크기를 바꾸고 놓으면(WM_EXITSIZEMOVE) 저장한다
             restored.Width = 760;
-            restored.Height = 600;
+            restored.Height = 640;
             PumpDisplay();
             Check("resizing alone does not save before the drag ends", saves == 0, $"saves={saves}");
             var hwnd = new WindowInteropHelper(restored).Handle;
             SendMessage(hwnd, 0x0232, IntPtr.Zero, IntPtr.Zero);
-            Check("finishing a resize saves the new bounds", saves == 1 && saved.WindowWidth == 760 && saved.WindowHeight == 600 &&
+            Check("finishing a resize saves the new bounds", saves == 1 && saved.WindowWidth == 760 && saved.WindowHeight == 640 &&
                 saved.WindowLeft == restored.Left && saved.WindowTop == restored.Top, $"saves={saves}, {saved.WindowWidth}x{saved.WindowHeight}");
             restored.Close();
 
             var reopened = Open(saved, _ => saves++);
-            Check("the saved size is used on the next start", reopened.Width == 760 && reopened.Height == 600, $"{reopened.Width}x{reopened.Height}");
+            Check("the saved size is used on the next start", reopened.Width == 760 && reopened.Height == 640, $"{reopened.Width}x{reopened.Height}");
             reopened.Close();
 
             var lost = new AppSettings

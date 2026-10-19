@@ -26,6 +26,7 @@ public partial class App : Application
     readonly MoodTracker _claudeMood = new("claude");
     readonly MoodTracker _codexMood = new("codex");
     readonly MoodTracker _geminiMood = new("gemini");
+    readonly MoodTracker _grokMood = new("grok");
     // "N분 전"·남은 시간·오래됨 표시만 다시 그리는 시계 (카드를 교체하지 않는다)
     DispatcherTimer? _clock;
     bool _firstUpdate = true;
@@ -51,7 +52,7 @@ public partial class App : Application
         };
 
         _settings = AppSettings.Load();
-        // 예전 설정을 새 형식으로 바꿨으면(캐릭터 기본 끔) 바로 저장해 한 번만 적용되게 한다
+        // 캐릭터 기본 표시 마이그레이션을 한 번만 적용한다
         if (_settings.Migrated) _settings.Save();
         _vm = new MainViewModel();
         _monitor = new MonitorService(_settings);
@@ -109,6 +110,7 @@ public partial class App : Application
             _window.Claude.SetMood(mood, [$"[{mood}] 말풍선 테스트"]);
             _window.Codex.SetMood(mood, [$"[{mood}] 말풍선"]);
             _window.Gemini.SetMood(mood, [$"[{mood}] 말풍선"]);
+            _window.Grok.SetMood(mood, [$"[{mood}] 말풍선"]);
             await Task.Delay(1500);
             if (mood == Mood.Working)
             {
@@ -117,7 +119,7 @@ public partial class App : Application
                 _window.Gemini.PopText("+2%", System.Windows.Media.Color.FromRgb(0x9B, 0xF0, 0xC0));
                 await Task.Delay(500);
             }
-            if (mood == Mood.Happy) { _window.Claude.Celebrate(); _window.Codex.Celebrate(); _window.Gemini.Celebrate(); await Task.Delay(300); }
+            if (mood == Mood.Happy) { _window.Claude.Celebrate(); _window.Codex.Celebrate(); _window.Gemini.Celebrate(); _window.Grok.Celebrate(); await Task.Delay(300); }
             SaveWindowPng(System.IO.Path.Combine(dir, $"mood_{(int)mood}_{mood}.png"));
         }
         ExitApp();
@@ -168,13 +170,6 @@ public partial class App : Application
         _tray.AccountsRequested += ShowAccounts;
         _tray.ExitRequested += ExitApp;
         _tray.TopmostChanged += SetTopmost;
-        _window.SessionsToggled += v => _tray.SetSessions(v);
-        _tray.SessionsChanged += v =>
-        {
-            _settings.ShowSessions = v;
-            _settings.Save();
-            _window.ApplySessions(v);
-        };
         _tray.GeminiPlanChanged += plan =>
         {
             _settings.GeminiPlanOverride = plan;
@@ -248,14 +243,16 @@ public partial class App : Application
         });
         var codex = Presenter.Codex(_monitor, _settings);
         var gemini = Presenter.Gemini(_monitor, _settings);
+        var grok = Presenter.Grok(_monitor, _settings);
         claude.AccountSlots = AccountUsageSlot.Create(claude, _secondaryAccounts.Accounts);
         codex.AccountSlots = AccountUsageSlot.Create(codex, _secondaryAccounts.Accounts);
         // Gemini 는 서브 계정을 지원하지 않는다
         gemini.AccountSlots = AccountUsageSlot.Create(gemini, _secondaryAccounts.Accounts, secondarySlots: 0);
-        _vm.Update(claude, codex, gemini, "");
+        grok.AccountSlots = AccountUsageSlot.Create(grok, _secondaryAccounts.Accounts, secondarySlots: 0);
+        _vm.Update(claude, codex, gemini, grok, "");
         if (_window.IsAccountsOpen)
         {
-            var accounts = AccountUsageCard.Create(claude, codex, _secondaryAccounts, gemini);
+            var accounts = AccountUsageCard.Create(claude, codex, _secondaryAccounts, gemini, grok);
             var signature = string.Join('\n', accounts.Select(x => x.Signature));
             if (_accountsSignature != signature)
             {
@@ -269,16 +266,18 @@ public partial class App : Application
             Animate(_window.Claude, _claudeMood.Update(claude));
             Animate(_window.Codex, _codexMood.Update(codex));
             Animate(_window.Gemini, _geminiMood.Update(gemini));
+            Animate(_window.Grok, _grokMood.Update(grok));
         }
 
-        _tray.UpdateIcon(claude.MaxUsed, codex.MaxUsed, gemini.MaxUsed);
-        _tray.SetTooltip(Tray.Tooltip([claude, codex, gemini]));
+        _tray.UpdateIcon(claude.MaxUsed, codex.MaxUsed, gemini.MaxUsed, grok.MaxUsed);
+        _tray.SetTooltip(Tray.Tooltip([claude, codex, gemini, grok]));
         _tray.SetGeminiBlocked(_monitor.GeminiUnsupported);
 
         _alerts.CheckUsage("Claude", claude.RawWindows);
         _alerts.CheckUsage("Codex", codex.RawWindows);
         // Gemini 카드의 RawWindows 는 gemini 그룹 창만 담는다 (Claude·GPT 그룹은 툴팁 전용)
         _alerts.CheckUsage("Gemini", gemini.RawWindows);
+        _alerts.CheckUsage("Grok", grok.RawWindows);
         if (_monitor.ClaudeLocal != null) _alerts.CheckActivity("Claude", Presenter.ClaudeSessions(_monitor));
         if (_monitor.CodexLocal is { } xl) _alerts.CheckActivity("Codex", xl.Threads);
         if (_monitor.GeminiLocal is { } gl) _alerts.CheckActivity("Gemini", gl.Sessions);

@@ -40,7 +40,14 @@ public sealed class CharacterTheme
         Sparkles = [Color.FromRgb(0xF4, 0xA7, 0x83), Color.FromRgb(0xF4, 0x67, 0x7A), Colors.White, Color.FromRgb(0x55, 0x4F, 0xB5), Color.FromRgb(0x1C, 0x99, 0xA0)],
     };
 
-    public static IReadOnlyList<CharacterTheme> All { get; } = [Claude, Codex, Gemini];
+    public static readonly CharacterTheme Grok = new()
+    {
+        Key = "grok", DisplayName = "그쨩",
+        FxStroke = Frozen(Color.FromRgb(0x38, 0x32, 0x2D)),
+        Sparkles = [Color.FromRgb(0xF2, 0xD0, 0x83), Colors.White, Color.FromRgb(0xA0, 0xAF, 0xC0)],
+    };
+
+    public static IReadOnlyList<CharacterTheme> All { get; } = [Claude, Codex, Gemini, Grok];
 
     /// <summary>모르는 이름은 클쨩 테마로 대체한다 (기존 동작과 같다).</summary>
     public static CharacterTheme For(string? key) =>
