@@ -77,6 +77,8 @@ internal static partial class Program
         Run("Taskbar usage layout and quota states", TestTaskbarWidget);
         Run("Transparent account platforms and bounded roaming", TestPlatformLayout);
         Run("Confirmed full recovery announcement once per cycle", TestResetAnnouncement);
+        Run("Idle roaming and rare low-quota naps", TestMascotBehavior);
+        Run("Gemini account label and account-switch isolation", TestGeminiAccount);
     }
 
     static string ReadShared(string path)

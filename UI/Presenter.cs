@@ -750,7 +750,7 @@ public static class Presenter
         };
 
         var status = new StatusChip(state, usage?.AsOf, StaleAfter(s.GeminiPollSeconds, 120), m.GeminiRemoteBusy, detail);
-        return Build("Gemini", Palette.Gemini, usage, local is { CliProcessCount: > 0 }, app, appBrush, null, notice, null, null, empty,
+        return Build("Gemini", Palette.Gemini, usage, local is { CliProcessCount: > 0 }, app, appBrush, local?.Account, notice, null, null, empty,
             Footnote(usage), local?.Sessions ?? [],
             installed ? "최근 Antigravity 대화 없음" : "agy 를 설치하면 대화 상태를 표시합니다", status,
             s.GeminiPlanOverride is { Length: > 0 } plan ? plan : "등급 확인 불가");

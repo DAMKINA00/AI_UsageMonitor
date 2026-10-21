@@ -24,6 +24,7 @@ public sealed class MonitorService : IDisposable
     DateTime _nextGemini = DateTime.MinValue;
     DateTime _lastGeminiQuery = DateTime.MinValue;
     int _geminiFailures;
+    int _geminiAccountGeneration;
     DateTime _nextClaude = DateTime.MinValue;
     DateTime _nextClaudeChats = DateTime.MinValue;
     bool _chatsBusy;
@@ -265,6 +266,14 @@ public sealed class MonitorService : IDisposable
     /// </summary>
     void OnGeminiLocalChanged(GeminiLocalState? previous, GeminiLocalState current)
     {
+        if (previous != null && !string.Equals(previous.Account, current.Account, StringComparison.OrdinalIgnoreCase))
+        {
+            _geminiAccountGeneration++;
+            GeminiRemoteGood = GeminiRemoteLast = null;
+            GeminiPollingPaused = GeminiWaitingForManualRefresh = false;
+            _geminiFailures = 0;
+            _nextGemini = DateTime.MinValue;
+        }
         if (previous is { CliProcessCount: > 0 } && current.CliProcessCount == 0) OnExternalAgyFinished();
         // 차단된 agy 가 업데이트(지문 변경)되면 24시간 대기를 앞당겨 한 번 다시 확인한다 ("업데이트하면 다시 확인합니다")
         if (previous != null && _settings.AgyBlockedFingerprint is { } blocked && blocked != UnknownFingerprint &&
@@ -382,6 +391,7 @@ public sealed class MonitorService : IDisposable
         if (!manual && GeminiWaitingForManualRefresh) return;
         if (!manual && GeminiPollingPaused && DateTime.UtcNow < _nextGemini) return;
         GeminiRemoteBusy = true;
+        var accountGeneration = _geminiAccountGeneration;
         try
         {
             if (manual)
@@ -396,6 +406,7 @@ public sealed class MonitorService : IDisposable
             var fingerprint = AgyCli.Fingerprint(AgyCli.FindExecutable(exe));
             var token = _lifetime.Token;
             var result = await Task.Run(() => AgyCli.QueryAsync(exe, token));
+            if (accountGeneration != _geminiAccountGeneration) { _nextGemini = DateTime.MinValue; return; }
             GeminiRemoteLast = result;
             if (result.Ok && _settings.AgyBlockedFingerprint != null)
             {

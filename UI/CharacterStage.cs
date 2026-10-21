@@ -105,7 +105,7 @@ public sealed class CharacterStage : Border
         _timer = new DispatcherTimer(DispatcherPriority.Render) { Interval = TimeSpan.FromSeconds(1 / Fps) };
         _timer.Tick += (_, _) => Frame();
         _figure.SizeChanged += (_, _) => ApplyImageSize();
-        _img.SizeChanged += (_, _) => PositionBubble();
+        _img.SizeChanged += (_, _) => { GroundFeet(); PositionBubble(); };
         _bubble.SizeChanged += (_, _) => PositionBubble();
         SizeChanged += (_, _) => LayoutBubble();
         IsVisibleChanged += (_, _) => UpdateRunning();
@@ -276,7 +276,7 @@ public sealed class CharacterStage : Border
         if (!_bubbleShown) return;
         _bubbleShown = false;
         _bubbleHideT = 0;
-        _nextBubbleAt = _t + 3 + _rng.NextDouble() * 9;
+        _nextBubbleAt = _t + (_mood == Mood.Sleeping ? 25 + _rng.NextDouble() * 20 : 3 + _rng.NextDouble() * 9);
     }
 
     void UpdateBubble(double dt)
@@ -423,7 +423,7 @@ public sealed class CharacterStage : Border
     string[] FramesFor(Mood m) => _character == "grok" ? m switch
     {
         Mood.Working or Mood.WorkingHard => ["work1"],
-        Mood.Sleeping or Mood.Tired => ["sleeping"],
+        Mood.Sleeping => ["sleeping"],
         Mood.Exhausted => ["collapsed"],
         Mood.Panic => ["panic"],
         _ => ["idle"],
@@ -616,6 +616,7 @@ public sealed class CharacterStage : Border
         _rot.Angle = rot;
         _move.X = x;
         _move.Y = y + (IsWalking ? -3 * Math.Abs(Math.Sin(_t * 8)) : 0);
+        GroundFeet();
         // Idle 포즈에서만 산책한다. 게임/독서/티타임, 작업, 졸음 등은 오른쪽 아래에 고정한다.
         // 왼쪽 말풍선 배치에서는 말풍선 자리를 침범하지 않도록 산책하지 않는다.
         _wander.X = !ExternalWalking && _mood == Mood.Idle && _placement == BubblePlacement.Above ? -18 * (1 - Math.Cos(_moodT * 2 * Math.PI / 12)) : 0;
@@ -625,6 +626,13 @@ public sealed class CharacterStage : Border
 
         if (_moodT >= _nextSpawn) SpawnForMood();
         UpdateParticles(dt);
+    }
+
+    void GroundFeet()
+    {
+        if (!ExternalWalking || _mood == Mood.Happy || _figure.ActualHeight <= 0) return;
+        var body = BodyBoundsIn(_figure);
+        if (!body.IsEmpty) _move.Y += _figure.ActualHeight - body.Bottom;
     }
 
     Point HeadPoint()

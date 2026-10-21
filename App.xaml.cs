@@ -105,7 +105,8 @@ public partial class App : Application
                     Main = new { _window.Left, _window.Top, _window.Width, _window.Height, _window.IsVisible },
                     Taskbar = new { _taskbar.Left, _taskbar.Top, _taskbar.Width, _taskbar.Height, _taskbar.IsVisible,
                         _taskbar.Opacity, _taskbar.DesktopInset },
-                }, new System.Text.Json.JsonSerializerOptions { WriteIndented = true }));
+                }, new System.Text.Json.JsonSerializerOptions { WriteIndented = true,
+                    NumberHandling = System.Text.Json.Serialization.JsonNumberHandling.AllowNamedFloatingPointLiterals }));
                 ExitApp();
             };
             timer.Start();

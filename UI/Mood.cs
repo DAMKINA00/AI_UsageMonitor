@@ -9,7 +9,8 @@ namespace AIUsageMonitor.UI;
 /// </summary>
 public sealed class MoodTracker(string character)
 {
-    static readonly TimeSpan SleepAfter = TimeSpan.FromMinutes(30);
+    readonly Random _random = new();
+    DateTimeOffset? _nextSleep, _sleepUntil;
 
     double? _lastUsed;
     readonly Dictionary<string, QuotaObservation> _lastQuota = [];
@@ -27,9 +28,9 @@ public sealed class MoodTracker(string character)
         public string? ResetAnnouncement { get; init; }
     }
 
-    public Result Update(ProviderCard card)
+    public Result Update(ProviderCard card, DateTimeOffset? at = null)
     {
-        var now = DateTimeOffset.Now;
+        var now = at ?? DateTimeOffset.Now;
         double? used = card.MaxUsed;
         double? delta = null;
         bool reset = false;
@@ -115,20 +116,31 @@ public sealed class MoodTracker(string character)
 
     Mood Decide(ProviderCard card, double? used, DateTimeOffset now)
     {
+        var visible = card.Usage.FirstOrDefault();
+        bool canSleep = card.WorkingCount == 0 && card.FreshNeedsInputCount == 0 &&
+            !card.LimitReached && !card.UsageResetPending && card.Status.KindAt(now) == StatusKind.Fresh &&
+            visible is { IsUnknown: false, IsUnlimited: false, IsResetPending: false, Value: >= 75 and < 100 } &&
+            (visible.ResetsAt is not { } reset || reset > now);
+        if (!canSleep) { _nextSleep = null; _sleepUntil = null; }
         if (card.LimitReached || used >= 100) return Mood.Panic;
         if (card.FreshNeedsInputCount > 0) return Mood.Waiting;
         if (card.WorkingCount > 0)
         {
-            if (used >= 90) return Mood.Panic;
             if (used >= 70) return Mood.WorkingHard;
             return Mood.Working;
         }
-        if (used >= 90) return Mood.Exhausted;
-        if (used >= 70) return Mood.Tired;
-        if (!card.AppRunning) return Mood.Sleeping;
-        if (card.LastActivity is { } la && now - la > SleepAfter) return Mood.Sleeping;
-        // 한가할 때는 놀다가 가끔 서서 대기
-        return (now.Minute / 2) % 3 == 2 ? Mood.Idle : Mood.Playing;
+        if (canSleep)
+        {
+            _nextSleep ??= now.AddMinutes(8 + _random.NextDouble() * 7);
+            if (_sleepUntil is { } until && now < until) return Mood.Sleeping;
+            if (now >= _nextSleep)
+            {
+                _sleepUntil = now.AddSeconds(30 + _random.NextDouble() * 15);
+                _nextSleep = _sleepUntil.Value.AddMinutes(8 + _random.NextDouble() * 7);
+                return Mood.Sleeping;
+            }
+        }
+        return Mood.Idle;
     }
 
     (string[] Lines, string[] Keys) Lines(Mood mood, ProviderCard card, double? used)

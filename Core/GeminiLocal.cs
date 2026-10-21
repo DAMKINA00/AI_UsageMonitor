@@ -10,6 +10,7 @@ public sealed class GeminiLocalState
     public string? ExecutablePath { get; init; }
     /// <summary>agy 실행 파일의 (경로|크기|수정 시각). 업데이트를 알아채는 데 쓴다.</summary>
     public string? ExecutableFingerprint { get; init; }
+    public string? Account { get; init; }
     /// <summary>실행 중인 agy 프로세스 수 (이 앱이 사용량 조회로 띄운 것은 뺀다).</summary>
     public int CliProcessCount { get; init; }
     public List<SessionInfo> Sessions { get; init; } = [];
@@ -38,6 +39,8 @@ public sealed class GeminiLocalReader
     readonly string _home;
     readonly Func<string?, string?> _findExecutable;
     readonly Func<int> _processCount;
+    readonly Func<string?> _readAccount;
+    string? _account;
     string? _exe, _exeOverride, _exeFingerprint;
     DateTime _exeCheckedAt = DateTime.MinValue;
     (long, DateTime, long, DateTime)? _stamp;
@@ -45,11 +48,14 @@ public sealed class GeminiLocalReader
     List<Row> _rows = [];
     string? _rowsError;
 
-    public GeminiLocalReader(string? home = null, Func<string?, string?>? findExecutable = null, Func<int>? processCount = null)
+    public GeminiLocalReader(string? home = null, Func<string?, string?>? findExecutable = null, Func<int>? processCount = null,
+        Func<string?>? readAccount = null)
     {
         _home = home ?? Paths.AgyHome;
         _findExecutable = findExecutable ?? AgyCli.FindExecutable;
         _processCount = processCount ?? CountAgyProcesses;
+        // A custom home is an isolated profile/fixture, not the current Windows credential store.
+        _readAccount = readAccount ?? (home == null ? AgyAccount.ReadName : () => null);
     }
 
     public GeminiLocalState Read(int activeHours, string? exeOverride = null)
@@ -60,6 +66,7 @@ public sealed class GeminiLocalReader
             _exe = _findExecutable(exeOverride);
             _exeFingerprint = AgyCli.Fingerprint(_exe);
             _exeOverride = exeOverride;
+            _account = _exe == null ? null : _readAccount();
             _exeCheckedAt = now;
         }
         int processes = _processCount();
@@ -86,6 +93,7 @@ public sealed class GeminiLocalReader
             Installed = _exe != null,
             ExecutablePath = _exe,
             ExecutableFingerprint = _exeFingerprint,
+            Account = _account,
             CliProcessCount = processes,
             Sessions = sessions,
             SessionsError = _rowsError,

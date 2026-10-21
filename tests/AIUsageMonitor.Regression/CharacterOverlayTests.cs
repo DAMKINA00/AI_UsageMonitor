@@ -64,6 +64,38 @@ internal static partial class Program
             string.Join(',', cleaned));
 
         TestCharacterPoseGeometry();
+        TestPlatformFootContact();
+    }
+
+    static void TestPlatformFootContact()
+    {
+        var frame = PrivateMethod<CharacterStage>("Frame");
+        var bodyBounds = PrivateMethod<CharacterStage>("BodyBoundsIn");
+        foreach (var character in new[] { "claude", "codex", "gemini", "grok" })
+        {
+            var stage = new CharacterStage { Character = character, Width = 144, Height = 178,
+                FigureHeight = 106, ExternalWalking = true };
+            stage.SetActive(false);
+            foreach (var mood in new[] { Mood.Idle, Mood.Working, Mood.WorkingHard, Mood.Sleeping, Mood.Waiting })
+            {
+                stage.SetMood(mood, []);
+                double maxGap = 0;
+                for (int tick = 0; tick < 60; tick++)
+                {
+                    stage.IsWalking = mood == Mood.Idle;
+                    stage.FacingLeft = tick >= 30;
+                    stage.Measure(new Size(144, 178));
+                    stage.Arrange(new Rect(0, 0, 144, 178));
+                    stage.UpdateLayout();
+                    frame.Invoke(stage, null);
+                    stage.UpdateLayout();
+                    var body = (Rect)bodyBounds.Invoke(stage, [stage])!;
+                    maxGap = Math.Max(maxGap, Math.Abs(body.Bottom - stage.Height));
+                }
+                Check($"{character} {mood} feet stay on the platform through animation and turns", maxGap < 0.5,
+                    $"maximum foot gap={maxGap:0.###} DIP");
+            }
+        }
     }
 
     static void TestCharacterPoseGeometry()

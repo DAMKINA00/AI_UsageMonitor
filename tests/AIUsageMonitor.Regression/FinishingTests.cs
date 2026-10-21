@@ -351,13 +351,13 @@ internal static partial class Program
         var card = new ProviderCard
         {
             Name = "Claude", Accent = Palette.Claude, AppStatus = "x", AppStatusBrush = Palette.Muted, Footnote = "", SessionsHeader = "",
-            MaxUsed = 75, SoonestReset = now.AddHours(2),
+            MaxUsed = 100, LimitReached = true, SoonestReset = now.AddHours(2),
         };
         var result = new MoodTracker("claude").Update(card);
         bool aligned = result.Lines.Length == result.Keys.Length && result.Keys.Any(k => k.Contains("{r}")) &&
             result.Lines.Zip(result.Keys).All(p => p.First.Contains('{') == false &&
                 (p.Second.Contains('{') ? p.First != p.Second : p.First == p.Second));
-        Check("mood result keeps the template of every filled line", result.Mood == Mood.Tired && aligned,
+        Check("mood result keeps the template of every filled line", result.Mood == Mood.Panic && aligned,
             string.Join(" | ", result.Keys));
 
         var stage = new CharacterStage();
