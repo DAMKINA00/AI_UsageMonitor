@@ -28,9 +28,9 @@ public sealed class PlatformWalker(int seed)
         if (_pause > 0) { _pause -= seconds; return; }
         if (Math.Abs(_target - Position) < 0.5)
         {
-            _target = _random.NextDouble() * extent;
-            _speed = 12 + _random.NextDouble() * 15;
-            _pause = 1 + _random.NextDouble() * 4;
+            _target = Math.Clamp(Position + (_random.Next(2) == 0 ? -1 : 1) * (18 + _random.NextDouble() * 24), 0, extent);
+            _speed = 6 + _random.NextDouble() * 5;
+            _pause = 2.5 + _random.NextDouble() * 3.5;
             return;
         }
         FacingLeft = _target < Position;

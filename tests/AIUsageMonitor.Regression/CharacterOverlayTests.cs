@@ -82,7 +82,7 @@ internal static partial class Program
                 double maxGap = 0;
                 for (int tick = 0; tick < 60; tick++)
                 {
-                    stage.IsWalking = mood == Mood.Idle;
+                    stage.IsWalking = false;
                     stage.FacingLeft = tick >= 30;
                     stage.Measure(new Size(144, 178));
                     stage.Arrange(new Rect(0, 0, 144, 178));
@@ -95,6 +95,31 @@ internal static partial class Program
                 Check($"{character} {mood} feet stay on the platform through animation and turns", maxGap < 0.5,
                     $"maximum foot gap={maxGap:0.###} DIP");
             }
+            stage.SetMood(Mood.Idle, []);
+            stage.IsWalking = true;
+            double lowest = double.MaxValue, highest = 0;
+            int landings = 0;
+            for (int tick = 0; tick < 60; tick++)
+            {
+                stage.FacingLeft = tick >= 30;
+                frame.Invoke(stage, null);
+                // A layout refresh must preserve, rather than accumulate or erase, the hop.
+                PrivateMethod<CharacterStage>("GroundFeet").Invoke(stage, null);
+                var body = (Rect)bodyBounds.Invoke(stage, [stage])!;
+                double gap = stage.Height - body.Bottom;
+                lowest = Math.Min(lowest, gap);
+                highest = Math.Max(highest, gap);
+                if (Math.Abs(gap) < .05) landings++;
+            }
+            Check($"{character} walking makes small repeated hops without sinking through the platform",
+                lowest >= -.05 && highest is > 2 and <= 2.6 && landings >= 4,
+                $"gap={lowest:0.###}..{highest:0.###}, landings={landings}");
+            for (int tick = 0; tick < 6; tick++) frame.Invoke(stage, null);
+            stage.IsWalking = false;
+            frame.Invoke(stage, null);
+            Check($"{character} stopping mid-hop returns its feet to the platform",
+                Math.Abs(stage.Height - ((Rect)bodyBounds.Invoke(stage, [stage])!).Bottom) < .05,
+                "feet did not return to the baseline");
         }
     }
 

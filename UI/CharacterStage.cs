@@ -56,7 +56,7 @@ public sealed class CharacterStage : Border
     string _character = "claude";
     Mood _mood = Mood.Idle;
     string _pose = "";
-    double _t, _moodT, _popT = 99, _bubbleT = 99, _nextSpawn;
+    double _t, _moodT, _walkT, _popT = 99, _bubbleT = 99, _nextSpawn;
     bool _alt;
 
     public CharacterStage()
@@ -549,6 +549,7 @@ public sealed class CharacterStage : Border
         const double dt = 1 / Fps;
         _t += dt;
         _moodT += dt;
+        _walkT = IsWalking && _mood == Mood.Idle ? _walkT + dt : 0;
         _popT += dt;
         _frameT += dt;
         _bubbleT += dt;
@@ -615,7 +616,7 @@ public sealed class CharacterStage : Border
         _scale.ScaleY = sy;
         _rot.Angle = rot;
         _move.X = x;
-        _move.Y = y + (IsWalking ? -3 * Math.Abs(Math.Sin(_t * 8)) : 0);
+        _move.Y = y;
         GroundFeet();
         // Idle 포즈에서만 산책한다. 게임/독서/티타임, 작업, 졸음 등은 오른쪽 아래에 고정한다.
         // 왼쪽 말풍선 배치에서는 말풍선 자리를 침범하지 않도록 산책하지 않는다.
@@ -632,7 +633,9 @@ public sealed class CharacterStage : Border
     {
         if (!ExternalWalking || _mood == Mood.Happy || _figure.ActualHeight <= 0) return;
         var body = BodyBoundsIn(_figure);
-        if (!body.IsEmpty) _move.Y += _figure.ActualHeight - body.Bottom;
+        // Apply the small walking hop after grounding so foot alignment cannot cancel it.
+        var hop = IsWalking && _mood == Mood.Idle ? 7.5 * Math.Pow(Math.Sin(_walkT * Math.PI / 0.8), 2) : 0;
+        if (!body.IsEmpty) _move.Y += _figure.ActualHeight - body.Bottom - hop;
     }
 
     Point HeadPoint()

@@ -159,7 +159,7 @@ internal static partial class Program
             sawPause |= !first.IsMoving;
             sawMove |= first.IsMoving;
             seedDiverged |= Math.Abs(first.Position - other.Position) > 0.0001;
-            noLeap &= delta <= 2.701;
+            noLeap &= delta <= 1.101;
             bounded &= first.Position is >= 0 and <= 120 && same.Position is >= 0 and <= 120 && other.Position is >= 0 and <= 120;
         }
         Check("seeded walkers with the same seed agree while different seeds diverge",
@@ -169,6 +169,31 @@ internal static partial class Program
         first.Advance(.1, 120, false, .25);
         Check("disabled walking reports paused and keeps its position", !first.IsMoving && first.Position == stopped,
             $"moving={first.IsMoving}, position={first.Position}/{stopped}");
+
+        foreach (double extent in new[] { 20.0, 120, 2000 })
+        {
+            var walker = new PlatformWalker(31);
+            walker.Advance(0, extent, true, .5);
+            double distance = 0, longest = 0, fastest = 0;
+            int completed = 0;
+            for (int tick = 0; tick < 3000; tick++)
+            {
+                var before = walker.Position;
+                walker.Advance(.1, extent, true, .5);
+                var delta = Math.Abs(walker.Position - before);
+                fastest = Math.Max(fastest, delta / .1);
+                if (walker.IsMoving) distance += delta;
+                else if (distance > 0)
+                {
+                    longest = Math.Max(longest, distance);
+                    completed++;
+                    distance = 0;
+                }
+            }
+            Check($"walker takes short slow trips even on a {extent} DIP platform",
+                completed >= 10 && longest > 15 && longest <= 42.001 && fastest is > 6 and <= 11.001,
+                $"trips={completed}, longest={longest:0.###}, speed={fastest:0.###}");
+        }
 
         first.Advance(.1, -50, true, .5);
         Check("negative extents collapse safely to zero", first.Position == 0 && !first.IsMoving, $"position={first.Position}");
