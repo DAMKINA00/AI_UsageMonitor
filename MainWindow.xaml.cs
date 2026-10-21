@@ -11,86 +11,175 @@ using AIUsageMonitor.UI;
 
 namespace AIUsageMonitor;
 
-/// <summary>창 폭에 따른 레이아웃 구간.</summary>
-public enum LayoutMode
-{
-    /// <summary>계정 원과 캐릭터는 유지하고 앱 상태 글자만 숨긴다.</summary>
-    Narrow,
-    /// <summary>계정 원 | 캐릭터(켰을 때).</summary>
-    Medium,
-    /// <summary>계정 원 | 캐릭터(켰을 때).</summary>
-    Wide,
-}
-
 public partial class MainWindow : Window
 {
-    readonly AppSettings _settings;
-    readonly Action<AppSettings> _saveSettings;
-    bool _showCharacters;
+    public const double DefaultWidth = 584, DefaultHeight = 280;
+    public const double MinWindowWidth = 292, MinWindowHeight = 280;
+    public const double PlatformWidth = 146;
+    readonly MainViewModel _vm;
+    readonly DispatcherTimer _walkTimer;
+    readonly DispatcherTimer _dockTimer;
+    readonly PlatformWalker[] _walkers = Enumerable.Range(0, 4).Select(i => new PlatformWalker(i + 31)).ToArray();
+    readonly CharacterLayers _layers = new(4);
+    bool _positioned, _showCharacters, _dockQueued;
+    int _platformCount = 4;
+    double _taskbarInset;
+    string _slotSignature = "";
+    AccountsFlyout? _accountsFlyout;
 
-    public event Action? RefreshRequested;
-    public event Action? AccountsRequested;
     public event Action<string, string>? SecondaryAccountSwapRequested;
-    public event Action<bool>? TopmostToggled;
-
     public bool AllowClose { get; set; }
-
-    /// <summary>처음 실행할 때의 창 크기 (DIP). 사용자가 크기를 바꾸면 그 값을 저장해 다음에 쓴다.</summary>
-    public const double DefaultWidth = 640, DefaultHeight = 640;
-    /// <summary>네 행이 헤더·계정 원·안내 한 줄을 모두 보일 수 있는 최소 크기.</summary>
-    public const double MinWindowWidth = 340, MinWindowHeight = 590;
-    /// <summary>넓은 창 레이아웃 구간.</summary>
-    public const double WideFrom = 620;
-    /// <summary>이 폭 미만이면 헤더의 앱 상태 글자를 숨긴다.</summary>
-    public const double MediumFrom = 440;
-    /// <summary>캐릭터 그림 높이 상한 (행이 높아져도 이보다 크게 그리지 않는다).</summary>
-    const double MaxFigureHeight = 150;
-
-    /// <param name="saveSettings">설정 저장 방법 (기본: settings.json). 테스트는 사용자 설정 파일을 건드리지 않도록 바꾼다.</param>
-    public MainWindow(MainViewModel vm, AppSettings settings, Action<AppSettings>? saveSettings = null)
-    {
-        InitializeComponent();
-        _settings = settings;
-        _saveSettings = saveSettings ?? (s => s.Save());
-        DataContext = vm;
-        MinWidth = MinWindowWidth;
-        MinHeight = MinWindowHeight;
-        Width = DefaultWidth;
-        Height = DefaultHeight;
-        ApplyTopmost(settings.Topmost);
-        _showCharacters = settings.ShowCharacters;
-        ApplyLayout(Width);
-        SourceInitialized += (_, _) =>
-        {
-            RoundCorners();
-            HwndSource.FromHwnd(new WindowInteropHelper(this).Handle)?.AddHook(WindowMessage);
-            RestoreSavedBounds();
-        };
-        SizeChanged += (_, e) => ApplyLayout(e.NewSize.Width);
-        IsVisibleChanged += (_, _) => { UpdateStages(); if (!IsVisible) SetAccountsOpen(false); };
-        StateChanged += (_, _) => { UpdateStages(); if (WindowState == WindowState.Minimized) SetAccountsOpen(false); };
-        LocationChanged += (_, _) =>
-        {
-            if (_positioned) UpdateMaxSize();
-            if (IsAccountsOpen) _accountsFlyout!.PositionBeside(this, CurrentWorkArea());
-        };
-        foreach (var stage in Stages) stage.SizeChanged += (_, _) => FitFigure(stage);
-        Accounts.CloseRequested += () => SetAccountsOpen(false);
-    }
-
+    public bool IsAccountsOpen { get; private set; }
+    public bool CharactersShown => _showCharacters;
+    public AccountsPanel Accounts { get; } = new();
     public CharacterStage Claude => ClaudeStage;
     public CharacterStage Codex => CodexStage;
     public CharacterStage Gemini => GeminiStage;
     public CharacterStage Grok => GrokStage;
-    IEnumerable<CharacterStage> Stages => [ClaudeStage, CodexStage, GeminiStage, GrokStage];
-    public AccountsPanel Accounts { get; } = new();
-    public bool IsAccountsOpen { get; private set; }
-    AccountsFlyout? _accountsFlyout;
+    CharacterStage[] Stages => [ClaudeStage, CodexStage, GeminiStage, GrokStage];
 
-    /// <summary>지금 폭의 레이아웃 구간.</summary>
-    public LayoutMode Mode { get; private set; } = LayoutMode.Wide;
-    /// <summary>창 폭과 관계없이 캐릭터 표시 설정을 따른다.</summary>
-    public bool CharactersShown => _showCharacters;
+    public MainWindow(MainViewModel vm, AppSettings settings, Action<AppSettings>? saveSettings = null)
+    {
+        InitializeComponent();
+        _vm = vm;
+        DataContext = vm;
+        Width = DefaultWidth;
+        Height = DefaultHeight;
+        MinWidth = MinWindowWidth;
+        MinHeight = MinWindowHeight;
+        ApplyTopmost(settings.Topmost);
+        ApplyCharacters(settings.ShowCharacters);
+        foreach (var stage in Stages) stage.ExternalWalking = true;
+        _walkTimer = new DispatcherTimer(DispatcherPriority.Render) { Interval = TimeSpan.FromMilliseconds(66) };
+        _walkTimer.Tick += (_, _) => AdvanceCharacters(0.066);
+        _dockTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
+        _dockTimer.Tick += (_, _) => DockToTaskbar();
+        _vm.PropertyChanged += ViewModelChanged;
+        SourceInitialized += (_, _) =>
+        {
+            HwndSource.FromHwnd(new WindowInteropHelper(this).Handle)?.AddHook(WindowMessage);
+            // Use the previously selected monitor, but replace portrait bounds with the new docked layout.
+            if (settings.WindowLeft is double left && settings.WindowTop is double top && double.IsFinite(left) && double.IsFinite(top))
+            { Left = left; Top = top; }
+            _positioned = true;
+            DockToTaskbar();
+        };
+        IsVisibleChanged += (_, _) => { UpdateStages(); if (!IsVisible) SetAccountsOpen(false); else DockToTaskbar(); };
+        StateChanged += (_, _) => { UpdateStages(); if (WindowState == WindowState.Minimized) SetAccountsOpen(false); };
+        SizeChanged += (_, _) => AdvanceCharacters(0);
+        LocationChanged += (_, _) => QueueDock();
+        Accounts.CloseRequested += () => SetAccountsOpen(false);
+        Closed += (_, _) =>
+        {
+            _vm.PropertyChanged -= ViewModelChanged;
+            _walkTimer.Stop(); _dockTimer.Stop();
+            foreach (var stage in Stages) stage.SetActive(false);
+            _accountsFlyout?.Close();
+        };
+        RefreshPlatforms();
+    }
+
+    void ViewModelChanged(object? sender, PropertyChangedEventArgs e) => RefreshPlatforms();
+
+    public void RefreshPlatforms()
+    {
+        var cards = new[] { _vm.Claude, _vm.Codex, _vm.Gemini, _vm.Grok }.OfType<ProviderCard>();
+        var slots = cards.SelectMany(card => card.AccountSlots.Count > 0 ? card.AccountSlots : AccountUsageSlot.Create(card, [], 0))
+            .Where(slot => !slot.IsEmpty || slot.Id.Length > 0).ToArray();
+        var signature = string.Join('\n', slots.Select(slot => slot.Signature));
+        if (signature != _slotSignature || PlatformItems.ItemsSource == null)
+        {
+            _slotSignature = signature;
+            PlatformItems.ItemsSource = slots;
+            _platformCount = Math.Max(4, slots.Length);
+            DockToTaskbar();
+        }
+    }
+
+    public static Rect DockBounds(Rect area, int platformCount, double inset = 0)
+    {
+        var width = Math.Min(Math.Max(1, area.Width - 12), Math.Max(4, platformCount) * PlatformWidth);
+        bool overflow = platformCount * PlatformWidth > width;
+        var height = Math.Min(area.Height, DefaultHeight + (overflow ? SystemParameters.HorizontalScrollBarHeight : 0));
+        return new Rect(Math.Max(area.Left, area.Right - width - 6), Math.Max(area.Top, area.Bottom - height - Math.Max(0, inset)), width, height);
+    }
+
+    public void SetTaskbarInset(double inset) { _taskbarInset = inset; DockToTaskbar(); }
+
+    void QueueDock()
+    {
+        if (!_positioned || _dockQueued) return;
+        _dockQueued = true;
+        Dispatcher.BeginInvoke(DispatcherPriority.ContextIdle, new Action(() =>
+        {
+            _dockQueued = false;
+            if (IsLoaded) DockToTaskbar();
+        }));
+    }
+
+    Rect CurrentWorkArea()
+    {
+        var area = System.Windows.Forms.Screen.FromHandle(new WindowInteropHelper(this).Handle).WorkingArea;
+        var transform = PresentationSource.FromVisual(this)?.CompositionTarget?.TransformFromDevice ?? Matrix.Identity;
+        return Rect.Transform(new Rect(area.X, area.Y, area.Width, area.Height), transform);
+    }
+
+    void DockToTaskbar()
+    {
+        if (!_positioned || WindowState != WindowState.Normal) return;
+        var bounds = DockBounds(CurrentWorkArea(), _platformCount, _taskbarInset);
+        MinWidth = Math.Min(MinWindowWidth, bounds.Width);
+        MinHeight = Math.Min(MinWindowHeight, bounds.Height);
+        if (Math.Abs(Width - bounds.Width) > 0.1) Width = bounds.Width;
+        if (Math.Abs(Height - bounds.Height) > 0.1) Height = bounds.Height;
+        if (Math.Abs(Left - bounds.Left) > 0.1) Left = bounds.Left;
+        if (Math.Abs(Top - bounds.Top) > 0.1) Top = bounds.Top;
+        if (IsAccountsOpen) _accountsFlyout!.PositionBeside(this, CurrentWorkArea());
+        AdvanceCharacters(0);
+    }
+
+    public void AdvanceCharacters(double seconds)
+    {
+        double extent = Math.Max(0, CharacterField.ActualWidth - 144);
+        var stages = Stages;
+        var bodies = new Rect[stages.Length];
+        for (int i = 0; i < stages.Length; i++)
+        {
+            var stage = stages[i];
+            bool walking = SystemParameters.ClientAreaAnimation && stage.Mood is Mood.Idle or Mood.Playing or Mood.Happy;
+            var walker = _walkers[i];
+            walker.Advance(seconds, extent, walking, (i + 0.5) / stages.Length);
+            Canvas.SetLeft(stage, walker.Position);
+            Canvas.SetTop(stage, Math.Max(0, CharacterField.ActualHeight - stage.Height));
+            stage.IsWalking = walker.IsMoving;
+            stage.FacingLeft = walker.FacingLeft;
+            bodies[i] = stage.BodyBoundsIn(stage);
+            if (!bodies[i].IsEmpty) bodies[i].Offset(walker.Position, Canvas.GetTop(stage));
+        }
+        var order = _layers.Update(bodies, stages.Select(stage => stage.IsWalking).ToArray());
+        for (int z = 0; z < order.Count; z++) Panel.SetZIndex(stages[order[z]], z);
+    }
+
+    void UpdateStages()
+    {
+        bool visible = IsVisible && WindowState != WindowState.Minimized;
+        foreach (var stage in Stages) stage.SetActive(visible && _showCharacters);
+        if (visible && _showCharacters) _walkTimer?.Start(); else _walkTimer?.Stop();
+        if (visible) _dockTimer?.Start(); else _dockTimer?.Stop();
+    }
+
+    public void ApplyCharacters(bool on)
+    {
+        _showCharacters = on;
+        foreach (var stage in Stages) stage.Visibility = on ? Visibility.Visible : Visibility.Collapsed;
+        UpdateStages();
+    }
+
+    public void ApplyTopmost(bool on)
+    {
+        Topmost = on;
+        if (_accountsFlyout != null) _accountsFlyout.Topmost = on;
+    }
 
     public void SetAccountsOpen(bool open)
     {
@@ -109,235 +198,32 @@ public partial class MainWindow : Window
             _accountsFlyout.Show();
         }
         else _accountsFlyout?.Hide();
-        AccountsButton.Foreground = open ? Palette.Text : Palette.Muted;
-        if (!open) AccountsButton.Focus();
-    }
-
-    protected override void OnPreviewKeyDown(KeyEventArgs e)
-    {
-        if (e.Key == Key.Escape && IsAccountsOpen)
-        {
-            SetAccountsOpen(false);
-            e.Handled = true;
-        }
-        base.OnPreviewKeyDown(e);
-    }
-
-    /// <summary>
-    /// 캐릭터 켜기/끄기. 창 크기와 사용량 위치는 바꾸지 않는다.
-    /// </summary>
-    public void ApplyCharacters(bool on)
-    {
-        _showCharacters = on;
-        ApplyLayout(ActualWidth > 0 ? ActualWidth : Width);
-    }
-
-    public static LayoutMode ModeFor(double width) =>
-        width >= WideFrom ? LayoutMode.Wide : width >= MediumFrom ? LayoutMode.Medium : LayoutMode.Narrow;
-
-    /// <summary>
-    /// 사용량과 캐릭터 배치는 유지하고 헤더와 캐릭터의 표시 여부만 바꾼다.
-    /// </summary>
-    void ApplyLayout(double width)
-    {
-        if (double.IsNaN(width) || width <= 0) return;
-        Mode = ModeFor(width);
-        bool characters = CharactersShown;
-        // 크기를 조정하는 동안 SizeChanged 가 계속 오므로 구간이 바뀔 때만 리소스를 바꾼다.
-        if (_appliedLayout == (Mode, characters)) return;
-        _appliedLayout = (Mode, characters);
-        Resources["AppStatusVisibility"] = Mode == LayoutMode.Narrow ? Visibility.Collapsed : Visibility.Visible;
-        foreach (var stage in Stages) stage.Visibility = characters ? Visibility.Visible : Visibility.Collapsed;
-        UpdateStages();
-    }
-
-    (LayoutMode Mode, bool Characters)? _appliedLayout;
-
-    /// <summary>행 높이에 맞춰 캐릭터 그림 크기를 정한다 (말풍선 글자 폭은 그림이 가장 커도 120 DIP 이상 남는다).</summary>
-    static void FitFigure(CharacterStage stage)
-    {
-        if (stage.ActualHeight <= 0) return;
-        stage.FigureHeight = Math.Min(MaxFigureHeight, Math.Max(40, stage.ActualHeight - 2));
-    }
-
-    void AccountBody_SizeChanged(object sender, SizeChangedEventArgs e)
-    {
-        if (e.NewSize.Height <= 0 || sender is not FrameworkElement { DataContext: ProviderCard card } accountBody) return;
-        var stage = card.Name switch
-        {
-            "Claude" => Claude,
-            "Codex" => Codex,
-            "Gemini" => Gemini,
-            _ => Grok,
-        };
-        stage.Height = Math.Min(MaxFigureHeight, e.NewSize.Height - 2);
-        // 오류 안내 줄 높이까지 반영해 사용량과 캐릭터의 세로 중심을 맞춘다.
-        stage.Margin = new Thickness(0, accountBody.TranslatePoint(new Point(), (UIElement)stage.Parent).Y, 6, 6);
-    }
-
-    Rect CurrentWorkArea()
-    {
-        var bounds = System.Windows.Forms.Screen.FromHandle(new WindowInteropHelper(this).Handle).WorkingArea;
-        var fromPixels = PresentationSource.FromVisual(this)?.CompositionTarget?.TransformFromDevice ?? Matrix.Identity;
-        return Rect.Transform(new Rect(bounds.X, bounds.Y, bounds.Width, bounds.Height), fromPixels);
-    }
-
-    /// <summary>창이 작업 영역 밖에 있으면 안으로 끌어온다 (크기는 작업 영역보다 클 때만 줄인다).</summary>
-    void KeepOnScreen()
-    {
-        var area = CurrentWorkArea();
-        if (Width > area.Width) Width = Math.Max(MinWidth, area.Width);
-        if (Height > area.Height) Height = Math.Max(MinHeight, area.Height);
-        Left = Math.Clamp(Left, area.Left, Math.Max(area.Left, area.Right - Width));
-        Top = Math.Clamp(Top, area.Top, Math.Max(area.Top, area.Bottom - Height));
-    }
-
-    /// <summary>
-    /// 실행 중 작업 영역·해상도·DPI 가 바뀌었을 때: 창이 작업 영역보다 크면 줄이고, 거의 보이지 않을 만큼 화면 밖이면 끌어온다.
-    /// 그 밖에는 사용자가 둔 위치·크기를 그대로 둔다 (앱이 스스로 크기를 바꾸지 않는다).
-    /// </summary>
-    void PullInsideIfLost()
-    {
-        var area = CurrentWorkArea();
-        if (Width > area.Width) Width = Math.Max(MinWidth, area.Width);
-        if (Height > area.Height) Height = Math.Max(MinHeight, area.Height);
-        var visible = Rect.Intersect(new Rect(Left, Top, Width, Height), area);
-        if (visible.IsEmpty || visible.Width < MinVisibleWidth || visible.Height < MinVisibleHeight)
-        {
-            Left = Math.Clamp(Left, area.Left, Math.Max(area.Left, area.Right - Width));
-            Top = Math.Clamp(Top, area.Top, Math.Max(area.Top, area.Bottom - Height));
-        }
-    }
-
-    // 이만큼 보이면 사용자가 일부러 화면 가장자리에 걸쳐 둔 것으로 본다
-    const double MinVisibleWidth = 120, MinVisibleHeight = 40;
-    bool _displayCheckQueued;
-
-    /// <summary>디스플레이 변경 메시지가 몰려 와도 Windows 가 적용을 마친 뒤 한 번만 확인한다.</summary>
-    void QueueDisplayCheck()
-    {
-        if (!_positioned || _displayCheckQueued) return;
-        _displayCheckQueued = true;
-        Dispatcher.BeginInvoke(DispatcherPriority.ContextIdle, new Action(() =>
-        {
-            _displayCheckQueued = false;
-            if (!IsLoaded && !IsVisible) return;
-            _maxArea = default;
-            UpdateMaxSize();
-            PullInsideIfLost();
-        }));
-    }
-
-    protected override void OnDpiChanged(DpiScale oldDpi, DpiScale newDpi)
-    {
-        base.OnDpiChanged(oldDpi, newDpi);
-        QueueDisplayCheck();
-    }
-
-    Rect _maxArea;
-
-    /// <summary>최대 크기는 지금 모니터의 작업 영역.</summary>
-    void UpdateMaxSize()
-    {
-        var area = CurrentWorkArea();
-        if (area == _maxArea) return;
-        _maxArea = area;
-        MaxWidth = Math.Max(MinWidth, area.Width);
-        MaxHeight = Math.Max(MinHeight, area.Height);
-    }
-
-    void UpdateStages()
-    {
-        bool active = IsVisible && WindowState != WindowState.Minimized;
-        foreach (var stage in Stages) stage.SetActive(active && stage.Visibility == Visibility.Visible);
-    }
-
-    [DllImport("dwmapi.dll")]
-    static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int value, int size);
-
-    void RoundCorners()
-    {
-        // Windows 11: 둥근 모서리 (DWMWA_WINDOW_CORNER_PREFERENCE = 33, DWMWCP_ROUND = 2)
-        int pref = 2;
-        try { DwmSetWindowAttribute(new WindowInteropHelper(this).Handle, 33, ref pref, sizeof(int)); } catch { }
-    }
-
-    bool _positioned;
-
-    public void ApplyTopmost(bool on)
-    {
-        Topmost = on;
-        if (_accountsFlyout != null) _accountsFlyout.Topmost = on;
-        PinButton.Content = on ? "" : "";
-        PinButton.ToolTip = on ? "항상 위에 표시 해제" : "항상 위에 표시";
-    }
-
-    /// <summary>
-    /// 저장된 크기·위치를 되살린다. 저장값이 없으면 기본 크기로 작업 영역 오른쪽 아래에 둔다.
-    /// 모니터나 작업 영역이 바뀌어 화면 밖이면 안으로 끌어온다. 이후에는 앱이 스스로 크기를 바꾸지 않는다.
-    /// </summary>
-    void RestoreSavedBounds()
-    {
-        if (_positioned) return;
-        _positioned = true;
-        Width = Math.Max(MinWidth, _settings.WindowWidth is double w and > 0 ? w : DefaultWidth);
-        Height = Math.Max(MinHeight, _settings.WindowHeight is double h and > 0 ? h : DefaultHeight);
-        if (_settings.WindowLeft is double l && _settings.WindowTop is double t)
-        {
-            Left = l;
-            Top = t;
-        }
-        else
-        {
-            var area = CurrentWorkArea();
-            Left = area.Right - Width - 12;
-            Top = Math.Max(area.Top + 12, area.Bottom - Height - 12);
-        }
-        KeepOnScreen();
-        UpdateMaxSize();
-        ApplyLayout(Width);
     }
 
     public void ShowAndActivate()
     {
         Show();
         if (WindowState == WindowState.Minimized) WindowState = WindowState.Normal;
+        DockToTaskbar();
         Activate();
     }
 
-    /// <summary>사용자가 옮기거나 크기를 바꾼 뒤의 위치·크기를 저장한다.</summary>
-    void SaveBounds()
+    protected override void OnPreviewKeyDown(KeyEventArgs e)
     {
-        if (WindowState != WindowState.Normal) return;
-        _settings.WindowLeft = Left;
-        _settings.WindowTop = Top;
-        _settings.WindowWidth = Width;
-        _settings.WindowHeight = Height;
-        _saveSettings(_settings);
+        if (e.Key == Key.Escape && IsAccountsOpen) { SetAccountsOpen(false); e.Handled = true; }
+        base.OnPreviewKeyDown(e);
+    }
+
+    protected override void OnDpiChanged(DpiScale oldDpi, DpiScale newDpi)
+    {
+        base.OnDpiChanged(oldDpi, newDpi);
+        Dispatcher.BeginInvoke(DockToTaskbar);
     }
 
     IntPtr WindowMessage(IntPtr hwnd, int message, IntPtr wParam, IntPtr lParam, ref bool handled)
     {
-        // WM_EXITSIZEMOVE: 테두리를 끌어 크기를 바꾸거나 옮기기(제목 줄 끌기 포함)를 마쳤을 때 한 번
-        const int wmExitSizeMove = 0x0232, wmDisplayChange = 0x007E, wmSettingChange = 0x001A, spiSetWorkArea = 0x002F;
-        if (message == wmExitSizeMove) SaveBounds();
-        else if (message == wmDisplayChange || (message == wmSettingChange && wParam.ToInt64() == spiSetWorkArea)) QueueDisplayCheck();
+        if (message is 0x007E or 0x001A) Dispatcher.BeginInvoke(DockToTaskbar);
         return IntPtr.Zero;
-    }
-
-    void TitleBar_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
-    {
-        if (e.ButtonState != MouseButtonState.Pressed) return;
-        // 저장은 끌기가 끝날 때 오는 WM_EXITSIZEMOVE 에서 한 번만 한다
-        DragMove();
-    }
-
-    void Refresh_Click(object sender, RoutedEventArgs e) => RefreshRequested?.Invoke();
-
-    void Accounts_Click(object sender, RoutedEventArgs e)
-    {
-        if (IsAccountsOpen) SetAccountsOpen(false);
-        else AccountsRequested?.Invoke();
     }
 
     const string AccountDragFormat = "AIUsageMonitor.SecondaryAccount";
@@ -402,10 +288,6 @@ public partial class MainWindow : Window
         else e.Effects = DragDropEffects.None;
         e.Handled = true;
     }
-
-    void Pin_Click(object sender, RoutedEventArgs e) => TopmostToggled?.Invoke(!Topmost);
-
-    void Hide_Click(object sender, RoutedEventArgs e) => Hide();
 
     protected override void OnClosing(CancelEventArgs e)
     {

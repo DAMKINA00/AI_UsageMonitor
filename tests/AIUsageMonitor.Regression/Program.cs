@@ -74,6 +74,9 @@ internal static partial class Program
         Run("Resizable responsive layout, saved bounds and character default", TestResponsiveLayout);
         Run("Dialogue repeat guard, Gemini unblock and login message", TestFinishing);
         Run("Character dialogue rules", TestDialogue);
+        Run("Taskbar usage layout and quota states", TestTaskbarWidget);
+        Run("Transparent account platforms and bounded roaming", TestPlatformLayout);
+        Run("Confirmed full recovery announcement once per cycle", TestResetAnnouncement);
     }
 
     static string ReadShared(string path)

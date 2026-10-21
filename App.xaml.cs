@@ -20,6 +20,7 @@ public partial class App : Application
     MainViewModel _vm = null!;
     MainWindow _window = null!;
     Tray _tray = null!;
+    TaskbarWidget _taskbar = null!;
     Alerts _alerts = null!;
     SecondaryAccountService _secondaryAccounts = null!;
     string _accountsSignature = "";
@@ -58,12 +59,14 @@ public partial class App : Application
         _monitor = new MonitorService(_settings);
         _window = new MainWindow(_vm, _settings);
         _tray = new Tray(_settings);
+        _taskbar = new TaskbarWidget();
         // 설정을 읽지 못했으면 시작할 때 한 번만 알린다
         if (Tray.SettingsLoadNotice(_settings) is { } notice) _tray.Balloon("AI 사용량 모니터", notice, true);
         _alerts = new Alerts(_settings, _tray);
         _secondaryAccounts = new SecondaryAccountService(_settings);
 
         WireUp();
+        _taskbar.SetEnabled(_settings.ShowTaskbarUsage);
         SyncStartupRegistration();
 
         _showEvent = new EventWaitHandle(false, EventResetMode.AutoReset, ShowEventName);
@@ -76,7 +79,7 @@ public partial class App : Application
         _monitor.Start();
         _secondaryAccounts.Start();
         _clock = new DispatcherTimer { Interval = TimeSpan.FromSeconds(15) };
-        _clock.Tick += (_, _) => _vm.Tick();
+        _clock.Tick += (_, _) => { _vm.Tick(); _taskbar.Tick(); };
         _clock.Start();
         if (!e.Args.Contains("--minimized")) _window.ShowAndActivate();
 
@@ -94,6 +97,15 @@ public partial class App : Application
             {
                 timer.Stop();
                 SaveWindowPng(path);
+                var taskbarPath = System.IO.Path.Combine(System.IO.Path.GetDirectoryName(path) ?? "",
+                    System.IO.Path.GetFileNameWithoutExtension(path) + "-taskbar.png");
+                if (_taskbar.IsVisible && _taskbar.Opacity > 0) SaveWindowPng(taskbarPath, _taskbar);
+                System.IO.File.WriteAllText(path + ".placement.json", System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    Main = new { _window.Left, _window.Top, _window.Width, _window.Height, _window.IsVisible },
+                    Taskbar = new { _taskbar.Left, _taskbar.Top, _taskbar.Width, _taskbar.Height, _taskbar.IsVisible,
+                        _taskbar.Opacity, _taskbar.DesktopInset },
+                }, new System.Text.Json.JsonSerializerOptions { WriteIndented = true }));
                 ExitApp();
             };
             timer.Start();
@@ -125,9 +137,9 @@ public partial class App : Application
         ExitApp();
     }
 
-    void SaveWindowPng(string path)
+    void SaveWindowPng(string path, FrameworkElement? target = null)
     {
-        FrameworkElement root = _window;
+        FrameworkElement root = target ?? _window;
         root.UpdateLayout();
         var dpi = System.Windows.Media.VisualTreeHelper.GetDpi(root);
         var bmp = new System.Windows.Media.Imaging.RenderTargetBitmap(
@@ -145,8 +157,6 @@ public partial class App : Application
         _monitor.Changed += Render;
         _secondaryAccounts.Changed += Render;
 
-        _window.RefreshRequested += RefreshAllAccounts;
-        _window.AccountsRequested += ShowAccounts;
         _window.Accounts.AddClaudeRequested += async () => await _secondaryAccounts.AddAsync(AccountProvider.Claude);
         _window.Accounts.AddCodexRequested += async () => await _secondaryAccounts.AddAsync(AccountProvider.Codex);
         _window.Accounts.RefreshRequested += RefreshAllAccounts;
@@ -154,7 +164,6 @@ public partial class App : Application
         {
             if (_secondaryAccounts.SwapAccounts(first, second)) _settings.Save();
         };
-        _window.TopmostToggled += SetTopmost;
         _window.IsVisibleChanged += (_, _) =>
         {
             if (!_window.IsVisible && !_settings.TrayHintShown && !_window.AllowClose)
@@ -166,6 +175,12 @@ public partial class App : Application
         };
 
         _tray.OpenRequested += () => _window.ShowAndActivate();
+        _tray.HideRequested += () => _window.Hide();
+        _taskbar.OpenRequested += () => _window.ShowAndActivate();
+        _taskbar.RefreshRequested += RefreshAllAccounts;
+        _taskbar.PlacementChanged += () => _window.SetTaskbarInset(_taskbar.DesktopInset);
+        _taskbar.HideRequested += () => SetTaskbarUsage(false);
+        _tray.TaskbarUsageChanged += SetTaskbarUsage;
         _tray.RefreshRequested += RefreshAllAccounts;
         _tray.AccountsRequested += ShowAccounts;
         _tray.ExitRequested += ExitApp;
@@ -217,6 +232,14 @@ public partial class App : Application
         _tray.SetTopmost(on);
     }
 
+    void SetTaskbarUsage(bool on)
+    {
+        _settings.ShowTaskbarUsage = on;
+        _settings.Save();
+        _tray.SetTaskbarUsage(on);
+        _taskbar.SetEnabled(on);
+    }
+
     void RefreshAllAccounts()
     {
         _monitor.RefreshAll();
@@ -244,12 +267,15 @@ public partial class App : Application
         var codex = Presenter.Codex(_monitor, _settings);
         var gemini = Presenter.Gemini(_monitor, _settings);
         var grok = Presenter.Grok(_monitor, _settings);
-        claude.AccountSlots = AccountUsageSlot.Create(claude, _secondaryAccounts.Accounts);
-        codex.AccountSlots = AccountUsageSlot.Create(codex, _secondaryAccounts.Accounts);
+        claude.AccountSlots = AccountUsageSlot.Create(claude, _secondaryAccounts.Accounts,
+            _secondaryAccounts.Accounts.Count(a => a.Settings.Provider == AccountProvider.Claude));
+        codex.AccountSlots = AccountUsageSlot.Create(codex, _secondaryAccounts.Accounts,
+            _secondaryAccounts.Accounts.Count(a => a.Settings.Provider == AccountProvider.Codex));
         // Gemini 는 서브 계정을 지원하지 않는다
         gemini.AccountSlots = AccountUsageSlot.Create(gemini, _secondaryAccounts.Accounts, secondarySlots: 0);
         grok.AccountSlots = AccountUsageSlot.Create(grok, _secondaryAccounts.Accounts, secondarySlots: 0);
         _vm.Update(claude, codex, gemini, grok, "");
+        _taskbar.Update([claude, codex, gemini, grok]);
         if (_window.IsAccountsOpen)
         {
             var accounts = AccountUsageCard.Create(claude, codex, _secondaryAccounts, gemini, grok);
@@ -290,8 +316,13 @@ public partial class App : Application
 
     static void Animate(CharacterStage stage, MoodTracker.Result r)
     {
-        stage.SetMood(r.Mood, r.Lines, r.Keys);
-        if (r.Reset) stage.Celebrate();
+        // Recovery speech belongs to the event, never to the repeating mood dialogue pool.
+        stage.SetMood(r.Mood, r.Reset ? [] : r.Lines, r.Reset ? [] : r.Keys);
+        if (r.Reset)
+        {
+            stage.Celebrate();
+            if (r.ResetAnnouncement is { } announcement) stage.ShowAnnouncement(announcement);
+        }
         else if (r.UsageDelta is double d) stage.PopText($"+{Fmt.Pct(d)}", r.DeltaColor);
     }
 
@@ -322,6 +353,7 @@ public partial class App : Application
         _secondaryAccounts.Dispose();
         _monitor.Dispose();
         _tray.Dispose();
+        _taskbar.Dispose();
         _window.Close();
         Shutdown();
     }

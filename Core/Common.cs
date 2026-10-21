@@ -67,6 +67,7 @@ public static class Log
 public sealed class AppSettings
 {
     public bool Topmost { get; set; }
+    public bool ShowTaskbarUsage { get; set; } = true;
     public bool StartWithWindows { get; set; }
     public bool UsageAlerts { get; set; } = true;
     public bool ActivityAlerts { get; set; }

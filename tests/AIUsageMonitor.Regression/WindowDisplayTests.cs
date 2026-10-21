@@ -33,7 +33,6 @@ internal static partial class Program
             window.Show();
             PumpDisplay();
             CheckFits("initial window fits work area", window);
-            var initialSize = new Size(window.Width, window.Height);
             var hwnd = new WindowInteropHelper(window).Handle;
             foreach (var screen in System.Windows.Forms.Screen.AllScreens)
             {
@@ -44,7 +43,7 @@ internal static partial class Program
                 PumpDisplay();
                 Check("window movement selects the destination monitor",
                     System.Windows.Forms.Screen.FromHandle(hwnd).DeviceName == screen.DeviceName, screen.DeviceName);
-                CheckStable("monitor movement preserves size without content zoom", window, initialSize);
+                CheckDocked("monitor movement re-docks without content zoom", window);
             }
 
             foreach (var message in new[] { 0x007E, 0x001A })
@@ -52,7 +51,7 @@ internal static partial class Program
                 var parameter = message == 0x001A ? new IntPtr(0x002F) : IntPtr.Zero;
                 for (int i = 0; i < 5; i++) SendMessage(hwnd, message, parameter, IntPtr.Zero);
                 PumpDisplay();
-                CheckStable("display notifications preserve size without content zoom", window, initialSize);
+                CheckDocked("display notifications re-dock without content zoom", window);
             }
 
             // Exercise the DPI callback without changing the user's Windows display settings.
@@ -60,7 +59,7 @@ internal static partial class Program
             typeof(MainWindow).GetMethod("OnDpiChanged", BindingFlags.Instance | BindingFlags.NonPublic)!
                 .Invoke(window, [dpi, dpi]);
             PumpDisplay();
-            CheckStable("DPI callback does not change app zoom", window, initialSize);
+            CheckDocked("DPI callback does not change app zoom", window);
 
             window.WindowState = WindowState.Minimized;
             PumpDisplay();
@@ -68,14 +67,14 @@ internal static partial class Program
             PumpDisplay();
             window.WindowState = WindowState.Normal;
             PumpDisplay();
-            CheckStable("restore preserves size without content zoom", window, initialSize);
+            CheckDocked("restore re-docks without content zoom", window);
             window.Hide();
             window.Show();
             PumpDisplay();
-            CheckStable("show preserves size without content zoom", window, initialSize);
+            CheckDocked("show re-docks without content zoom", window);
             window.ApplyCharacters(true);
             PumpDisplay();
-            CheckStable("character toggle preserves size without content zoom", window, initialSize);
+            CheckDocked("character toggle preserves docked size without content zoom", window);
         }
         finally { window.Close(); }
         var settingsAfter = File.Exists(Paths.SettingsFile) ? File.ReadAllBytes(Paths.SettingsFile) : null;
@@ -84,37 +83,37 @@ internal static partial class Program
             "settings file changed");
     }
 
-    /// <summary>
-    /// 앱이 스스로 창 크기를 바꾸지 않았는지, 그리고 내용을 확대·축소(LayoutTransform)하지 않았는지 확인한다.
-    /// 바뀐 요구사항: 예전에는 배율(ScaleTransform)이 유지되는지도 봤으나, 이제는 배율 자체를 쓰지 않는다.
-    /// </summary>
+    /// <summary>앱이 스스로 창 크기를 바꾸지 않았고 콘텐츠 배율도 건드리지 않았는지 확인한다.</summary>
     static void CheckStable(string name, MainWindow window, Size size) =>
         Check(name, window.Width == size.Width && window.Height == size.Height &&
             ((FrameworkElement)window.Content).LayoutTransform.Value.IsIdentity,
             $"size={window.Width}/{window.Height}, expected={size}");
 
-    // 네 행으로 늘어난 기본 창도 이전 압축 화면보다 작게 유지한다.
-    const double PreviousWindowArea = 615 * 1008;
+    static void CheckDocked(string name, MainWindow window)
+    {
+        var area = (Rect)typeof(MainWindow).GetMethod("CurrentWorkArea", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .Invoke(window, null)!;
+        var expected = MainWindow.DockBounds(area, 4);
+        Check(name, Math.Abs(window.Width - expected.Width) < 1 && Math.Abs(window.Height - expected.Height) < 1 &&
+            Math.Abs(window.Left - expected.Left) < 1 && Math.Abs(window.Top - expected.Top) < 1 &&
+            ((FrameworkElement)window.Content).LayoutTransform.Value.IsIdentity,
+            $"window={window.Left}/{window.Top}/{window.Width}/{window.Height}, expected={expected}");
+    }
 
-    /// <summary>
-    /// 바뀐 요구사항: 이전 라운드는 "배율 1.0, 폭 600, 높이 = 내용 높이"였으나, 이제 창은 사용자가 크기를 바꾸는 반응형이다.
-    /// 저장된 크기가 없으면 기본 크기(640×640)로 작업 영역 안 오른쪽 아래에 열리고, 내용은 확대·축소하지 않으며,
-    /// 최소·최대 크기(작업 영역)가 걸려 있고, 네 행의 기본 면적은 이전 화면보다 작은지 확인한다.
-    /// </summary>
+    /// <summary>기본 스테이지가 작업 영역 오른쪽 아래에 투명하게 놓이는지 확인한다.</summary>
     static void CheckFits(string name, MainWindow window)
     {
         var area = (Rect)typeof(MainWindow).GetMethod("CurrentWorkArea", BindingFlags.Instance | BindingFlags.NonPublic)!
             .Invoke(window, null)!;
         var root = (FrameworkElement)window.Content;
-        Check(name, window.Left >= area.Left + 11 && window.Top >= area.Top + 11 &&
-            window.Left + window.Width <= area.Right - 11 && window.Top + window.Height <= area.Bottom - 11 &&
-            root.LayoutTransform.Value.IsIdentity && window.ResizeMode == ResizeMode.CanResize &&
+        var expected = MainWindow.DockBounds(area, 4);
+        Check(name, window.Left >= area.Left - 0.5 && window.Top >= area.Top - 0.5 &&
+            window.Left + window.Width <= area.Right + 0.5 && window.Top + window.Height <= area.Bottom + 0.5 &&
+            root.LayoutTransform.Value.IsIdentity && window.ResizeMode == ResizeMode.NoResize && window.AllowsTransparency &&
             window.Width == MainWindow.DefaultWidth && window.Height == MainWindow.DefaultHeight &&
             window.MinWidth == MainWindow.MinWindowWidth && window.MinHeight == MainWindow.MinWindowHeight &&
-            Math.Abs(window.MaxWidth - area.Width) < 1 && Math.Abs(window.MaxHeight - area.Height) < 1 &&
-            window.Width * window.Height < PreviousWindowArea,
-            $"window={window.Left}/{window.Top}/{window.Width}/{window.Height}, max={window.MaxWidth}/{window.MaxHeight}, area={area}, " +
-            $"ratio={window.Width * window.Height / PreviousWindowArea:P0}");
+            Math.Abs(window.Left - expected.Left) < 1 && Math.Abs(window.Top - expected.Top) < 1,
+            $"window={window.Left}/{window.Top}/{window.Width}/{window.Height}, expected={expected}, area={area}");
     }
 
     static void PumpDisplay(int milliseconds = 150)
@@ -152,13 +151,14 @@ internal static partial class Program
                 window.Left = onLeft ? area.Right - baseline.Width - 12 : area.Left + 12;
                 PumpDisplay();
                 var position = new Point(window.Left, window.Top);
+                bool expectLeft = position.X - area.Left >= area.Right - position.X - window.Width;
                 geometryChanges = 0;
                 window.SetAccountsOpen(true);
                 PumpDisplay();
                 flyout = window.OwnedWindows.OfType<AccountsFlyout>().Single();
                 Check("floating panel opens on the available side", window.IsAccountsOpen && flyout.IsVisible &&
-                    (onLeft ? flyout.Left + flyout.Width < window.Left : flyout.Left > window.Left + window.Width),
-                    $"left={onLeft}, panel={flyout.Left}/{flyout.Width}, main={window.Left}/{window.Width}");
+                    (expectLeft ? flyout.Left + flyout.Width < window.Left : flyout.Left > window.Left + window.Width),
+                    $"left={expectLeft}, panel={flyout.Left}/{flyout.Width}, main={window.Left}/{window.Width}");
                 Check("account panel uses an owned independent native window", !flyout.ShowInTaskbar &&
                     PresentationSource.FromVisual(window.Accounts) != PresentationSource.FromVisual(window), "shared HWND or taskbar entry");
                 window.SetAccountsOpen(false);
@@ -202,7 +202,7 @@ internal static partial class Program
             double panelLeft = flyout!.Left;
             window.Left += 30;
             PumpDisplay();
-            Check("floating panel follows owner movement", Math.Abs(flyout.Left - panelLeft - 30) <= 1, flyout.Left.ToString());
+            Check("floating panel stays attached when the owner re-docks", Math.Abs(flyout.Left - panelLeft) <= 1, flyout.Left.ToString());
             double movedMainLeft = window.Left;
             Button("CloseButton").RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Button.ClickEvent));
             PumpDisplay();

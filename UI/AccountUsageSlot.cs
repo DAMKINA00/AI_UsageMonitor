@@ -14,6 +14,8 @@ public sealed class AccountUsageSlot : INotifyPropertyChanged
     public bool CanSwapWith(AccountUsageSlot? other) => CanDrag && other?.CanDrag == true &&
         Id != other.Id && Provider == other.Provider;
     public string? Account { get; init; }
+    public string DisplayAccount => string.IsNullOrWhiteSpace(Account) ? "계정 확인 중" : Account.ToUpperInvariant();
+    public Brush Accent => Provider switch { "Claude" => Palette.Claude, "Codex" => Palette.Codex, "Gemini" => Palette.Gemini, "Grok" => Palette.Grok, _ => Palette.Muted };
     public UsageRow? Usage { get; init; }
     public string Status { get; init; } = "";
     public string? Plan { get; init; }
@@ -44,13 +46,14 @@ public sealed class AccountUsageSlot : INotifyPropertyChanged
     public bool IsDimmed => HasRefreshError || Freshness?.IsDimmed == true;
     public Visibility WarningVisibility => (IsDimmed || !string.IsNullOrEmpty(Warning)) && !IsEmpty ? Visibility.Visible : Visibility.Collapsed;
     public double UsageOpacity => IsDimmed ? 0.45 : 1;
-    public double Remaining => Usage is { IsResetPending: false } usage ? 100 - usage.Value : 0;
-    public string RemainingText => Usage == null || Usage.IsResetPending ? "—" : Fmt.Pct(Remaining);
+    bool AwaitingReset => Usage?.IsResetPending == true || Usage?.ResetsAt <= DateTimeOffset.Now;
+    public double Remaining => Usage is { IsUnknown: false } usage && !AwaitingReset ? usage.Remaining : 0;
+    public string RemainingText => Usage == null || Usage.IsUnknown || AwaitingReset ? "—" : Usage.IsUnlimited ? "∞" : Fmt.Pct(Remaining);
     public string Label => Usage?.Label ?? "확인 중";
     /// <summary>원 아래 짧은 라벨 ("주간", "5시간").</summary>
     public string ShortLabel => Label.Replace(" 한도", "");
     string? _resetTimer;
-    public string ResetTimer => _resetTimer ??= Usage?.ResetShort ?? "";
+    public string ResetTimer => AwaitingReset ? "리셋 확인 중" : _resetTimer ??= Usage?.ResetShort ?? "";
     public Brush LevelBrush => Usage?.LevelBrush ?? Palette.Muted;
     public Visibility ContentVisibility => IsEmpty ? Visibility.Hidden : Visibility.Visible;
     public Visibility RingVisibility => Usage == null ? Visibility.Hidden : Visibility.Visible;
@@ -67,7 +70,7 @@ public sealed class AccountUsageSlot : INotifyPropertyChanged
     public void Tick()
     {
         _resetTimer = Usage?.ResetShortAt(DateTimeOffset.Now) ?? "";
-        foreach (var name in new[] { nameof(ResetTimer), nameof(ToolTipText), nameof(IsDimmed), nameof(UsageOpacity), nameof(WarningVisibility) })
+        foreach (var name in new[] { nameof(ResetTimer), nameof(Remaining), nameof(RemainingText), nameof(ToolTipText), nameof(IsDimmed), nameof(UsageOpacity), nameof(WarningVisibility) })
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
     }
 

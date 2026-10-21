@@ -9,15 +9,16 @@ namespace AIUsageMonitor.UI;
 public sealed class Tray : IDisposable
 {
     readonly WinForms.NotifyIcon _icon;
-    readonly WinForms.ToolStripMenuItem _topmost, _characters, _startup, _usageAlerts, _activityAlerts, _login, _logout, _desktop;
+    readonly WinForms.ToolStripMenuItem _topmost, _characters, _taskbarUsage, _startup, _usageAlerts, _activityAlerts, _login, _logout, _desktop;
     bool _webLoggedIn;
     IntPtr _hIcon;
     string _iconSig = "";
 
-    public event Action? OpenRequested, RefreshRequested, ExitRequested, LoginRequested, LogoutRequested;
+    public event Action? OpenRequested, HideRequested, RefreshRequested, ExitRequested, LoginRequested, LogoutRequested;
     public event Action? AccountsRequested;
     public event Action<bool>? TopmostChanged, CharactersChanged, StartupChanged, UsageAlertsChanged, ActivityAlertsChanged;
     public event Action<bool>? ClaudeDesktopChanged;
+    public event Action<bool>? TaskbarUsageChanged;
     public event Action<string?>? GeminiPlanChanged;
     readonly List<WinForms.ToolStripMenuItem> _geminiPlans = [];
     public event Action? GeminiUnblockRequested;
@@ -32,16 +33,18 @@ public sealed class Tray : IDisposable
     public Tray(AppSettings s)
     {
         var menu = new WinForms.ContextMenuStrip();
-        menu.Items.Add("열기", null, (_, _) => OpenRequested?.Invoke());
+        menu.Items.Add("모니터 열기", null, (_, _) => OpenRequested?.Invoke());
+        menu.Items.Add("모니터 숨기기", null, (_, _) => HideRequested?.Invoke());
         menu.Items.Add("지금 새로고침", null, (_, _) => RefreshRequested?.Invoke());
         menu.Items.Add("계정 추가 및 사용량…", null, (_, _) => AccountsRequested?.Invoke());
         menu.Items.Add(new WinForms.ToolStripSeparator());
         _topmost = Check("항상 위에 표시", s.Topmost, v => TopmostChanged?.Invoke(v));
         _characters = Check("캐릭터 표시", s.ShowCharacters, v => CharactersChanged?.Invoke(v));
+        _taskbarUsage = Check("작업표시줄 사용량 표시", s.ShowTaskbarUsage, v => TaskbarUsageChanged?.Invoke(v));
         _startup = Check("Windows 시작 시 실행", s.StartWithWindows, v => StartupChanged?.Invoke(v));
         _usageAlerts = Check("사용량 경고 알림 (" + string.Join("/", s.AlertThresholds) + "%)", s.UsageAlerts, v => UsageAlertsChanged?.Invoke(v));
         _activityAlerts = Check("작업 완료·승인 대기 알림", s.ActivityAlerts, v => ActivityAlertsChanged?.Invoke(v));
-        menu.Items.AddRange([_topmost, _characters, _startup, _usageAlerts, _activityAlerts, new WinForms.ToolStripSeparator()]);
+        menu.Items.AddRange([_topmost, _characters, _taskbarUsage, _startup, _usageAlerts, _activityAlerts, new WinForms.ToolStripSeparator()]);
         _desktop = Check("Claude 데스크톱 로그인 자동 연결", s.ClaudeDesktopEnabled, value =>
         {
             ClaudeDesktopChanged?.Invoke(value);
@@ -86,6 +89,7 @@ public sealed class Tray : IDisposable
     }
 
     public void SetTopmost(bool v) => _topmost.Checked = v;
+    public void SetTaskbarUsage(bool v) => _taskbarUsage.Checked = v;
     public void SetGeminiPlan(string? plan)
     {
         foreach (var item in _geminiPlans) item.Checked = Equals(item.Tag, plan);

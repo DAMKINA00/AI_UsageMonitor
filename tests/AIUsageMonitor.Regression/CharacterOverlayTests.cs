@@ -53,6 +53,16 @@ internal static partial class Program
         Check("speech anchor ignores transparent space around the pose",
             bounds == new Rect(.25, .4, .5, .4), bounds.ToString());
 
+        byte[] mattePixels = [255, 0, 255, 1, 60, 80, 100, 255];
+        var matte = BitmapSource.Create(2, 1, 96, 96, PixelFormats.Bgra32, null, mattePixels, 8);
+        var clean = (BitmapSource)typeof(CharacterStage).GetMethod("ClearTransparentNoise", BindingFlags.NonPublic | BindingFlags.Static)!
+            .Invoke(null, [matte])!;
+        var cleaned = new byte[8];
+        clean.CopyPixels(cleaned, 8, 0);
+        Check("desktop sprites clear invisible matte while preserving body colors",
+            cleaned.Take(4).All(value => value == 0) && cleaned.Skip(4).SequenceEqual(mattePixels.Skip(4)),
+            string.Join(',', cleaned));
+
         TestCharacterPoseGeometry();
     }
 

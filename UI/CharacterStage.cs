@@ -37,7 +37,6 @@ public sealed class CharacterStage : Border
     readonly ScaleTransform _scale = new(1, 1);
     readonly RotateTransform _rot = new(0);
     readonly TranslateTransform _move = new(0, 0);
-    readonly Ellipse _shadow;
     readonly Canvas _fx = new() { IsHitTestVisible = false, ClipToBounds = false };
     readonly Grid _bubble = new() { HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Bottom, Margin = new Thickness(2, 0, 2, 0) };
     readonly TextBlock _bubbleText = new()
@@ -50,7 +49,7 @@ public sealed class CharacterStage : Border
     readonly DispatcherTimer _timer;
     readonly List<Particle> _particles = [];
     readonly Random _rng = new();
-    readonly Dictionary<string, BitmapImage?> _poseCache = new();
+    readonly Dictionary<string, BitmapSource?> _poseCache = new();
     readonly Dictionary<string, Rect> _visibleBounds = new();
     Rect _bodyBounds = new(0, 0, 1, 1);
 
@@ -73,14 +72,6 @@ public sealed class CharacterStage : Border
         };
         _root.Children.Add(_figureBox);
         _nextBubbleAt = _rng.NextDouble() * 4;
-
-        // 발밑의 옅은 바닥 그림자
-        _shadow = new Ellipse
-        {
-            Width = 92, Height = 10, Fill = new SolidColorBrush(Color.FromArgb(0x22, 0xFF, 0xFF, 0xFF)),
-            VerticalAlignment = VerticalAlignment.Bottom, HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 0, 0, 10),
-        };
-        _figure.Children.Add(_shadow);
 
         _img.RenderTransformOrigin = new Point(0.5, 1);
         _img.RenderTransform = new TransformGroup { Children = { _scale, _rot, _move } };
@@ -193,6 +184,19 @@ public sealed class CharacterStage : Border
     static readonly Geometry TailRight = Freeze(Geometry.Parse("M0,0 L9,6 L0,12"));
 
     public Mood Mood => _mood;
+    public bool ExternalWalking { get; set; }
+    public bool IsWalking { get; set; }
+    public bool FacingLeft { get; set; }
+    double _announcementUntil;
+
+    /// <summary>Event speech is shown once; regular mood updates cannot replay or cut it short.</summary>
+    public void ShowAnnouncement(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return;
+        ShowBubble(text);
+        _announcementUntil = _t + 6;
+        _bubbleShowFor = 6;
+    }
 
     /// <summary>창이 숨겨지면 애니메이션을 멈춘다.</summary>
     public void SetActive(bool active)
@@ -233,10 +237,13 @@ public sealed class CharacterStage : Border
             _popT = 0;
             ApplyPose();
             // 상태가 바뀌면 바로 새 상태의 대사로
-            if (_lines.Length > 0) ShowBubble(PickLine());
-            else HideBubble();
+            if (_t >= _announcementUntil)
+            {
+                if (_lines.Length > 0) ShowBubble(PickLine());
+                else HideBubble();
+            }
         }
-        else if (!_bubbleShown && _bubbleHideT > 1 && _lines.Length > 0 && _t >= _nextBubbleAt)
+        else if (_t >= _announcementUntil && !_bubbleShown && _bubbleHideT > 1 && _lines.Length > 0 && _t >= _nextBubbleAt)
         {
             ShowBubble(PickLine());
         }
@@ -365,12 +372,16 @@ public sealed class CharacterStage : Border
         return pieces;
     }
 
+    internal Rect BodyBoundsIn(Visual ancestor) => _img.ActualWidth <= 0 || _img.ActualHeight <= 0
+        ? Rect.Empty
+        : _img.TransformToAncestor(ancestor).TransformBounds(new Rect(
+            _bodyBounds.X * _img.ActualWidth, _bodyBounds.Y * _img.ActualHeight,
+            _bodyBounds.Width * _img.ActualWidth, _bodyBounds.Height * _img.ActualHeight));
+
     void PositionBubble()
     {
         if (_img.ActualWidth <= 0 || _root.ActualHeight <= 0) return;
-        var body = _img.TransformToAncestor(_root).TransformBounds(new Rect(
-            _bodyBounds.X * _img.ActualWidth, _bodyBounds.Y * _img.ActualHeight,
-            _bodyBounds.Width * _img.ActualWidth, _bodyBounds.Height * _img.ActualHeight));
+        var body = BodyBoundsIn(_root);
         if (_placement == BubblePlacement.Left)
         {
             // 꼬리 끝이 몸 왼쪽에 붙고, 말풍선 가운데가 머리 높이에 오도록 둔다. 무대 밖으로는 나가지 않는다.
@@ -455,7 +466,7 @@ public sealed class CharacterStage : Border
         ApplyImageSize();
     }
 
-    BitmapImage? LoadPose(string pose)
+    BitmapSource? LoadPose(string pose)
     {
         var key = $"{_character}_{pose}";
         if (!_poseCache.TryGetValue(key, out var bmp))
@@ -466,12 +477,13 @@ public sealed class CharacterStage : Border
             {
                 try
                 {
-                    bmp = new BitmapImage();
-                    bmp.BeginInit();
-                    bmp.UriSource = CharacterTheme.AssetUri(_character, pose);
-                    bmp.CacheOption = BitmapCacheOption.OnLoad;
-                    bmp.EndInit();
-                    bmp.Freeze();
+                    var decoded = new BitmapImage();
+                    decoded.BeginInit();
+                    decoded.UriSource = CharacterTheme.AssetUri(_character, pose);
+                    decoded.CacheOption = BitmapCacheOption.OnLoad;
+                    decoded.EndInit();
+                    decoded.Freeze();
+                    bmp = ClearTransparentNoise(decoded);
                 }
                 catch (Exception ex) when (ex is System.IO.IOException or NotSupportedException or InvalidOperationException or System.IO.FileFormatException)
                 {
@@ -482,6 +494,22 @@ public sealed class CharacterStage : Border
             if (bmp != null) _visibleBounds[key] = VisibleBounds(bmp);
         }
         return bmp;
+    }
+
+    static BitmapSource ClearTransparentNoise(BitmapSource bitmap)
+    {
+        var bgra = new FormatConvertedBitmap(bitmap, PixelFormats.Bgra32, null, 0);
+        int stride = bgra.PixelWidth * 4;
+        var pixels = new byte[stride * bgra.PixelHeight];
+        bgra.CopyPixels(pixels, stride, 0);
+        // Some sprites contain alpha=1 magenta matte pixels. Match the body-bound cutoff
+        // so this background is truly transparent on the desktop, including hit testing.
+        for (int i = 0; i < pixels.Length; i += 4)
+            if (pixels[i + 3] <= 12) Array.Clear(pixels, i, 4);
+        var result = BitmapSource.Create(bgra.PixelWidth, bgra.PixelHeight, bgra.DpiX, bgra.DpiY,
+            PixelFormats.Bgra32, null, pixels, stride);
+        result.Freeze();
+        return result;
     }
 
     static Rect VisibleBounds(BitmapSource bitmap)
@@ -583,15 +611,14 @@ public sealed class CharacterStage : Border
             sy *= s;
         }
 
-        _scale.ScaleX = sx;
+        _scale.ScaleX = sx * (ExternalWalking && FacingLeft ? -1 : 1);
         _scale.ScaleY = sy;
         _rot.Angle = rot;
         _move.X = x;
-        _move.Y = y;
+        _move.Y = y + (IsWalking ? -3 * Math.Abs(Math.Sin(_t * 8)) : 0);
         // Idle 포즈에서만 산책한다. 게임/독서/티타임, 작업, 졸음 등은 오른쪽 아래에 고정한다.
         // 왼쪽 말풍선 배치에서는 말풍선 자리를 침범하지 않도록 산책하지 않는다.
-        _wander.X = _mood == Mood.Idle && _placement == BubblePlacement.Above ? -18 * (1 - Math.Cos(_moodT * 2 * Math.PI / 12)) : 0;
-        _shadow.Width = 92 * (1 + y / 60);
+        _wander.X = !ExternalWalking && _mood == Mood.Idle && _placement == BubblePlacement.Above ? -18 * (1 - Math.Cos(_moodT * 2 * Math.PI / 12)) : 0;
 
         UpdateBubble(dt);
         PositionBubble();

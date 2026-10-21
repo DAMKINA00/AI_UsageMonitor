@@ -9,17 +9,22 @@ namespace AIUsageMonitor.UI;
 /// </summary>
 public sealed class MoodTracker(string character)
 {
-    static readonly TimeSpan HappyFor = TimeSpan.FromMinutes(15);
     static readonly TimeSpan SleepAfter = TimeSpan.FromMinutes(30);
 
     double? _lastUsed;
-    DateTimeOffset _happyUntil;
+    readonly Dictionary<string, QuotaObservation> _lastQuota = [];
+    readonly Dictionary<string, DateTimeOffset> _latestQuotaAsOf = [];
+    readonly HashSet<string> _announcedResetCycles = [];
+
+    sealed record QuotaObservation(double Used, DateTimeOffset AsOf);
+    sealed record VisibleQuota(string Identity, string Label, string Cycle, double Used, DateTimeOffset? AsOf, bool Valid);
 
     /// <param name="Lines">자리표시자를 채운 대사.</param>
     /// <param name="Keys">각 대사의 원문 템플릿 (Lines 와 같은 순서). 남은 시간이 바뀌어도 같은 대사로 알아보는 데 쓴다.</param>
     public sealed record Result(Mood Mood, string[] Lines, double? UsageDelta, bool Reset, Color DeltaColor)
     {
         public string[] Keys { get; init; } = Lines;
+        public string? ResetAnnouncement { get; init; }
     }
 
     public Result Update(ProviderCard card)
@@ -29,25 +34,83 @@ public sealed class MoodTracker(string character)
         double? delta = null;
         bool reset = false;
 
-        if (card.UsageResetPending) _happyUntil = default;
         if (!card.UsageResetPending && used is double u && _lastUsed is double last)
         {
-            if (last - u >= 15)
-            {
-                reset = true;
-                _happyUntil = now + HappyFor;
-            }
-            else if (u - last >= 1)
+            if (u - last >= 1)
             {
                 delta = u - last;
             }
         }
         if (!card.UsageResetPending && used != null) _lastUsed = used;
 
+        var quota = FindVisibleQuota(card, now);
+        if (quota is not null) reset = Observe(quota);
+
         var mood = Decide(card, used, now);
+        if (reset && mood is not (Mood.Panic or Mood.Working or Mood.Waiting)) mood = Mood.Happy;
         var color = used >= 90 ? Color.FromRgb(0xFF, 0x7A, 0x6E) : used >= 70 ? Color.FromRgb(0xFF, 0xC8, 0x6B) : Color.FromRgb(0x9B, 0xF0, 0xC0);
         var (lines, keys) = Lines(mood, card, used);
-        return new Result(mood, lines, delta, reset, color) { Keys = keys };
+        return new Result(mood, lines, delta, reset, color)
+        {
+            Keys = keys,
+            ResetAnnouncement = reset ? $"{quota!.Label} 100% 회복!\n다시 일할 준비 됐어요." : null,
+        };
+    }
+
+    bool Observe(VisibleQuota quota)
+    {
+        if (quota.AsOf is not { } asOf) return false;
+
+        var latest = _latestQuotaAsOf.TryGetValue(quota.Identity, out var identityAt) ? identityAt : DateTimeOffset.MinValue;
+        var labelIdentity = quota.Identity[..quota.Identity.LastIndexOf('\u001F')];
+        if (_latestQuotaAsOf.TryGetValue(labelIdentity, out var labelAt) && labelAt > latest) latest = labelAt;
+        if (asOf <= latest) return false;
+
+        _latestQuotaAsOf[quota.Identity] = asOf;
+        _latestQuotaAsOf[labelIdentity] = asOf;
+        if (!quota.Valid) return false;
+
+        bool reset = quota.Used == 0 && _lastQuota.TryGetValue(quota.Identity, out var previous) &&
+            previous.Used > 0 && _announcedResetCycles.Add(quota.Cycle);
+        _lastQuota[quota.Identity] = new(quota.Used, asOf);
+        return reset;
+    }
+
+    static VisibleQuota? FindVisibleQuota(ProviderCard card, DateTimeOffset now)
+    {
+        var rows = card.Usage.Count > 0 ? card.Usage : card.AccountUsage;
+        var row = rows.FirstOrDefault();
+        if (row is null) return null;
+
+        var raw = card.RawWindows
+            .Where(w => double.IsFinite(w.UsedPercent) && w.UsedPercent is >= 0 and <= 100 &&
+                Math.Abs(w.UsedPercent - row.Value) < 0.000001)
+            .OrderByDescending(w => string.Equals(w.Label, row.Label, StringComparison.Ordinal))
+            .ThenByDescending(w => w.ResetsAt == row.ResetsAt)
+            .ThenBy(w => WindowRank(row.Label, w.Key))
+            .FirstOrDefault();
+        var key = raw?.Key ?? row.Label;
+        var identity = $"{card.Name}\u001F{card.Account ?? ""}\u001F{row.Label}\u001F{key}";
+        var reset = raw?.ResetsAt ?? row.ResetsAt;
+        var cycle = $"{identity}\u001F{reset?.UtcTicks.ToString() ?? "none"}";
+        bool valid = card.Status.KindAt(now) == StatusKind.Fresh &&
+            (card.Status.State is StatusKind.None or StatusKind.Fresh) &&
+            !card.UsageResetPending &&
+            !row.IsUnknown && !row.IsUnlimited && !row.IsResetPending &&
+            double.IsFinite(row.Value) && row.Value is >= 0 and <= 100 &&
+            (row.ResetsAt is not { } at || at > now);
+        return new(identity, row.Label, cycle, row.Value, card.Status.AsOf, valid);
+    }
+
+    static int WindowRank(string label, string key)
+    {
+        bool five = label.Contains("5시간", StringComparison.OrdinalIgnoreCase) ||
+            key.Contains("five", StringComparison.OrdinalIgnoreCase) || key.Contains("w300", StringComparison.OrdinalIgnoreCase);
+        bool weekly = label.Contains("주간", StringComparison.OrdinalIgnoreCase) ||
+            key.Contains("weekly", StringComparison.OrdinalIgnoreCase) || key.Contains("seven_day", StringComparison.OrdinalIgnoreCase) ||
+            key.Contains("w10080", StringComparison.OrdinalIgnoreCase);
+        return (label.Contains("5시간", StringComparison.OrdinalIgnoreCase) && five) ||
+            (label.Contains("주간", StringComparison.OrdinalIgnoreCase) && weekly) ? 0 : 1;
     }
 
     Mood Decide(ProviderCard card, double? used, DateTimeOffset now)
@@ -60,7 +123,6 @@ public sealed class MoodTracker(string character)
             if (used >= 70) return Mood.WorkingHard;
             return Mood.Working;
         }
-        if (now < _happyUntil) return Mood.Happy;
         if (used >= 90) return Mood.Exhausted;
         if (used >= 70) return Mood.Tired;
         if (!card.AppRunning) return Mood.Sleeping;

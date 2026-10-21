@@ -309,35 +309,33 @@ internal static partial class Program
         {
             window.Show();
             PumpDisplay();
-            var root = (FrameworkElement)window.Content;
-            var rows = Descendants(root).OfType<ContentControl>().Where(c => c.Content is ProviderCard).Select(c => ((ProviderCard)c.Content).Name).ToList();
-            Check("four provider rows are stacked top to bottom", rows.SequenceEqual(["Claude", "Codex", "Gemini", "Grok"]), string.Join(",", rows));
+            var root = FindNamed<Grid>(window, "Root");
+            var field = FindNamed<Canvas>(window, "CharacterField");
+            var items = FindNamed<ItemsControl>(window, "PlatformItems");
+            var scroll = FindNamed<ScrollViewer>(window, "PlatformScroll");
+            Check("stage window is transparent and uses the named surfaces", window.AllowsTransparency &&
+                window.WindowStyle == WindowStyle.None && window.ResizeMode == ResizeMode.NoResize && !window.ShowInTaskbar &&
+                window.Background is SolidColorBrush background && background.Color == Colors.Transparent &&
+                root.Background == null && field.Background == null && scroll.Background == null && window.FindName("Toolbar") == null,
+                $"transparent={window.AllowsTransparency}, background={window.Background}, resize={window.ResizeMode}");
 
-            var small = Descendants(root).OfType<TextBlock>()
-                .Where(t => t.IsVisible && t.ActualWidth > 0 && t.FontSize < 10)
-                .Select(t => $"{t.Text}={t.FontSize}").ToList();
-            Check("every visible text is at least 10 DIP", small.Count == 0, string.Join(", ", small.Take(5)));
+            var slots = items.Items.OfType<AccountUsageSlot>().ToList();
+            Check("four registered accounts render as four platform blocks without placeholders", slots.Count == 4 &&
+                slots.All(slot => !slot.IsEmpty) && slots.Select(slot => slot.Provider).SequenceEqual(["Claude", "Codex", "Gemini", "Grok"]),
+                string.Join(",", slots.Select(slot => $"{slot.Provider}:{slot.IsEmpty}")));
+            Check("platform scroll surface is horizontal only", scroll.VerticalScrollBarVisibility == ScrollBarVisibility.Disabled &&
+                scroll.HorizontalScrollBarVisibility == ScrollBarVisibility.Auto,
+                $"scroll={scroll.HorizontalScrollBarVisibility}/{scroll.VerticalScrollBarVisibility}");
 
-            var chips = Descendants(root).OfType<TextBlock>().Where(t => t.IsVisible && t.Text.StartsWith("⚠ 오래됨")).ToList();
-            Check("stale Gemini data is visible in the row header", chips.Count == 1, chips.Count.ToString());
+            var stages = new[] { window.Claude, window.Codex, window.Gemini, window.Grok };
+            Check("four characters use the fixed independent stage size", window.CharactersShown && field.ActualHeight >= 178 &&
+                stages.All(stage => stage.Width == 144 && stage.Height == 178 && stage.FigureHeight == 106 && stage.IsVisible),
+                string.Join(",", stages.Select(stage => $"{stage.Character}:{stage.Width}x{stage.Height}/{stage.FigureHeight}")));
 
             Check("Gemini stage follows the art in the resources", window.Gemini.HasArt == CharacterTheme.HasAsset("gemini", "idle"),
                 window.Gemini.HasArt.ToString());
             Check("Grok stage follows the art in the resources", window.Grok.HasArt == CharacterTheme.HasAsset("grok", "idle"),
                 window.Grok.HasArt.ToString());
-
-            // 말풍선은 같은 행에서 캐릭터 왼쪽의 사용량 영역 위에 뜬다.
-            window.Claude.SetMood(Mood.Working, ["코드 정리 중이에요. 잔소리는 사양할게요"]);
-            PumpDisplay(400);
-            var bubble = (Grid)PrivateField<CharacterStage>("_bubble").GetValue(window.Claude)!;
-            var image = (Image)PrivateField<CharacterStage>("_img").GetValue(window.Claude)!;
-            var bodyBounds = (Rect)PrivateField<CharacterStage>("_bodyBounds").GetValue(window.Claude)!;
-            var bubbleRect = bubble.TransformToAncestor(window.Claude).TransformBounds(new Rect(0, 0, bubble.ActualWidth, bubble.ActualHeight));
-            var body = image.TransformToAncestor(window.Claude).TransformBounds(new Rect(bodyBounds.X * image.ActualWidth, bodyBounds.Y * image.ActualHeight,
-                bodyBounds.Width * image.ActualWidth, bodyBounds.Height * image.ActualHeight));
-            Check("speech bubble sits left of the character inside its own row", bubble.IsVisible && bubbleRect.Left >= -0.5 &&
-                bubbleRect.Top >= -0.5 && bubbleRect.Bottom <= window.Claude.ActualHeight + 0.5 && bubbleRect.Right <= body.Left + 1,
-                $"bubble={bubbleRect}, body={body}, stage={window.Claude.ActualWidth}x{window.Claude.ActualHeight}");
 
             var size = new Size(window.Width, window.Height);
             window.ApplyCharacters(false);
@@ -346,6 +344,11 @@ internal static partial class Program
                 window.Width == size.Width && window.Height == size.Height && !window.Claude.IsVisible && !window.Grok.IsVisible,
                 $"{window.Width}x{window.Height}");
             window.ApplyCharacters(true);
+            PumpDisplay();
+            Check("showing characters restores all four stages without resizing", window.CharactersShown &&
+                stages.All(stage => stage.IsVisible) && window.Width == size.Width && window.Height == size.Height,
+                $"size={window.Width}x{window.Height}");
+            RenderFixture(window, "compact-stage");
         }
         finally { window.Close(); }
         var settingsAfter = File.Exists(Paths.SettingsFile) ? File.ReadAllBytes(Paths.SettingsFile) : null;

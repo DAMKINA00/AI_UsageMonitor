@@ -306,7 +306,7 @@ internal static partial class Program
             before >= 120 && after > before && bubbleText.Text.Replace("\n", " ").Contains("승인해 주세요!"),
             $"before={before:0.#}, after={after:0.#}");
 
-        // L2·L3: 같은 구간 안에서 크기를 바꾸면 리소스를 다시 넣지 않고, 디스플레이가 바뀌면 화면 밖 창만 끌어온다
+        // The desktop platform follows the work area instead of restoring portrait/resizable bounds.
         var vm = new MainViewModel();
         vm.Update(CompactProviderCard("Claude", "C"), CompactProviderCard("Codex", "X"), "");
         var window = new MainWindow(vm, new AppSettings { ShowCharacters = true }, _ => { })
@@ -317,36 +317,28 @@ internal static partial class Program
         {
             window.Show();
             PumpDisplay();
-            var appVisibility = window.Resources["AppStatusVisibility"];
-            window.Width = 700;
-            PumpDisplay();
-            var sameVisibility = window.Resources["AppStatusVisibility"];
-            window.Width = 500;
-            PumpDisplay();
-            Check("resizing within a layout band keeps the template resources",
-                ReferenceEquals(appVisibility, sameVisibility) && !ReferenceEquals(sameVisibility, window.Resources["AppStatusVisibility"]) &&
-                window.Mode == LayoutMode.Medium, $"mode={window.Mode}");
+            Check("desktop platform uses transparent fixed dock layout", window.AllowsTransparency &&
+                window.ResizeMode == ResizeMode.NoResize, $"transparent={window.AllowsTransparency}");
 
             Rect Area() => (Rect)typeof(MainWindow).GetMethod("CurrentWorkArea", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
                 .Invoke(window, null)!;
             var hwnd = new System.Windows.Interop.WindowInteropHelper(window).Handle;
             double virtualRight = SystemParameters.VirtualScreenLeft + SystemParameters.VirtualScreenWidth;
-            // 모든 모니터의 오른쪽 끝에 200 DIP 만 걸쳐 둔 창은 그대로
             window.Left = virtualRight - 200;
             PumpDisplay();
             SendMessage(hwnd, 0x007E, IntPtr.Zero, IntPtr.Zero);
             PumpDisplay(300);
-            Check("a window partly past the edge stays where the user put it", Math.Abs(window.Left - (virtualRight - 200)) < 0.5 && window.Width == 500,
+            var docked = MainWindow.DockBounds(Area(), 4);
+            Check("display change reanchors the platform above the taskbar", Math.Abs(window.Left - docked.Left) < 0.5 && window.Width == docked.Width,
                 $"left={window.Left}, width={window.Width}");
-            // 어느 모니터에도 거의 보이지 않으면 가장 가까운 작업 영역으로 끌어온다 (크기는 그대로)
             window.Left = virtualRight + 3000;
             PumpDisplay();
             SendMessage(hwnd, 0x001A, new IntPtr(0x002F), IntPtr.Zero);
             PumpDisplay(300);
             var area = Area();
             var visible = Rect.Intersect(new Rect(window.Left, window.Top, window.Width, window.Height), area);
-            Check("a work-area change pulls a lost window back without resizing it",
-                !visible.IsEmpty && visible.Width >= window.Width - 0.5 && window.Width == 500 && window.Height == MainWindow.DefaultHeight,
+            Check("a work-area change returns lost platforms to the nearest work area",
+                !visible.IsEmpty && visible.Width >= window.Width - 0.5 && window.Width == MainWindow.DockBounds(area, 4).Width && window.Height == MainWindow.DefaultHeight,
                 $"left={window.Left}, area={area}");
         }
         finally { window.Close(); }

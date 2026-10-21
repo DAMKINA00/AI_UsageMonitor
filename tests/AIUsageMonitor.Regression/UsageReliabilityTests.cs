@@ -77,7 +77,8 @@ internal static partial class Program
             !pendingMood.Reset && pendingMood.Mood != Mood.Happy, $"reset={pendingMood.Reset}, mood={pendingMood.Mood}");
         SetClaude(Window("five_hour", 0, future), Window("seven_day", 20, future));
         var resetMood = mood.Update(Presenter.Claude(monitor, new AppSettings(), () => { }));
-        Check("server confirmation permits the reset celebration", resetMood.Reset && resetMood.Mood == Mood.Happy,
+        Check("nonzero displayed recovery does not trigger a reset celebration",
+            !resetMood.Reset && resetMood.ResetAnnouncement == null && resetMood.Mood != Mood.Happy,
             $"reset={resetMood.Reset}, mood={resetMood.Mood}");
 
         SetClaude(Window("seven_day", 95, now.AddSeconds(-1)));
