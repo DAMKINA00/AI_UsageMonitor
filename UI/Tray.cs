@@ -10,6 +10,7 @@ public sealed class Tray : IDisposable
 {
     readonly WinForms.NotifyIcon _icon;
     readonly WinForms.ToolStripMenuItem _topmost, _characters, _taskbarUsage, _startup, _usageAlerts, _activityAlerts, _login, _logout, _desktop;
+    readonly Action<string, string, bool>? _notification;
     bool _webLoggedIn;
     IntPtr _hIcon;
     string _iconSig = "";
@@ -23,6 +24,7 @@ public sealed class Tray : IDisposable
     readonly List<WinForms.ToolStripMenuItem> _geminiPlans = [];
     public event Action? GeminiUnblockRequested;
     readonly WinForms.ToolStripMenuItem _geminiUnblock;
+    public bool ClaudeLoggedIn => _webLoggedIn;
 
     /// <summary>'Gemini 조회 차단 해제' 메뉴를 차단됐을 때만 보인다.</summary>
     public void SetGeminiBlocked(bool blocked)
@@ -30,8 +32,9 @@ public sealed class Tray : IDisposable
         if (_geminiUnblock.Visible != blocked) _geminiUnblock.Visible = blocked;
     }
 
-    public Tray(AppSettings s)
+    public Tray(AppSettings s, bool visible = true, Action<string, string, bool>? notification = null)
     {
+        _notification = notification;
         var menu = new WinForms.ContextMenuStrip();
         menu.Items.Add("모니터 열기", null, (_, _) => OpenRequested?.Invoke());
         menu.Items.Add("모니터 숨기기", null, (_, _) => HideRequested?.Invoke());
@@ -71,11 +74,11 @@ public sealed class Tray : IDisposable
         }
         SetGeminiPlan(s.GeminiPlanOverride);
         menu.Items.Add(geminiPlan);
-        menu.Items.Add("데이터 폴더 열기", null, (_, _) => OpenFolder(Paths.AppData));
+        menu.Items.Add("데이터 폴더 열기", null, (_, _) => OpenDataFolder());
         menu.Items.Add(new WinForms.ToolStripSeparator());
         menu.Items.Add("종료", null, (_, _) => ExitRequested?.Invoke());
 
-        _icon = new WinForms.NotifyIcon { ContextMenuStrip = menu, Text = "AI 사용량 모니터", Visible = true };
+        _icon = new WinForms.NotifyIcon { ContextMenuStrip = menu, Text = "AI 사용량 모니터", Visible = visible };
         _icon.MouseClick += (_, e) => { if (e.Button == WinForms.MouseButtons.Left) OpenRequested?.Invoke(); };
         SetLoggedIn(s.ClaudeWebEnabled);
         UpdateIcon(null, null, null);
@@ -149,8 +152,13 @@ public sealed class Tray : IDisposable
         : $"설정을 읽지 못해 기본값으로 시작했습니다. 원본 백업: 데이터 폴더의 {System.IO.Path.GetFileName(s.BackupFile)}. " +
           "다음 저장 때 settings.json 이 기본값으로 바뀌고 추가 계정 연결 목록도 비게 됩니다.";
 
-    public void Balloon(string title, string text, bool warning) =>
-        _icon.ShowBalloonTip(6000, title, text, warning ? WinForms.ToolTipIcon.Warning : WinForms.ToolTipIcon.Info);
+    public void Balloon(string title, string text, bool warning)
+    {
+        if (_notification is { } notification) notification(title, text, warning);
+        else _icon.ShowBalloonTip(6000, title, text, warning ? WinForms.ToolTipIcon.Warning : WinForms.ToolTipIcon.Info);
+    }
+
+    public void OpenDataFolder() => OpenFolder(Paths.AppData);
 
     static void OpenFolder(string path)
     {

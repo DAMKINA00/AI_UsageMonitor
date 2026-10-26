@@ -204,6 +204,8 @@ dotnet publish -c Release -r win-x64 --self-contained false -p:PublishSingleFile
 진단: `AIUsageMonitor.exe --render-png 화면.png` — 12초 뒤 창과 표시 중인 작업표시줄 요약(`화면-taskbar.png`), 배치 정보(`화면.png.placement.json`)를 저장하고 종료합니다.
 로그: `%LOCALAPPDATA%\AIUsageMonitor\monitor.log`
 
+호스트 모드: `AIUsageMonitor.exe --hosted`는 ChatterBox가 private 표준입출력으로 제어하는 자식 프로세스 모드입니다. 이 모드에서는 자체 트레이 아이콘과 Windows 시작 등록을 사용하지 않으며, 기존 설정·로그·WebView·계정 저장 경로와 단독 실행 동작은 그대로 유지합니다. 명령과 상태·알림·오류는 줄 단위 JSON으로 표준입출력에 전달합니다.
+
 ## 회귀 검증
 
 ```bash

@@ -15,6 +15,7 @@ internal static partial class Program
     [STAThread]
     static int Main(string[] args)
     {
+        if (args.Contains("hosted-protocol")) return RunHostedProtocolTests();
         if (args.Contains("hold-pipe")) return HoldPipe();
         if (args.Contains("/usage")) return FakeAgy(args);
         if (args.Contains("app-server")) return FakeCodexServer();

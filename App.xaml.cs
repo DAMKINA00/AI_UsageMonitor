@@ -1,5 +1,6 @@
 using System.Windows;
 using System.Windows.Threading;
+using System.Text.Json;
 using AIUsageMonitor.Core;
 using AIUsageMonitor.UI;
 using Microsoft.Win32;
@@ -32,16 +33,32 @@ public partial class App : Application
     DispatcherTimer? _clock;
     bool _firstUpdate = true;
     bool _demo;
+    bool _hosted;
+    HostedProtocolWriter? _hostedProtocol;
+    CancellationTokenSource? _hostedInputLifetime;
+    string? _hostedState;
+    int _exitStarted;
 
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
 
+        _hosted = e.Args.Any(x => string.Equals(x, "--hosted", StringComparison.OrdinalIgnoreCase));
+        if (_hosted) _hostedProtocol = new HostedProtocolWriter(Console.Out);
+
         _mutex = new Mutex(true, MutexName, out bool createdNew);
         if (!createdNew)
         {
-            // 이미 실행 중이면 기존 창을 띄우고 종료
-            try { EventWaitHandle.OpenExisting(ShowEventName).Set(); } catch { }
+            if (_hosted)
+            {
+                _hostedProtocol!.Error("AI 사용량 모니터가 이미 실행 중입니다. 기존 단독 실행을 종료한 뒤 호스트 모드로 시작하세요.");
+                Environment.ExitCode = 2;
+            }
+            else
+            {
+                // 이미 실행 중이면 기존 창을 띄우고 종료
+                try { EventWaitHandle.OpenExisting(ShowEventName).Set(); } catch { }
+            }
             Shutdown();
             return;
         }
@@ -58,7 +75,8 @@ public partial class App : Application
         _vm = new MainViewModel();
         _monitor = new MonitorService(_settings);
         _window = new MainWindow(_vm, _settings);
-        _tray = new Tray(_settings);
+        Action<string, string, bool>? notification = _hosted ? _hostedProtocol!.Notification : null;
+        _tray = new Tray(_settings, visible: !_hosted, notification: notification);
         _taskbar = new TaskbarWidget();
         // 설정을 읽지 못했으면 시작할 때 한 번만 알린다
         if (Tray.SettingsLoadNotice(_settings) is { } notice) _tray.Balloon("AI 사용량 모니터", notice, true);
@@ -67,7 +85,7 @@ public partial class App : Application
 
         WireUp();
         _taskbar.SetEnabled(_settings.ShowTaskbarUsage);
-        SyncStartupRegistration();
+        if (!_hosted) SyncStartupRegistration();
 
         _showEvent = new EventWaitHandle(false, EventResetMode.AutoReset, ShowEventName);
         new Thread(() =>
@@ -81,7 +99,13 @@ public partial class App : Application
         _clock = new DispatcherTimer { Interval = TimeSpan.FromSeconds(15) };
         _clock.Tick += (_, _) => { _vm.Tick(); _taskbar.Tick(); };
         _clock.Start();
-        if (!e.Args.Contains("--minimized")) _window.ShowAndActivate();
+        if (!_hosted && !e.Args.Contains("--minimized")) _window.ShowAndActivate();
+
+        if (_hosted)
+        {
+            EmitHostedState(force: true);
+            StartHostedInput();
+        }
 
         // 진단용: 캐릭터 상태를 하나씩 띄워 PNG로 저장하고 종료
         var moodsIdx = Array.IndexOf(e.Args, "--render-moods");
@@ -173,11 +197,12 @@ public partial class App : Application
                 _settings.Save();
                 _tray.Balloon("AI 사용량 모니터", "트레이에서 계속 실행됩니다. 아이콘을 클릭하면 다시 열립니다.", false);
             }
+            EmitHostedState();
         };
 
-        _tray.OpenRequested += () => _window.ShowAndActivate();
-        _tray.HideRequested += () => _window.Hide();
-        _taskbar.OpenRequested += () => _window.ShowAndActivate();
+        _tray.OpenRequested += ShowMonitor;
+        _tray.HideRequested += HideMonitor;
+        _taskbar.OpenRequested += ShowMonitor;
         _taskbar.RefreshRequested += RefreshAllAccounts;
         _taskbar.PlacementChanged += () => _window.SetTaskbarInset(_taskbar.DesktopInset);
         _taskbar.HideRequested += () => SetTaskbarUsage(false);
@@ -186,43 +211,91 @@ public partial class App : Application
         _tray.AccountsRequested += ShowAccounts;
         _tray.ExitRequested += ExitApp;
         _tray.TopmostChanged += SetTopmost;
-        _tray.GeminiPlanChanged += plan =>
+        _tray.GeminiPlanChanged += SetGeminiPlan;
+        _tray.CharactersChanged += SetCharacters;
+        _tray.StartupChanged += SetStartup;
+        _tray.UsageAlertsChanged += SetUsageAlerts;
+        _tray.ActivityAlertsChanged += SetActivityAlerts;
+        _tray.LoginRequested += RequestClaudeLogin;
+        _tray.ClaudeDesktopChanged += SetClaudeDesktop;
+        _tray.LogoutRequested += () => _ = LogoutClaudeAsync();
+        _monitor.ClaudeWeb.LoginWindowClosed += () =>
         {
-            _settings.GeminiPlanOverride = plan;
-            _settings.Save();
-            _tray.SetGeminiPlan(plan);
-            Render();
+            _tray.SetLoggedIn(true);
+            EmitHostedState();
         };
-        _tray.CharactersChanged += v =>
+        _tray.GeminiUnblockRequested += () => _ = UnblockGeminiAsync();
+    }
+
+    void ShowMonitor() => _window.ShowAndActivate();
+
+    void HideMonitor() => _window.Hide();
+
+    void SetGeminiPlan(string? plan)
+    {
+        _settings.GeminiPlanOverride = plan;
+        _settings.Save();
+        _tray.SetGeminiPlan(plan);
+        Render();
+    }
+
+    void SetCharacters(bool on)
+    {
+        _settings.ShowCharacters = on;
+        _settings.Save();
+        _window.ApplyCharacters(on);
+        EmitHostedState();
+    }
+
+    void SetStartup(bool on)
+    {
+        _settings.StartWithWindows = on;
+        _settings.Save();
+        if (!_hosted) SyncStartupRegistration();
+        EmitHostedState();
+    }
+
+    void SetUsageAlerts(bool on)
+    {
+        _settings.UsageAlerts = on;
+        _settings.Save();
+        EmitHostedState();
+    }
+
+    void SetActivityAlerts(bool on)
+    {
+        _settings.ActivityAlerts = on;
+        _settings.Save();
+        EmitHostedState();
+    }
+
+    void SetClaudeDesktop(bool on)
+    {
+        _monitor.SetClaudeDesktopEnabled(on);
+        EmitHostedState();
+    }
+
+    void RequestClaudeLogin() => _monitor.ClaudeWeb.ShowLogin();
+
+    async Task LogoutClaudeAsync()
+    {
+        await _monitor.LogoutClaudeAsync();
+        _tray.SetLoggedIn(false);
+        EmitHostedState();
+    }
+
+    async Task UnblockGeminiAsync()
+    {
+        try
         {
-            _settings.ShowCharacters = v;
-            _settings.Save();
-            _window.ApplyCharacters(v);
-        };
-        _tray.StartupChanged += v =>
+            await GeminiBlockAction.RunAsync(_monitor, text => GeminiBlockAction.Confirm(_window, text));
+            EmitHostedState();
+        }
+        catch (Exception ex)
         {
-            _settings.StartWithWindows = v;
-            _settings.Save();
-            SyncStartupRegistration();
-        };
-        _tray.UsageAlertsChanged += v => { _settings.UsageAlerts = v; _settings.Save(); };
-        _tray.ActivityAlertsChanged += v => { _settings.ActivityAlerts = v; _settings.Save(); };
-        _tray.LoginRequested += () => _monitor.ClaudeWeb.ShowLogin();
-        _tray.ClaudeDesktopChanged += value => _monitor.SetClaudeDesktopEnabled(value);
-        _tray.LogoutRequested += async () =>
-        {
-            await _monitor.LogoutClaudeAsync();
-            _tray.SetLoggedIn(false);
-        };
-        _monitor.ClaudeWeb.LoginWindowClosed += () => _tray.SetLoggedIn(true);
-        _tray.GeminiUnblockRequested += async () =>
-        {
-            try
-            {
-                await GeminiBlockAction.RunAsync(_monitor, text => GeminiBlockAction.Confirm(_window, text));
-            }
-            catch (Exception ex) { Log.Write($"gemini unblock failed: {ex.Message}"); }
-        };
+            Log.Write($"gemini unblock failed: {ex.Message}");
+            _hostedProtocol?.Error($"Gemini 조회 차단 해제에 실패했습니다: {ex.Message}");
+        }
     }
 
     void SetTopmost(bool on)
@@ -231,6 +304,7 @@ public partial class App : Application
         _settings.Save();
         _window.ApplyTopmost(on);
         _tray.SetTopmost(on);
+        EmitHostedState();
     }
 
     void SetTaskbarUsage(bool on)
@@ -239,12 +313,14 @@ public partial class App : Application
         _settings.Save();
         _tray.SetTaskbarUsage(on);
         _taskbar.SetEnabled(on);
+        EmitHostedState();
     }
 
     void RefreshAllAccounts()
     {
         _monitor.RefreshAll();
         _ = _secondaryAccounts.RefreshAsync(force: true);
+        EmitHostedState();
     }
 
     void ShowAccounts()
@@ -252,6 +328,110 @@ public partial class App : Application
         _window.ShowAndActivate();
         _window.SetAccountsOpen(true);
         Render();
+    }
+
+    void StartHostedInput()
+    {
+        _hostedInputLifetime = new CancellationTokenSource();
+        var input = Console.OpenStandardInput();
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await HostedProtocol.ReadLinesAsync(input, HandleHostedInput,
+                    _hostedInputLifetime.Token);
+                DispatchHostedExit();
+            }
+            catch (OperationCanceledException) when (_hostedInputLifetime.IsCancellationRequested) { }
+            catch (Exception ex)
+            {
+                Log.Write($"hosted input failed: {ex.Message}");
+                _hostedProtocol?.Error("호스트 입력을 읽지 못했습니다.");
+                DispatchHostedExit();
+            }
+        }, _hostedInputLifetime.Token);
+    }
+
+    void HandleHostedInput(HostedInputLine line)
+    {
+        if (line.Error is { } inputError)
+        {
+            _hostedProtocol?.Error(inputError);
+            return;
+        }
+
+        if (!HostedProtocol.TryParseCommand(line.Text!, out var command, out var error))
+        {
+            _hostedProtocol?.Error(error);
+            return;
+        }
+
+        try { Dispatcher.BeginInvoke(new Action(() => _ = HandleHostedCommandAsync(command))); }
+        catch (InvalidOperationException) { }
+    }
+
+    void DispatchHostedExit()
+    {
+        if (Volatile.Read(ref _exitStarted) != 0) return;
+        try { Dispatcher.BeginInvoke(new Action(ExitApp)); }
+        catch (InvalidOperationException) { }
+    }
+
+    async Task HandleHostedCommandAsync(HostedCommand command)
+    {
+        if (Volatile.Read(ref _exitStarted) != 0) return;
+        try
+        {
+            switch (command.Name)
+            {
+                case "show": ShowMonitor(); break;
+                case "hide": HideMonitor(); break;
+                case "refresh": RefreshAllAccounts(); break;
+                case "accounts": ShowAccounts(); break;
+                case "topmost": SetTopmost(command.BoolValue!.Value); break;
+                case "characters": SetCharacters(command.BoolValue!.Value); break;
+                case "taskbar": SetTaskbarUsage(command.BoolValue!.Value); break;
+                case "startup": SetStartup(command.BoolValue!.Value); break;
+                case "usage-alerts": SetUsageAlerts(command.BoolValue!.Value); break;
+                case "activity-alerts": SetActivityAlerts(command.BoolValue!.Value); break;
+                case "claude-desktop": SetClaudeDesktop(command.BoolValue!.Value); break;
+                case "claude-login": RequestClaudeLogin(); break;
+                case "claude-logout": await LogoutClaudeAsync(); break;
+                case "gemini-unblock": await UnblockGeminiAsync(); break;
+                case "gemini-plan": SetGeminiPlan(command.GeminiPlan); break;
+                case "data-folder": _tray.OpenDataFolder(); break;
+                case "quit": ExitApp(); return;
+            }
+            EmitHostedState();
+        }
+        catch (Exception ex)
+        {
+            Log.Write($"hosted command '{command.Name}' failed: {ex.Message}");
+            _hostedProtocol?.Error($"명령 실행에 실패했습니다: {ex.Message}");
+        }
+    }
+
+    void EmitHostedState(bool force = false)
+    {
+        if (!_hosted || Volatile.Read(ref _exitStarted) != 0) return;
+        var state = new
+        {
+            visible = _window.IsVisible && _window.WindowState != WindowState.Minimized,
+            topmost = _window.Topmost,
+            characters = _window.CharactersShown,
+            taskbar = _settings.ShowTaskbarUsage,
+            startup = _settings.StartWithWindows,
+            usageAlerts = _settings.UsageAlerts,
+            activityAlerts = _settings.ActivityAlerts,
+            claudeDesktop = _settings.ClaudeDesktopEnabled,
+            claudeLoggedIn = _tray.ClaudeLoggedIn,
+            geminiBlocked = _monitor.GeminiUnsupported,
+            geminiPlan = _settings.GeminiPlanOverride,
+        };
+        var signature = JsonSerializer.Serialize(state);
+        if (!force && signature == _hostedState) return;
+        _hostedState = signature;
+        _hostedProtocol!.State(state);
     }
 
     void Render()
@@ -313,6 +493,7 @@ public partial class App : Application
             _firstUpdate = false;
             _alerts.MarkBaseline();
         }
+        EmitHostedState();
     }
 
     static void Animate(CharacterStage stage, MoodTracker.Result r)
@@ -346,6 +527,8 @@ public partial class App : Application
 
     void ExitApp()
     {
+        if (Interlocked.Exchange(ref _exitStarted, 1) != 0) return;
+        try { _hostedInputLifetime?.Cancel(); } catch (ObjectDisposedException) { }
         _window.AllowClose = true;
         _settings.Save();
         _clock?.Stop();
