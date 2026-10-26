@@ -16,9 +16,6 @@ public static class Paths
     public static string CodexHome =>
         Environment.GetEnvironmentVariable("CODEX_HOME") is { Length: > 0 } d ? d : Path.Combine(Home, ".codex");
 
-    /// <summary>Antigravity CLI(agy)가 대화 요약·로그를 두는 폴더.</summary>
-    public static string AgyHome => Path.Combine(Home, ".gemini", "antigravity-cli");
-
     /// <summary>이 변수가 있으면 설정·로그·WebView·추가 계정 폴더를 그 아래에 둔다 (회귀 테스트가 사용자 데이터를 건드리지 않게).</summary>
     public const string DataDirVariable = "AIUSAGEMONITOR_DATA_DIR";
 
@@ -84,17 +81,6 @@ public sealed class AppSettings
     public string? CodexExePath { get; set; }
     public string? GrokExePath { get; set; }
     public int GrokPollSeconds { get; set; } = 300;
-    /// <summary>Gemini(Antigravity CLI) 사용량 조회. null 이면 agy 실행 파일을 찾았을 때만 켠다.</summary>
-    public bool? GeminiEnabled { get; set; }
-    /// <summary>`agy -p /usage` 를 실행하는 간격 (최소 120초).</summary>
-    public int GeminiPollSeconds { get; set; } = 300;
-    /// <summary>진행 중이 아닌 Antigravity 대화를 세션 목록에 남겨 두는 시간.</summary>
-    public int GeminiActiveHours { get; set; } = 12;
-    public string? AgyExePath { get; set; }
-    /// <summary>agy가 구독 등급을 제공하지 않을 때 사용자가 선택한 표시값.</summary>
-    public string? GeminiPlanOverride { get; set; }
-    /// <summary>/usage 를 명령으로 처리하지 않은 agy 실행 파일의 지문 (경로|크기|수정 시각). 같은 파일로는 조회하지 않는다.</summary>
-    public string? AgyBlockedFingerprint { get; set; }
     public double? WindowLeft { get; set; }
     public double? WindowTop { get; set; }
     /// <summary>사용자가 끌어서 정한 창 크기 (DIP). null 이면 기본 크기.</summary>
@@ -409,7 +395,7 @@ public static class ProcessUtil
         }
     }
 
-    // 이 앱이 조회용으로 잠깐 띄운 프로세스 (codex app-server, agy /usage). 실행 판정에서 뺀다.
+    // 이 앱이 조회용으로 잠깐 띄운 프로세스 (codex app-server, Grok ACP). 실행 판정에서 뺀다.
     static readonly System.Collections.Concurrent.ConcurrentDictionary<int, byte> OwnPids = new();
 
     public static void RegisterOwnProcess(int pid) => OwnPids[pid] = 0;

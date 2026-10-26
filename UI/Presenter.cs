@@ -114,7 +114,7 @@ public sealed class SessionRow : INotifyPropertyChanged
 }
 
 /// <summary>카드 헤더의 상태 칩 종류. 앞쪽 다섯 개는 조회 결과에서, Busy·Fresh·Stale 은 시각에서 정한다.</summary>
-public enum StatusKind { None, LoginRequired, NotInstalled, Disabled, Unsupported, Failed, Busy, Fresh, Stale }
+public enum StatusKind { None, LoginRequired, NotInstalled, Disabled, Failed, Busy, Fresh, Stale }
 
 /// <summary>
 /// 데이터 기준 시각과 조회 상태. "N분 전"·오래됨 판정은 시간에 따라 바뀌므로 카드 서명에 넣지 않고,
@@ -145,7 +145,7 @@ public sealed class StatusChip : INotifyPropertyChanged
 
     public StatusKind KindAt(DateTimeOffset now) => State switch
     {
-        StatusKind.LoginRequired or StatusKind.NotInstalled or StatusKind.Disabled or StatusKind.Unsupported => State,
+        StatusKind.LoginRequired or StatusKind.NotInstalled or StatusKind.Disabled => State,
         _ when Busy => StatusKind.Busy,
         StatusKind.Failed => StatusKind.Failed,
         _ when AsOf == null => StatusKind.None,
@@ -156,8 +156,7 @@ public sealed class StatusChip : INotifyPropertyChanged
     public string TextAt(DateTimeOffset now) => KindAt(now) switch
     {
         StatusKind.LoginRequired => "로그인 필요",
-        StatusKind.NotInstalled => Detail?.StartsWith("Grok") == true ? "Grok 미설치" : "agy 미설치",
-        StatusKind.Unsupported => AgyCli.UnsupportedMessage,
+        StatusKind.NotInstalled => "CLI 미설치",
         StatusKind.Disabled => "꺼짐",
         StatusKind.Failed => "⚠ 조회 실패",
         StatusKind.Busy => "갱신 중…",
@@ -177,7 +176,7 @@ public sealed class StatusChip : INotifyPropertyChanged
     public Brush Brush => Kind switch
     {
         StatusKind.Failed or StatusKind.LoginRequired => Palette.Bad,
-        StatusKind.Stale or StatusKind.Unsupported => Palette.Warn,
+        StatusKind.Stale => Palette.Warn,
         _ => Palette.Muted,
     };
 
@@ -187,16 +186,15 @@ public sealed class StatusChip : INotifyPropertyChanged
         {
             var now = DateTimeOffset.Now;
             var kind = KindAt(now);
-            // 로그인 필요·미지원은 서비스별 안내(Detail)가 일반 문구보다 정확하므로 그것만 쓴다
-            if (kind is StatusKind.LoginRequired or StatusKind.Unsupported && !string.IsNullOrEmpty(Detail))
+            // 로그인 필요는 서비스별 안내(Detail)가 일반 문구보다 정확하므로 그것만 쓴다
+            if (kind == StatusKind.LoginRequired && !string.IsNullOrEmpty(Detail))
                 return AsOf is { } since ? $"{Detail}\n기준 시각 {Fmt.When(since)} ({AgoAt(now)})" : Detail;
             var lines = new List<string>
             {
                 kind switch
                 {
                     StatusKind.LoginRequired => "로그인이 필요합니다.",
-                    StatusKind.NotInstalled => "Antigravity CLI(agy)를 찾지 못했습니다.",
-                    StatusKind.Unsupported => "설치된 agy 가 /usage 조회를 지원하지 않아 조회를 멈췄습니다. agy 를 업데이트하면 다시 시도합니다.",
+                    StatusKind.NotInstalled => "CLI를 찾지 못했습니다.",
                     StatusKind.Disabled => "설정에서 조회를 껐습니다.",
                     StatusKind.Failed => "마지막 조회가 실패했습니다. 이전 값을 흐리게 표시합니다.",
                     StatusKind.Busy => "사용량을 다시 확인하는 중입니다.",
@@ -266,7 +264,7 @@ public sealed class ProviderCard
     public required string SessionsHeader { get; init; }
     public List<SessionRow> Sessions { get; init; } = [];
     public string? SessionsEmpty { get; init; }
-    /// <summary>헤더 상태 칩 (갱신 중 / N분 전 / 오래됨 / 조회 실패 / 로그인 필요 / agy 미설치).</summary>
+    /// <summary>헤더 상태 칩 (갱신 중 / N분 전 / 오래됨 / 조회 실패 / 로그인 필요 / CLI 미설치).</summary>
     public StatusChip Status { get; init; } = new();
 
     /// <summary>트레이 아이콘과 알림용: 가장 많이 쓴 한도의 사용률.</summary>
@@ -336,13 +334,12 @@ public sealed class RelayCommand(Action run) : ICommand
 
 public sealed class MainViewModel : INotifyPropertyChanged
 {
-    ProviderCard? _claude, _codex, _gemini, _grok;
+    ProviderCard? _claude, _codex, _grok;
     string _footer = "";
-    string _claudeSig = "", _codexSig = "", _geminiSig = "", _grokSig = "";
+    string _claudeSig = "", _codexSig = "", _grokSig = "";
 
     public ProviderCard? Claude => _claude;
     public ProviderCard? Codex => _codex;
-    public ProviderCard? Gemini => _gemini;
     public ProviderCard? Grok => _grok;
     public string Footer => _footer;
 
@@ -350,14 +347,10 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
     public void Update(ProviderCard claude, ProviderCard codex, string footer) => Update(claude, codex, null, footer);
 
-    public void Update(ProviderCard claude, ProviderCard codex, ProviderCard? gemini, string footer)
-        => Update(claude, codex, gemini, null, footer);
-
-    public void Update(ProviderCard claude, ProviderCard codex, ProviderCard? gemini, ProviderCard? grok, string footer)
+    public void Update(ProviderCard claude, ProviderCard codex, ProviderCard? grok, string footer)
     {
         Apply(ref _claude, ref _claudeSig, claude, nameof(Claude));
         Apply(ref _codex, ref _codexSig, codex, nameof(Codex));
-        if (gemini != null) Apply(ref _gemini, ref _geminiSig, gemini, nameof(Gemini));
         if (grok != null) Apply(ref _grok, ref _grokSig, grok, nameof(Grok));
         if (footer != _footer) { _footer = footer; Raise(nameof(Footer)); }
     }
@@ -380,7 +373,6 @@ public sealed class MainViewModel : INotifyPropertyChanged
     {
         _claude?.Tick();
         _codex?.Tick();
-        _gemini?.Tick();
         _grok?.Tick();
     }
 
@@ -455,8 +447,6 @@ public static class Presenter
     // 기준 시각이 조회 주기의 이 배수보다 오래되면 "오래됨" (너무 자주 깜빡이지 않게 최소 5분)
     const int StaleFactor = 3;
     static readonly TimeSpan MinStaleAfter = TimeSpan.FromMinutes(5);
-
-    public const string GeminiPrefix = "gemini:";
 
     static TimeSpan StaleAfter(int pollSeconds, int minPollSeconds) =>
         TimeSpan.FromSeconds(Math.Max(MinStaleAfter.TotalSeconds, StaleFactor * Math.Max(minPollSeconds, pollSeconds)));
@@ -658,102 +648,6 @@ public static class Presenter
         var threads = local?.Threads ?? [];
         return Build("Codex", Palette.Codex, usage, local is { DesktopRunning: true } or { CliProcessCount: > 0 }, app, appBrush, good?.Email, notice, null, null, empty,
             Footnote(usage), threads, "최근 활동한 스레드 없음", status);
-    }
-
-    /// <summary>
-    /// Antigravity CLI(agy)로 읽은 Gemini 카드. 원형 그래프는 gemini 그룹 창만 쓰고,
-    /// 같은 결과에 들어 있는 Claude·GPT 그룹 쿼터는 툴팁(Extras)으로만 보여 준다.
-    /// </summary>
-    public static ProviderCard Gemini(MonitorService m, AppSettings? s = null)
-    {
-        s ??= DefaultSettings;
-        var local = m.GeminiLocal;
-        var good = m.GeminiRemoteGood;
-        var last = m.GeminiRemoteLast;
-        bool installed = local?.Installed == true;
-        bool enabled = m.GeminiEnabled;
-
-        UsageSnapshot? usage = null;
-        if (good?.Usage is { } full)
-        {
-            var others = full.Windows.Where(w => !w.Key.StartsWith(GeminiPrefix, StringComparison.Ordinal))
-                .Select(w => $"{w.Label} {Fmt.Pct(Math.Clamp(w.UsedPercent, 0, 100))} 사용");
-            usage = new UsageSnapshot
-            {
-                Windows = full.Windows.Where(w => w.Key.StartsWith(GeminiPrefix, StringComparison.Ordinal)).ToList(),
-                AsOf = full.AsOf, Source = full.Source, Plan = full.Plan,
-                Extras = full.Extras.Concat(others).ToList(), Warning = full.Warning,
-            };
-        }
-
-        string? notice = usage?.Warning, empty = null, detail = null;
-        StatusKind state;
-        // 차단이 남아 있으면 로컬 상태를 읽기 전에도 바로 보인다 (agy 를 지운 경우와 조회를 끈 경우는 그쪽이 우선)
-        if (enabled && m.GeminiUnsupported && (local == null || installed))
-        {
-            state = StatusKind.Unsupported;
-            detail = $"{AgyCli.UnsupportedMessage}: 설치된 agy 가 /usage 조회를 지원하지 않아 Gemini 조회를 멈췄습니다.\n" +
-                     $"agy 를 업데이트하면 다시 확인하고, 트레이 메뉴 '{GeminiBlockAction.MenuText}'로 직접 풀 수도 있습니다.";
-            notice = $"{AgyCli.UnsupportedMessage} — agy 를 업데이트하거나 트레이 메뉴 '{GeminiBlockAction.MenuText}'를 쓰세요.";
-        }
-        else if (local == null && good == null) state = StatusKind.None;
-        else if (!installed && good == null)
-        {
-            state = StatusKind.NotInstalled;
-            empty = "Antigravity CLI(agy)가 설치되어 있지 않습니다.";
-        }
-        else if (!enabled)
-        {
-            state = StatusKind.Disabled;
-            empty ??= usage == null ? "설정에서 Gemini 조회를 껐습니다." : null;
-        }
-        else if (last is { Unsupported: true } && s.AgyBlockedFingerprint == null)
-        {
-            // 사용자가 직접 차단을 풀었고 그 확인 조회를 기다리는 중이다 (결과가 오면 정상 또는 다시 차단으로 바뀐다)
-            state = StatusKind.None;
-            notice = m.GeminiRemoteBusy ? "Gemini 사용량을 다시 확인하는 중입니다." : "새로고침하면 Gemini 사용량을 다시 확인합니다.";
-        }
-        else if (last is { Unsupported: true })
-        {
-            // agy 실행 파일이 바뀌어 차단은 풀렸지만 아직 다시 조회하지 않았다 (자동 조회는 미지원 판정 후 24시간 쉰다)
-            state = StatusKind.Unsupported;
-            detail = $"{AgyCli.UnsupportedMessage}였던 agy 가 바뀌었습니다. 새로고침하면 바로 다시 확인합니다.";
-            notice = "agy 가 바뀌었습니다. 새로고침하면 Gemini 사용량을 다시 확인합니다.";
-        }
-        else if (last is { LoginRequired: true } || m.GeminiPollingPaused || m.GeminiWaitingForManualRefresh)
-        {
-            state = StatusKind.LoginRequired;
-            var reason = last?.Error is { Length: > 0 } error && error != AgyCli.LoginRequiredMessage ? $"\n({error})" : "";
-            // 평문 안내로만 로그인 필요를 안 경우는 자동 재확인을 하지 않으므로 60분 문구를 빼고 새로고침만 안내한다
-            detail = m.GeminiWaitingForManualRefresh
-                ? $"{AgyCli.LoginRequiredMessage}\n자동으로 다시 확인하지 않습니다. 터미널에서 agy 를 실행해 로그인한 뒤 새로고침하세요.{reason}"
-                : $"{AgyCli.LoginRequiredMessage}\n터미널에서 agy 를 실행해 로그인한 뒤 새로고침하면 바로 다시 확인합니다 (그 전까지는 60분마다 확인).{reason}";
-            notice = $"{AgyCli.LoginRequiredMessage} 터미널에서 agy 를 실행해 로그인한 뒤 새로고침하세요.";
-        }
-        else if (last is { Ok: false })
-        {
-            state = StatusKind.Failed;
-            detail = last.Error;
-            notice ??= usage == null ? $"사용량 조회 실패: {last.Error}" : $"조회 실패 (이전 값 표시 중): {last.Error}";
-        }
-        else state = StatusKind.None;
-        if (local?.SessionsError is { } sessionsError) notice ??= sessionsError;
-        if (usage == null && empty == null)
-            empty = m.GeminiRemoteBusy ? "사용량을 불러오는 중…" : "사용량 데이터 없음";
-
-        var (app, appBrush) = local switch
-        {
-            null => ("확인 중…", (Brush)Palette.Muted),
-            { Installed: false } => ("agy 미설치", Palette.Muted),
-            { CliProcessCount: > 0 } => ("CLI 실행 중", Palette.Ok),
-            _ => ("실행 안 됨", Palette.Muted),
-        };
-
-        var status = new StatusChip(state, usage?.AsOf, StaleAfter(s.GeminiPollSeconds, 120), m.GeminiRemoteBusy, detail);
-        return Build("Gemini", Palette.Gemini, usage, local is { CliProcessCount: > 0 }, app, appBrush, local?.Account, notice, null, null, empty,
-            Footnote(usage), local?.Sessions ?? [],
-            installed ? "최근 Antigravity 대화 없음" : "agy 를 설치하면 대화 상태를 표시합니다", status,
-            s.GeminiPlanOverride is { Length: > 0 } plan ? plan : "등급 확인 불가");
     }
 
     public static ProviderCard Grok(MonitorService monitor, AppSettings? settings = null)

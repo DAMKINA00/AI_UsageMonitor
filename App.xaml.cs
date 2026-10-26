@@ -211,7 +211,6 @@ public partial class App : Application
         _tray.AccountsRequested += ShowAccounts;
         _tray.ExitRequested += ExitApp;
         _tray.TopmostChanged += SetTopmost;
-        _tray.GeminiPlanChanged += SetGeminiPlan;
         _tray.CharactersChanged += SetCharacters;
         _tray.StartupChanged += SetStartup;
         _tray.UsageAlertsChanged += SetUsageAlerts;
@@ -224,20 +223,11 @@ public partial class App : Application
             _tray.SetLoggedIn(true);
             EmitHostedState();
         };
-        _tray.GeminiUnblockRequested += () => _ = UnblockGeminiAsync();
     }
 
     void ShowMonitor() => _window.ShowAndActivate();
 
     void HideMonitor() => _window.Hide();
-
-    void SetGeminiPlan(string? plan)
-    {
-        _settings.GeminiPlanOverride = plan;
-        _settings.Save();
-        _tray.SetGeminiPlan(plan);
-        Render();
-    }
 
     void SetCharacters(bool on)
     {
@@ -282,20 +272,6 @@ public partial class App : Application
         await _monitor.LogoutClaudeAsync();
         _tray.SetLoggedIn(false);
         EmitHostedState();
-    }
-
-    async Task UnblockGeminiAsync()
-    {
-        try
-        {
-            await GeminiBlockAction.RunAsync(_monitor, text => GeminiBlockAction.Confirm(_window, text));
-            EmitHostedState();
-        }
-        catch (Exception ex)
-        {
-            Log.Write($"gemini unblock failed: {ex.Message}");
-            _hostedProtocol?.Error($"Gemini 조회 차단 해제에 실패했습니다: {ex.Message}");
-        }
     }
 
     void SetTopmost(bool on)
@@ -397,8 +373,6 @@ public partial class App : Application
                 case "claude-desktop": SetClaudeDesktop(command.BoolValue!.Value); break;
                 case "claude-login": RequestClaudeLogin(); break;
                 case "claude-logout": await LogoutClaudeAsync(); break;
-                case "gemini-unblock": await UnblockGeminiAsync(); break;
-                case "gemini-plan": SetGeminiPlan(command.GeminiPlan); break;
                 case "data-folder": _tray.OpenDataFolder(); break;
                 case "quit": ExitApp(); return;
             }
@@ -425,8 +399,6 @@ public partial class App : Application
             activityAlerts = _settings.ActivityAlerts,
             claudeDesktop = _settings.ClaudeDesktopEnabled,
             claudeLoggedIn = _tray.ClaudeLoggedIn,
-            geminiBlocked = _monitor.GeminiUnsupported,
-            geminiPlan = _settings.GeminiPlanOverride,
         };
         var signature = JsonSerializer.Serialize(state);
         if (!force && signature == _hostedState) return;
@@ -446,20 +418,17 @@ public partial class App : Application
             else _monitor.ClaudeWeb.ShowLogin();
         });
         var codex = Presenter.Codex(_monitor, _settings);
-        var gemini = Presenter.Gemini(_monitor, _settings);
         var grok = Presenter.Grok(_monitor, _settings);
         claude.AccountSlots = AccountUsageSlot.Create(claude, _secondaryAccounts.Accounts,
             _secondaryAccounts.Accounts.Count(a => a.Settings.Provider == AccountProvider.Claude));
         codex.AccountSlots = AccountUsageSlot.Create(codex, _secondaryAccounts.Accounts,
             _secondaryAccounts.Accounts.Count(a => a.Settings.Provider == AccountProvider.Codex));
-        // Gemini 는 서브 계정을 지원하지 않는다
-        gemini.AccountSlots = AccountUsageSlot.Create(gemini, _secondaryAccounts.Accounts, secondarySlots: 0);
         grok.AccountSlots = AccountUsageSlot.Create(grok, _secondaryAccounts.Accounts, secondarySlots: 0);
-        _vm.Update(claude, codex, gemini, grok, "");
-        _taskbar.Update([claude, codex, gemini, grok]);
+        _vm.Update(claude, codex, grok, "");
+        _taskbar.Update([claude, codex, grok]);
         if (_window.IsAccountsOpen)
         {
-            var accounts = AccountUsageCard.Create(claude, codex, _secondaryAccounts, gemini, grok);
+            var accounts = AccountUsageCard.Create(claude, codex, _secondaryAccounts, grok);
             var signature = string.Join('\n', accounts.Select(x => x.Signature));
             if (_accountsSignature != signature)
             {
@@ -472,22 +441,17 @@ public partial class App : Application
         {
             Animate(_window.Claude, _claudeMood.Update(claude));
             Animate(_window.Codex, _codexMood.Update(codex));
-            Animate(_window.Gemini, _geminiMood.Update(gemini));
             Animate(_window.Grok, _grokMood.Update(grok));
         }
 
-        _tray.UpdateIcon(claude.MaxUsed, codex.MaxUsed, gemini.MaxUsed, grok.MaxUsed);
-        _tray.SetTooltip(Tray.Tooltip([claude, codex, gemini, grok]));
-        _tray.SetGeminiBlocked(_monitor.GeminiUnsupported);
+        _tray.UpdateIcon(claude.MaxUsed, codex.MaxUsed, grok.MaxUsed);
+        _tray.SetTooltip(Tray.Tooltip([claude, codex, grok]));
 
         _alerts.CheckUsage("Claude", claude.RawWindows);
         _alerts.CheckUsage("Codex", codex.RawWindows);
-        // Gemini 카드의 RawWindows 는 gemini 그룹 창만 담는다 (Claude·GPT 그룹은 툴팁 전용)
-        _alerts.CheckUsage("Gemini", gemini.RawWindows);
         _alerts.CheckUsage("Grok", grok.RawWindows);
         if (_monitor.ClaudeLocal != null) _alerts.CheckActivity("Claude", Presenter.ClaudeSessions(_monitor));
         if (_monitor.CodexLocal is { } xl) _alerts.CheckActivity("Codex", xl.Threads);
-        if (_monitor.GeminiLocal is { } gl) _alerts.CheckActivity("Gemini", gl.Sessions);
         if (_firstUpdate && _monitor.ClaudeLocal != null && _monitor.CodexLocal != null)
         {
             _firstUpdate = false;

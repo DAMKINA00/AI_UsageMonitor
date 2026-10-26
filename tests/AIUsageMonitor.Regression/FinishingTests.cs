@@ -1,5 +1,6 @@
 using System.IO;
 using System.Reflection;
+using System.Text.Json;
 using System.Windows;
 using AIUsageMonitor.Core;
 using AIUsageMonitor.UI;
@@ -11,11 +12,37 @@ internal static partial class Program
     static void TestFinishing()
     {
         TestNoRepeatedTemplate();
-        TestGeminiUnblock().GetAwaiter().GetResult();
-        TestGeminiLoginMessage();
+        TestLegacyGeminiSettingsIgnored();
         TestSettingsLoadSafety();
         TestSettingsLoadEdgeCases();
         TestReviewFollowUps();
+    }
+
+    static void TestLegacyGeminiSettingsIgnored()
+    {
+        var id = Guid.NewGuid().ToString("N");
+        var json = JsonSerializer.Serialize(new
+        {
+            SettingsVersion = AppSettings.CurrentSettingsVersion,
+            GeminiEnabled = true,
+            GeminiPollSeconds = 1,
+            GeminiActiveHours = 1,
+            AgyExePath = @"C:\missing\agy.exe",
+            AgyBlockedFingerprint = "legacy",
+            SecondaryAccounts = new[] { new { Id = id, Provider = AccountProvider.Claude } },
+        });
+        var settings = AppSettings.Parse(json);
+        var written = JsonSerializer.Serialize(settings);
+        Check("legacy Gemini CLI settings are ignored without enabling a provider or losing account state",
+            settings.SecondaryAccounts is [{ Id: var loadedId, Provider: AccountProvider.Claude }] && loadedId == id &&
+            !written.Contains("GeminiEnabled", StringComparison.Ordinal) &&
+            !written.Contains("GeminiPollSeconds", StringComparison.Ordinal) &&
+            !written.Contains("GeminiActiveHours", StringComparison.Ordinal) &&
+            !written.Contains("AgyExePath", StringComparison.Ordinal) &&
+            !written.Contains("AgyBlockedFingerprint", StringComparison.Ordinal) &&
+            typeof(MonitorService).GetProperty("GeminiEnabled") == null &&
+            typeof(MonitorService).GetMethod("RefreshGeminiRemoteAsync") == null,
+            $"account={settings.SecondaryAccounts.Count}, legacyWritten={written.Contains("AgyExePath", StringComparison.Ordinal)}");
     }
 
     /// <summary>잘못된 인코딩·사라진 파일·빈 파일·너무 큰 파일·백업 개수·저장 차단 로그 (임시 폴더에서만).</summary>
@@ -30,14 +57,14 @@ internal static partial class Program
         {
             // ANSI(cp949)로 저장한 한글("한글" = C7 D1 B1 DB)은 UTF-8 이 아니다: 깨진 채 읽지 않고 실패 → 백업 → 원본 보존
             var ansi = Path.Combine(dir, "ansi.json");
-            byte[] ansiBytes = [.. "{\"SettingsVersion\": 2, \"AgyBlockedFingerprint\": \""u8, 0xC7, 0xD1, 0xB1, 0xDB, .. "\"}"u8];
+            byte[] ansiBytes = [.. "{\"SettingsVersion\": 2, \"LegacyGeminiCliFlag\": \""u8, 0xC7, 0xD1, 0xB1, 0xDB, .. "\"}"u8];
             File.WriteAllBytes(ansi, ansiBytes);
             var ansiLoaded = AppSettings.Load(ansi);
             Check("an ANSI (cp949) encoded settings file fails instead of loading replacement characters, and the original is backed up",
-                ansiLoaded is { LoadedFrom: AppSettings.LoadResult.Failed, Migrated: false, SaveBlocked: false, AgyBlockedFingerprint: null } &&
+                ansiLoaded is { LoadedFrom: AppSettings.LoadResult.Failed, Migrated: false, SaveBlocked: false } &&
                 Backups("ansi.json") is [var ansiBackup] && File.ReadAllBytes(ansiBackup).AsSpan().SequenceEqual(ansiBytes) &&
                 File.ReadAllBytes(ansi).AsSpan().SequenceEqual(ansiBytes) && Tray.SettingsLoadNotice(ansiLoaded) != null,
-                $"result={ansiLoaded.LoadedFrom}, fp={ansiLoaded.AgyBlockedFingerprint}, backups={Backups("ansi.json").Length}");
+                $"result={ansiLoaded.LoadedFrom}, backups={Backups("ansi.json").Length}");
             // BOM 이 있어도 같은 엄격 디코딩: UTF-8 BOM 뒤의 cp949 바이트, 짝이 맞지 않는 UTF-16 서로게이트
             var bomAnsi = Path.Combine(dir, "bom-ansi.json");
             File.WriteAllBytes(bomAnsi, [0xEF, 0xBB, 0xBF, .. ansiBytes]);
@@ -158,7 +185,7 @@ internal static partial class Program
         try
         {
             var file = Path.Combine(dir, "settings.json");
-            var corrupt = "{ \"SecondaryAccounts\": [ { \"Id\": \"abc\" } ], \"AgyBlockedFingerprint\": \"fp\", \"WindowLeft\": 10, ";
+            var corrupt = "{ \"SecondaryAccounts\": [ { \"Id\": \"abc\" } ], \"LegacyGeminiCliFlag\": \"fp\", \"WindowLeft\": 10, ";
             File.WriteAllText(file, corrupt);
             var broken = AppSettings.Load(file);
             var backups = Directory.GetFiles(dir, "settings.json.bak-*");
@@ -209,7 +236,7 @@ internal static partial class Program
             var bomUtf16 = Path.Combine(dir, "bom-utf16.json");
             File.WriteAllText(bomUtf16, currentJson, System.Text.Encoding.Unicode);
             var bomUtf16Be = Path.Combine(dir, "bom-utf16be.json");
-            File.WriteAllText(bomUtf16Be, System.Text.Json.JsonSerializer.Serialize(new { ShowCharacters = true, SettingsVersion = AppSettings.CurrentSettingsVersion, AgyBlockedFingerprint = "한글" }),
+            File.WriteAllText(bomUtf16Be, System.Text.Json.JsonSerializer.Serialize(new { ShowCharacters = true, SettingsVersion = AppSettings.CurrentSettingsVersion, LegacyGeminiCliFlag = "한글" }),
                 System.Text.Encoding.BigEndianUnicode);
             var current = AppSettings.Load(bomCurrent);
             var old = AppSettings.Load(bomOld);
@@ -220,7 +247,7 @@ internal static partial class Program
                 current is { LoadedFrom: AppSettings.LoadResult.Loaded, Migrated: false, ShowCharacters: true, BackupFile: null } &&
                 old is { LoadedFrom: AppSettings.LoadResult.Loaded, Migrated: true, ShowCharacters: true, Topmost: false, SettingsVersion: AppSettings.CurrentSettingsVersion } &&
                 utf16 is { LoadedFrom: AppSettings.LoadResult.Loaded, Migrated: false, ShowCharacters: true } &&
-                utf16Be is { LoadedFrom: AppSettings.LoadResult.Loaded, Migrated: false, ShowCharacters: true, AgyBlockedFingerprint: "한글" } &&
+                utf16Be is { LoadedFrom: AppSettings.LoadResult.Loaded, Migrated: false, ShowCharacters: true } &&
                 Directory.GetFiles(dir, "bom-*.bak-*").Length == 0,
                 $"current={current.LoadedFrom}, old={old.LoadedFrom}/{old.Migrated}, utf16={utf16.LoadedFrom}, utf16be={utf16Be.LoadedFrom}");
             current.Save();
@@ -269,30 +296,6 @@ internal static partial class Program
             suffixed is [{ Label: "5시간 한도", Value: 95 }] && weeklySuffixed is [{ Label: "주간 한도", Value: 30 }] &&
             Presenter.DisplayUsage([new UsageWindow("gemini:pro_w300x", "기타", 50, now.AddHours(1))], now).Count == 0,
             $"{DescribeRows(suffixed)} / {DescribeRows(weeklySuffixed)}");
-
-        // L6: 사용자가 직접 차단을 푼 직후의 확인 조회는 중립 문구
-        var cleared = new AppSettings { GeminiEnabled = true, AgyBlockedFingerprint = null };
-        using (var monitor = GeminiMonitor(cleared, new GeminiLocalState { Installed = true, ExecutableFingerprint = "fp" }, null,
-                   new GeminiRemoteResult { Unsupported = true, Error = AgyCli.UnsupportedMessage }, busy: true))
-        {
-            var card = Presenter.Gemini(monitor, cleared);
-            Check("right after a manual unblock the card says it is checking again",
-                card.Status.Kind == StatusKind.Busy && card.Notice == "Gemini 사용량을 다시 확인하는 중입니다." && card.Notice?.Contains("바뀌었") == false,
-                $"{card.Status.Text}/{card.Notice}");
-        }
-
-        // 5: 평문 로그인 안내로 자동 조회를 멈췄으면 60분 문구 없이 새로고침만 안내한다
-        var settings = new AppSettings { GeminiEnabled = true };
-        using (var waiting = GeminiMonitor(settings, GeminiLocalFixture(now), null,
-                   new GeminiRemoteResult { LoginRequired = true, PlainTextLogin = true, Error = AgyCli.LoginRequiredMessage }, paused: true))
-        {
-            SetProperty(waiting, nameof(MonitorService.GeminiWaitingForManualRefresh), true);
-            var card = Presenter.Gemini(waiting, settings);
-            var tip = card.Status.ToolTipText;
-            Check("waiting for a manual refresh drops the hourly retry wording",
-                card.Status.Text == "로그인 필요" && tip.StartsWith(AgyCli.LoginRequiredMessage) && tip.Contains("새로고침") && !tip.Contains("60분") &&
-                card.Notice?.Contains("새로고침") == true, tip);
-        }
 
         // L5: 캐릭터 열의 말풍선은 첫 배치부터 글자 폭 120 DIP 이상이고, 그림 크기가 바뀌면 다시 줄바꿈한다
         var stage = new CharacterStage { Character = "gemini", BubblePlacement = BubblePlacement.Left, FigureHeight = 150, Width = 224 };
@@ -385,64 +388,4 @@ internal static partial class Program
         Check("a single available line is still shown", (string)pick.Invoke(stage, null)! == "리셋까지 5분 남았네요…", "no line");
     }
 
-    static async Task TestGeminiUnblock()
-    {
-        var previousScenario = Environment.GetEnvironmentVariable(FakeAgyScenario);
-        Environment.SetEnvironmentVariable(FakeAgyScenario, "success");
-        try
-        {
-            // 가짜 agy(이 테스트 실행 파일)를 쓴다. 사용자 설정 파일에는 저장하지 않는다.
-            var exe = Environment.ProcessPath!;
-            int saves = 0;
-            var settings = new AppSettings { GeminiEnabled = true, AgyExePath = exe, AgyBlockedFingerprint = AgyCli.Fingerprint(exe) };
-            using var monitor = new MonitorService(settings, _ => saves++);
-            var asked = new List<string>();
-
-            Check("blocked agy offers the unblock action", monitor.GeminiUnsupported && Presenter.Gemini(monitor, settings).Status.Kind == StatusKind.Unsupported,
-                Presenter.Gemini(monitor, settings).Status.Text);
-            bool declined = await GeminiBlockAction.RunAsync(monitor, text => { asked.Add(text); return false; });
-            Check("declining the confirmation keeps the block and runs nothing",
-                !declined && asked.SequenceEqual([GeminiBlockAction.ConfirmText]) && settings.AgyBlockedFingerprint != null &&
-                saves == 0 && monitor.GeminiRemoteLast == null, $"saves={saves}, asked={asked.Count}");
-            Check("the confirmation warns that one quota use is possible",
-                GeminiBlockAction.ConfirmText == "agy 가 /usage 를 일반 프롬프트로 처리하는 버전이면 이번 조회에서 쿼터가 1회 쓰일 수 있습니다. 계속할까요?" &&
-                GeminiBlockAction.MenuText == "Gemini 조회 차단 해제", GeminiBlockAction.ConfirmText);
-
-            bool cleared = await GeminiBlockAction.RunAsync(monitor, text => { asked.Add(text); return true; });
-            Check("confirming clears the block, saves and queries once", cleared && settings.AgyBlockedFingerprint == null && saves >= 1 &&
-                monitor.GeminiRemoteLast is { Ok: true } && !monitor.GeminiUnsupported &&
-                Presenter.Gemini(monitor, settings).Status.Kind != StatusKind.Unsupported,
-                $"cleared={cleared}, saves={saves}, last={monitor.GeminiRemoteLast?.Error ?? "ok"}");
-
-            bool again = await GeminiBlockAction.RunAsync(monitor, text => { asked.Add(text); return true; });
-            Check("the unblock action does nothing when Gemini is not blocked", !again && asked.Count == 2, $"asked={asked.Count}");
-
-            // 지문을 알 수 없을 때도 차단이 남아 있으면 미지원으로 본다
-            using var unknown = new MonitorService(new AppSettings { GeminiEnabled = true, AgyBlockedFingerprint = "unknown" }, _ => { });
-            SetProperty(unknown, nameof(MonitorService.GeminiLocal), new GeminiLocalState { Installed = true, ExecutableFingerprint = null });
-            var unknownCard = Presenter.Gemini(unknown);
-            Check("a block with an unknown agy fingerprint stays visible with the unblock hint",
-                unknown.GeminiUnsupported && unknownCard.Status.Text == AgyCli.UnsupportedMessage &&
-                unknownCard.Status.ToolTipText.Contains(GeminiBlockAction.MenuText), unknownCard.Status.ToolTipText);
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable(FakeAgyScenario, previousScenario);
-        }
-    }
-
-    static void TestGeminiLoginMessage()
-    {
-        var now = DateTimeOffset.Now;
-        var login = new GeminiRemoteResult { LoginRequired = true, Error = AgyCli.LoginRequiredMessage };
-        using var monitor = GeminiMonitor(new AppSettings { GeminiEnabled = true }, GeminiLocalFixture(now), null, login, paused: true);
-        var card = Presenter.Gemini(monitor);
-        var tip = card.Status.ToolTipText;
-        int count = 0;
-        for (int i = tip.IndexOf(AgyCli.LoginRequiredMessage, StringComparison.Ordinal); i >= 0;
-             i = tip.IndexOf(AgyCli.LoginRequiredMessage, i + 1, StringComparison.Ordinal)) count++;
-        Check("agy login message reads naturally in the chip, tooltip and notice",
-            card.Status.Text == "로그인 필요" && tip.StartsWith(AgyCli.LoginRequiredMessage) && count == 1 && tip.Contains("60분") &&
-            card.Notice?.StartsWith(AgyCli.LoginRequiredMessage) == true, $"{tip} / {card.Notice}");
-    }
 }

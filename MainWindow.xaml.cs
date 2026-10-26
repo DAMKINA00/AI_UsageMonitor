@@ -83,7 +83,7 @@ public partial class MainWindow : Window
 
     public void RefreshPlatforms()
     {
-        var cards = new[] { _vm.Claude, _vm.Codex, _vm.Gemini, _vm.Grok }.OfType<ProviderCard>();
+        var cards = new[] { _vm.Claude, _vm.Codex, _vm.Grok }.OfType<ProviderCard>();
         var slots = cards.SelectMany(card => card.AccountSlots.Count > 0 ? card.AccountSlots : AccountUsageSlot.Create(card, [], 0))
             .Where(slot => !slot.IsEmpty || slot.Id.Length > 0).ToArray();
         var signature = string.Join('\n', slots.Select(slot => slot.Signature));

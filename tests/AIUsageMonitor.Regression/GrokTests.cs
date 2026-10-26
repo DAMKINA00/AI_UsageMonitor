@@ -71,8 +71,7 @@ internal static partial class Program
         SetProperty(monitor, nameof(MonitorService.GrokRemoteLast), new GrokRemoteResult { Error = "fixture offline" });
         var card = Presenter.Grok(monitor);
         Check("Grok failure preserves the prior quota visibly dimmed", card.Plan == "SuperGrok" && card.Status.IsDimmed && card.Usage is [{ Value: 12.5 }], "cached quota");
-        var settings = new AppSettings { GeminiPlanOverride = "Google AI Pro" };
-        Check("Gemini and Grok plan badges contain only the tier name", Presenter.Gemini(monitor, settings).Plan == "Google AI Pro" && card.Plan == "SuperGrok", "tier labels");
+        Check("Grok plan badge contains only the tier name", card.Plan == "SuperGrok", card.Plan ?? "null");
     }
 
     static async Task TestGrokAcpProcess()

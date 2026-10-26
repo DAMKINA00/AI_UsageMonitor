@@ -17,12 +17,11 @@ internal static partial class Program
     {
         if (args.Contains("hosted-protocol")) return RunHostedProtocolTests();
         if (args.Contains("hold-pipe")) return HoldPipe();
-        if (args.Contains("/usage")) return FakeAgy(args);
         if (args.Contains("app-server")) return FakeCodexServer();
         if (args.Contains("stdio") && Environment.GetEnvironmentVariable(FakeGrokDirectory) is { Length: > 0 })
             return FakeGrokAcp(args);
 
-        // 설정·로그·WebView·추가 계정 폴더를 임시 폴더로 돌린다. 가짜 agy·app-server 자식도 환경 변수를 물려받는다.
+        // 설정·로그·WebView·추가 계정 폴더를 임시 폴더로 돌린다. 가짜 app-server 자식도 환경 변수를 물려받는다.
         var userLog = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AIUsageMonitor", "monitor.log");
         var userLogBefore = ReadShared(userLog);
         var userLogTime = File.Exists(userLog) ? File.GetLastWriteTimeUtc(userLog) : (DateTime?)null;
@@ -65,21 +64,16 @@ internal static partial class Program
         Run("Account swap and Codex subagent filtering", TestAccountSwapAndCodexSubagents);
         Run("Codex stale file timestamps", TestCodexStaleFileTimes);
         Run("Codex browser login protocol and cancellation", () => TestCodexLoginProtocol().GetAwaiter().GetResult());
-        Run("Gemini agy usage parsing", TestAgyUsageParse);
-        Run("Gemini agy process control", () => TestAgyProcess().GetAwaiter().GetResult());
-        Run("Gemini local conversation summaries", TestGeminiLocal);
-        Run("Gemini monitor scheduling and busy recovery", () => TestGeminiMonitor().GetAwaiter().GetResult());
         Run("Grok billing parsing", TestGrokBilling);
         Run("Grok ACP process control", () => TestGrokAcpProcess().GetAwaiter().GetResult());
-        Run("Compact three-provider layout and Gemini row", TestCompactLayout);
+        Run("Compact provider layout and character row", TestCompactLayout);
         Run("Resizable responsive layout, saved bounds and character default", TestResponsiveLayout);
-        Run("Dialogue repeat guard, Gemini unblock and login message", TestFinishing);
+        Run("Dialogue repeat guard and settings safety", TestFinishing);
         Run("Character dialogue rules", TestDialogue);
         Run("Taskbar usage layout and quota states", TestTaskbarWidget);
         Run("Transparent account platforms and bounded roaming", TestPlatformLayout);
         Run("Confirmed full recovery announcement once per cycle", TestResetAnnouncement);
         Run("Idle roaming and rare low-quota naps", TestMascotBehavior);
-        Run("Gemini account label and account-switch isolation", TestGeminiAccount);
     }
 
     static string ReadShared(string path)
@@ -137,6 +131,29 @@ internal static partial class Program
 
         s_failures++;
         Console.WriteLine($"FAIL {name}: {detail}");
+    }
+
+    static int HoldPipe()
+    {
+        Thread.Sleep(TimeSpan.FromSeconds(30));
+        return 0;
+    }
+
+    static async Task<bool> ExitedSoon(int pid)
+    {
+        if (pid == 0) return false;
+        for (int i = 0; i < 50; i++)
+        {
+            if (!ProcessUtil.IsAlive(pid, null)) return true;
+            await Task.Delay(100);
+        }
+        return false;
+    }
+
+    static string ReadOrEmpty(string path)
+    {
+        try { return File.ReadAllText(path).Trim(); }
+        catch (IOException) { return ""; }
     }
 
     static Exception Unwrap(Exception ex) => ex is TargetInvocationException { InnerException: { } inner }

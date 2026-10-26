@@ -78,7 +78,7 @@ internal static partial class Program
         Check("taskbar placement rejects a narrow work area", narrow == null, narrow?.ToString() ?? "null");
 
         using var widget = new TaskbarWidget();
-        widget.Update(new[] { "Claude", "Codex", "Gemini", "Grok" }.Select(name => new ProviderCard
+        widget.Update(new[] { "Claude", "Codex", "Grok" }.Select(name => new ProviderCard
         {
             Name = name, Accent = Palette.Claude, AppStatus = "fixture", AppStatusBrush = Palette.Muted,
             Footnote = "fixture", SessionsHeader = "", AccountUsage = Presenter.AccountUsageRows([
@@ -91,7 +91,7 @@ internal static partial class Program
         content.Measure(new Size(widget.Width, widget.Height));
         content.Arrange(new Rect(0, 0, widget.Width, widget.Height));
         content.UpdateLayout();
-        Check("four-provider taskbar strip fits a compact taskbar height", widget.Height <= 30 && widget.Width <= 500,
+        Check("three-provider taskbar strip fits a compact taskbar height", widget.Height <= 30 && widget.Width <= 500,
             $"{widget.Width}x{widget.Height}");
         var compactBar = new Rect(0, 1410, 3440, 30);
         var compactPlacement = TaskbarWidget.FindPlacement(compactBar, new Rect(0, 0, 3440, 1410),

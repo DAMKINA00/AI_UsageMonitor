@@ -14,7 +14,6 @@ internal static partial class Program
     static void TestResponsiveLayout()
     {
         TestCharacterDefaultMigration();
-        TestGeminiUnsupportedAndWarnings();
         TestNicknameCodepoints();
         TestDockBounds();
     }
@@ -36,38 +35,6 @@ internal static partial class Program
         var empty = AppSettings.Parse("{}");
         Check("settings without a version are migrated", empty.ShowCharacters && empty.Migrated, $"migrated={empty.Migrated}");
         Check("migration flag is not written to the file", !JsonSerializer.Serialize(legacy).Contains(nameof(AppSettings.Migrated)), "flag serialized");
-    }
-
-    static void TestGeminiUnsupportedAndWarnings()
-    {
-        var now = DateTimeOffset.Now;
-        var local = new GeminiLocalState { Installed = true, ExecutablePath = @"C:\fake\agy.exe", ExecutableFingerprint = "fixture-fp", CliProcessCount = 0 };
-        using var blocked = GeminiMonitor(new AppSettings { GeminiEnabled = true, AgyBlockedFingerprint = "fixture-fp" }, local, null,
-            new GeminiRemoteResult { Unsupported = true, Error = AgyCli.UnsupportedMessage });
-        var card = Presenter.Gemini(blocked);
-        Check("unsupported agy shows the version chip", blocked.GeminiUnsupported && card.Status.Kind == StatusKind.Unsupported &&
-            card.Status.Text == "agy 버전 미지원" && card.Status.Brush == Palette.Warn && card.Notice?.Contains(GeminiBlockAction.MenuText) == true &&
-            card.Status.ToolTipText.StartsWith("agy 버전 미지원: 설치된 agy 가 /usage 조회를 지원하지 않아"),
-            $"{card.Status.Text}/{card.Notice}/{card.Status.ToolTipText}");
-        Check("unsupported agy is named in the tray tooltip", Tray.Tooltip([card]) == "Gemini agy 버전 미지원", Tray.Tooltip([card]));
-
-        var changedSettings = new AppSettings { GeminiEnabled = true, AgyBlockedFingerprint = "old-fp" };
-        using var resultOnly = GeminiMonitor(changedSettings,
-            new GeminiLocalState { Installed = true, ExecutablePath = @"C:\fake\agy.exe", ExecutableFingerprint = "other-fp" }, null,
-            new GeminiRemoteResult { Unsupported = true, Error = AgyCli.UnsupportedMessage });
-        var changed = Presenter.Gemini(resultOnly, changedSettings);
-        Check("after agy changes the last unsupported result asks for a refresh", !resultOnly.GeminiUnsupported &&
-            changed.Status.Kind == StatusKind.Unsupported && changed.Notice?.Contains("새로고침") == true &&
-            changed.Notice?.Contains(GeminiBlockAction.MenuText) == false, $"{changed.Status.Text}/{changed.Notice}");
-
-        var inferred = new GeminiRemoteResult { Ok = true, At = now, Usage = GeminiUsage(now, weekly: 100, warning: AgyCli.InferredExhaustedWarning) };
-        using var limit = GeminiMonitor(new AppSettings { GeminiEnabled = true }, GeminiLocalFixture(now), inferred, inferred);
-        var limitCard = Presenter.Gemini(limit);
-        var slot = AccountUsageSlot.Create(limitCard, [], 0)[0];
-        Check("inferred limit warning marks the ring and its tooltip", limitCard.UsageWarning == AgyCli.InferredExhaustedWarning &&
-            limitCard.LimitReached && limitCard.NoticeBrush == Palette.Bad &&
-            slot.WarningVisibility == Visibility.Visible && slot.UsageOpacity == 1 && slot.ToolTipText.Contains("⚠ 한도 도달(추정)"),
-            slot.ToolTipText);
     }
 
     /// <summary>이 테스트 소스 파일의 위치에서 위로 올라가 저장소 루트(AIUsageMonitor.csproj가 있는 폴더)를 찾는다.</summary>
@@ -115,7 +82,7 @@ internal static partial class Program
             $"files={files.Count}, U+CA29 nicknames={correct}, bad={string.Join(", ", bad.Take(8))}");
     }
 
-    /// <summary>네 서비스 모두 값·안내가 있는 합성 모델. Window/Platform 테스트가 공유한다.</summary>
+    /// <summary>세 활성 서비스 모두 값·안내가 있는 합성 모델. Window/Platform 테스트가 공유한다.</summary>
     static MainViewModel BusyViewModel(out IDisposable cleanup)
     {
         var now = DateTimeOffset.Now;
@@ -152,26 +119,22 @@ internal static partial class Program
             Sessions = [Row("빌드 스크립트 정리", "작업 중", SessionState.Working), Row("테스트 실패 분석", "완료", SessionState.Idle)],
         };
         codex.AccountSlots = AccountUsageSlot.Create(codex, service.Accounts);
-        var ok = new GeminiRemoteResult { Ok = true, Usage = GeminiUsage(now.AddMinutes(-20), warning: AgyCli.InferredExhaustedWarning), At = now };
-        var monitor = GeminiMonitor(new AppSettings { GeminiEnabled = true }, GeminiLocalFixture(now), ok, ok);
-        var gemini = Presenter.Gemini(monitor);
-        gemini.AccountSlots = AccountUsageSlot.Create(gemini, [], 0);
         var grok = new ProviderCard
         {
-            Name = "Grok", Accent = Palette.Codex, Plan = "SuperGrok", AppStatus = "CLI 실행 중", AppStatusBrush = Palette.Ok,
+            Name = "Grok", Accent = Palette.Grok, Plan = "SuperGrok", AppStatus = "CLI 실행 중", AppStatusBrush = Palette.Ok,
             Account = "GROK", Usage = Presenter.DisplayUsage([Window("grok:w10080", 54, now.AddDays(2))], now),
             Footnote = "출처: fixture", SessionsHeader = "", Status = new StatusChip(StatusKind.None, now, TimeSpan.FromMinutes(5), false),
         };
         grok.AccountSlots = AccountUsageSlot.Create(grok, [], 0);
         var vm = new MainViewModel();
-        UpdateViewModel(vm, claude, codex, gemini, grok, "");
-        cleanup = new Disposables(service, monitor);
+        UpdateViewModel(vm, claude, codex, grok, "");
+        cleanup = new Disposables(service);
         return vm;
     }
 
-    static void UpdateViewModel(MainViewModel vm, ProviderCard claude, ProviderCard codex, ProviderCard? gemini,
+    static void UpdateViewModel(MainViewModel vm, ProviderCard claude, ProviderCard codex,
         ProviderCard? grok, string footer)
-        => vm.Update(claude, codex, gemini, grok, footer);
+        => vm.Update(claude, codex, grok, footer);
 
     sealed class Disposables(params IDisposable[] items) : IDisposable
     {

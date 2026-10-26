@@ -23,7 +23,7 @@ internal static partial class Program
         var settingsBefore = File.Exists(Paths.SettingsFile) ? File.ReadAllBytes(Paths.SettingsFile) : null;
         var vm = new MainViewModel();
         UpdateViewModel(vm, CompactProviderCard("Claude", "TEST"), CompactProviderCard("Codex", "TEST"),
-            CompactProviderCard("Gemini", "TEST"), CompactProviderCard("Grok", "TEST"), "");
+            CompactProviderCard("Grok", "TEST"), "");
         var window = new MainWindow(vm, new AppSettings { ShowCharacters = false, Topmost = false }, _ => { })
         {
             Opacity = 0, ShowActivated = false, ShowInTaskbar = false, AllowClose = true,
@@ -129,7 +129,7 @@ internal static partial class Program
     {
         var vm = new MainViewModel();
         UpdateViewModel(vm, CompactProviderCard("Claude", "TEST"), CompactProviderCard("Codex", "TEST"),
-            CompactProviderCard("Gemini", "TEST"), CompactProviderCard("Grok", "TEST"), "");
+            CompactProviderCard("Grok", "TEST"), "");
         var window = new MainWindow(vm, new AppSettings { ShowCharacters = false, Topmost = false }, _ => { })
         {
             Opacity = 0, ShowActivated = false, ShowInTaskbar = false, AllowClose = true,

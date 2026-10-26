@@ -4,7 +4,7 @@ using System.Text.Json;
 
 namespace AIUsageMonitor.Core;
 
-public sealed record HostedCommand(string Name, bool? BoolValue = null, string? GeminiPlan = null);
+public sealed record HostedCommand(string Name, bool? BoolValue = null);
 
 public readonly record struct HostedInputLine(string? Text, string? Error)
 {
@@ -19,7 +19,7 @@ public static class HostedProtocol
     static readonly HashSet<string> NoValueCommands = new(StringComparer.Ordinal)
     {
         "show", "hide", "refresh", "accounts", "claude-login", "claude-logout",
-        "gemini-unblock", "data-folder", "quit",
+        "data-folder", "quit",
     };
 
     static readonly HashSet<string> BoolCommands = new(StringComparer.Ordinal)
@@ -72,17 +72,6 @@ public static class HostedProtocol
                 if (!hasValue || value.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
                     return Fail($"command '{name}' requires a boolean value", out error);
                 command = new HostedCommand(name, value.GetBoolean());
-                return true;
-            }
-
-            if (name == "gemini-plan")
-            {
-                if (!hasValue || value.ValueKind is not (JsonValueKind.Null or JsonValueKind.String))
-                    return Fail("command 'gemini-plan' requires null or a supported plan string", out error);
-                var plan = value.ValueKind == JsonValueKind.Null ? null : value.GetString();
-                if (plan is not (null or "Free" or "Google AI Pro" or "Google AI Ultra"))
-                    return Fail("command 'gemini-plan' has an unsupported plan", out error);
-                command = new HostedCommand(name, GeminiPlan: plan);
                 return true;
             }
 

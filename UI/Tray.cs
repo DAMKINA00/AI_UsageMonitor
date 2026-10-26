@@ -20,17 +20,7 @@ public sealed class Tray : IDisposable
     public event Action<bool>? TopmostChanged, CharactersChanged, StartupChanged, UsageAlertsChanged, ActivityAlertsChanged;
     public event Action<bool>? ClaudeDesktopChanged;
     public event Action<bool>? TaskbarUsageChanged;
-    public event Action<string?>? GeminiPlanChanged;
-    readonly List<WinForms.ToolStripMenuItem> _geminiPlans = [];
-    public event Action? GeminiUnblockRequested;
-    readonly WinForms.ToolStripMenuItem _geminiUnblock;
     public bool ClaudeLoggedIn => _webLoggedIn;
-
-    /// <summary>'Gemini 조회 차단 해제' 메뉴를 차단됐을 때만 보인다.</summary>
-    public void SetGeminiBlocked(bool blocked)
-    {
-        if (_geminiUnblock.Visible != blocked) _geminiUnblock.Visible = blocked;
-    }
 
     public Tray(AppSettings s, bool visible = true, Action<string, string, bool>? notification = null)
     {
@@ -57,23 +47,6 @@ public sealed class Tray : IDisposable
         _login = new WinForms.ToolStripMenuItem("Claude 웹 로그인 (보조 연결)…", null, (_, _) => LoginRequested?.Invoke());
         _logout = new WinForms.ToolStripMenuItem("Claude 로그아웃", null, (_, _) => LogoutRequested?.Invoke());
         menu.Items.AddRange([_login, _logout]);
-        // agy 가 /usage 미지원으로 판정돼 Gemini 조회가 막혔을 때만 보인다
-        _geminiUnblock = new WinForms.ToolStripMenuItem(GeminiBlockAction.MenuText + "…", null, (_, _) => GeminiUnblockRequested?.Invoke())
-        {
-            Visible = false,
-        };
-        menu.Items.Add(_geminiUnblock);
-        var geminiPlan = new WinForms.ToolStripMenuItem("Gemini 계정 등급");
-        foreach (var plan in new[] { "자동 확인", "Free", "Google AI Pro", "Google AI Ultra" })
-        {
-            var value = plan == "자동 확인" ? null : plan;
-            var item = new WinForms.ToolStripMenuItem(plan) { Tag = value };
-            item.Click += (_, _) => GeminiPlanChanged?.Invoke(value);
-            _geminiPlans.Add(item);
-            geminiPlan.DropDownItems.Add(item);
-        }
-        SetGeminiPlan(s.GeminiPlanOverride);
-        menu.Items.Add(geminiPlan);
         menu.Items.Add("데이터 폴더 열기", null, (_, _) => OpenDataFolder());
         menu.Items.Add(new WinForms.ToolStripSeparator());
         menu.Items.Add("종료", null, (_, _) => ExitRequested?.Invoke());
@@ -81,7 +54,7 @@ public sealed class Tray : IDisposable
         _icon = new WinForms.NotifyIcon { ContextMenuStrip = menu, Text = "AI 사용량 모니터", Visible = visible };
         _icon.MouseClick += (_, e) => { if (e.Button == WinForms.MouseButtons.Left) OpenRequested?.Invoke(); };
         SetLoggedIn(s.ClaudeWebEnabled);
-        UpdateIcon(null, null, null);
+        UpdateIcon(null, null);
     }
 
     WinForms.ToolStripMenuItem Check(string text, bool value, Action<bool> changed)
@@ -93,11 +66,6 @@ public sealed class Tray : IDisposable
 
     public void SetTopmost(bool v) => _topmost.Checked = v;
     public void SetTaskbarUsage(bool v) => _taskbarUsage.Checked = v;
-    public void SetGeminiPlan(string? plan)
-    {
-        foreach (var item in _geminiPlans) item.Checked = Equals(item.Tag, plan);
-    }
-
     public void SetLoggedIn(bool v)
     {
         _webLoggedIn = v;
@@ -125,8 +93,7 @@ public sealed class Tray : IDisposable
                 ? $"{row.Label.Replace(" 한도", "")} {(row.IsResetPending ? "확인 중" : Fmt.Pct(row.Value))}"
                 : c.Status.State switch
                 {
-                    StatusKind.NotInstalled => c.Name == "Grok" ? "CLI 미설치" : "agy 미설치",
-                    StatusKind.Unsupported => AgyCli.UnsupportedMessage,
+                    StatusKind.NotInstalled => "CLI 미설치",
                     StatusKind.LoginRequired => "로그인 필요",
                     StatusKind.Disabled => "꺼짐",
                     _ => "사용량 미확인",
@@ -169,12 +136,12 @@ public sealed class Tray : IDisposable
     static extern bool DestroyIcon(IntPtr h);
 
     /// <summary>
-    /// 왼쪽부터 Claude, Codex, Gemini, Grok 계정 사용률.
+    /// 왼쪽부터 Claude, Codex, Grok 계정 사용률.
     /// </summary>
-    public void UpdateIcon(double? claude, double? codex, double? gemini, double? grok = null)
+    public void UpdateIcon(double? claude, double? codex, double? grok = null)
     {
         var size = WinForms.SystemInformation.SmallIconSize.Width;
-        var sig = $"{size}:{claude:0}:{codex:0}:{gemini:0}:{grok:0}";
+        var sig = $"{size}:{claude:0}:{codex:0}:{grok:0}";
         if (sig == _iconSig) return;
         _iconSig = sig;
 
@@ -184,11 +151,10 @@ public sealed class Tray : IDisposable
             g.SmoothingMode = SmoothingMode.AntiAlias;
             g.Clear(Color.Transparent);
             float pad = size * 0.04f, gap = size * 0.07f;
-            float barW = (size - pad * 2 - gap * 3) / 4f, barH = size - pad * 2;
+            float barW = (size - pad * 2 - gap * 2) / 3f, barH = size - pad * 2;
             DrawBar(g, pad, pad, barW, barH, claude, Color.FromArgb(0xD9, 0x77, 0x57));
             DrawBar(g, pad + barW + gap, pad, barW, barH, codex, Color.FromArgb(0x7A, 0xA2, 0xF7));
-            DrawBar(g, pad + (barW + gap) * 2, pad, barW, barH, gemini, Color.FromArgb(0xB4, 0x8C, 0xF2));
-            DrawBar(g, pad + (barW + gap) * 3, pad, barW, barH, grok, Color.FromArgb(0xD8, 0xBD, 0x72));
+            DrawBar(g, pad + (barW + gap) * 2, pad, barW, barH, grok, Color.FromArgb(0xD8, 0xBD, 0x72));
         }
 
         var h = bmp.GetHicon();

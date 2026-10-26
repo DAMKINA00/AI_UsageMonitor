@@ -205,17 +205,16 @@ internal static partial class Program
 
     static MainViewModel PlatformViewModel(int count)
     {
-        var slots = Enumerable.Range(0, count).Select(i => PlatformSlot((i % 4) switch
+        var slots = Enumerable.Range(0, count).Select(i => PlatformSlot((i % 3) switch
         {
             0 => "Claude",
             1 => "Codex",
-            2 => "Gemini",
             _ => "Grok",
         }, i)).ToList();
         ProviderCard Card(string provider) => new()
         {
             Name = provider,
-            Accent = provider switch { "Claude" => Palette.Claude, "Codex" => Palette.Codex, "Gemini" => Palette.Gemini, _ => Palette.Grok },
+            Accent = provider switch { "Claude" => Palette.Claude, "Codex" => Palette.Codex, _ => Palette.Grok },
             Account = provider + " main",
             AppStatus = "fixture",
             AppStatusBrush = Palette.Muted,
@@ -226,7 +225,7 @@ internal static partial class Program
             AccountSlots = slots.Where(slot => slot.Provider == provider).ToList(),
         };
         var vm = new MainViewModel();
-        vm.Update(Card("Claude"), Card("Codex"), Card("Gemini"), Card("Grok"), "");
+        vm.Update(Card("Claude"), Card("Codex"), Card("Grok"), "");
         return vm;
     }
 
@@ -247,18 +246,17 @@ internal static partial class Program
     }
 
     static void SetPlatformAccounts(MainViewModel vm, int count) =>
-        vm.Update(PlatformCard("Claude", count), PlatformCard("Codex", count),
-            PlatformCard("Gemini", count), PlatformCard("Grok", count), "");
+        vm.Update(PlatformCard("Claude", count), PlatformCard("Codex", count), PlatformCard("Grok", count), "");
 
     static ProviderCard PlatformCard(string provider, int count)
     {
         var slots = Enumerable.Range(0, count)
-            .Select(i => PlatformSlot((i % 4) switch { 0 => "Claude", 1 => "Codex", 2 => "Gemini", _ => "Grok" }, i))
+            .Select(i => PlatformSlot((i % 3) switch { 0 => "Claude", 1 => "Codex", _ => "Grok" }, i))
             .Where(slot => slot.Provider == provider).ToList();
         return new ProviderCard
         {
             Name = provider,
-            Accent = provider switch { "Claude" => Palette.Claude, "Codex" => Palette.Codex, "Gemini" => Palette.Gemini, _ => Palette.Grok },
+            Accent = provider switch { "Claude" => Palette.Claude, "Codex" => Palette.Codex, _ => Palette.Grok },
             Account = provider + " main", AppStatus = "fixture", AppStatusBrush = Palette.Muted,
             Footnote = "fixture", SessionsHeader = "fixture", Status = new StatusChip(StatusKind.None, DateTimeOffset.Now, TimeSpan.FromMinutes(5), false),
             Usage = [], AccountSlots = slots,

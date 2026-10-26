@@ -23,12 +23,12 @@ internal static partial class Program
         HostedCheck("show command parses", HostedProtocol.TryParseCommand("{\"command\":\"show\"}", out var show, out _) && show.Name == "show");
         HostedCheck("type alias parses", HostedProtocol.TryParseCommand("{\"type\":\"hide\"}", out var hide, out _) && hide.Name == "hide");
         HostedCheck("boolean command parses", HostedProtocol.TryParseCommand("{\"command\":\"topmost\",\"value\":true}", out var topmost, out _) && topmost.BoolValue == true);
-        HostedCheck("gemini plan null parses", HostedProtocol.TryParseCommand("{\"command\":\"gemini-plan\",\"value\":null}", out var automatic, out _) && automatic.GeminiPlan == null);
-        HostedCheck("supported gemini plan parses", HostedProtocol.TryParseCommand("{\"command\":\"gemini-plan\",\"value\":\"Google AI Pro\"}", out var pro, out _) && pro.GeminiPlan == "Google AI Pro");
         HostedCheck("wrong boolean type is rejected", !HostedProtocol.TryParseCommand("{\"command\":\"topmost\",\"value\":\"true\"}", out _, out var boolError) && boolError.Contains("boolean", StringComparison.Ordinal));
         HostedCheck("unknown command is rejected", !HostedProtocol.TryParseCommand("{\"command\":\"restart\"}", out _, out var unknownError) && unknownError.Contains("unknown", StringComparison.Ordinal));
         HostedCheck("unexpected field is rejected", !HostedProtocol.TryParseCommand("{\"command\":\"show\",\"extra\":1}", out _, out var fieldError) && fieldError.Contains("field", StringComparison.Ordinal));
-        HostedCheck("unsupported plan is rejected", !HostedProtocol.TryParseCommand("{\"command\":\"gemini-plan\",\"value\":\"Ultra\"}", out _, out var planError) && planError.Contains("unsupported", StringComparison.Ordinal));
+        HostedCheck("removed Gemini CLI commands are rejected", !HostedProtocol.TryParseCommand("{\"command\":\"gemini-plan\",\"value\":\"Google AI Pro\"}", out _, out var planError) &&
+            planError.Contains("unknown", StringComparison.Ordinal) && !HostedProtocol.TryParseCommand("{\"command\":\"gemini-unblock\"}", out _, out var unblockError) &&
+            unblockError.Contains("unknown", StringComparison.Ordinal));
     }
 
     static async Task TestHostedInputLines()

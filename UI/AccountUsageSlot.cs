@@ -74,7 +74,7 @@ public sealed class AccountUsageSlot : INotifyPropertyChanged
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
     }
 
-    /// <param name="secondarySlots">서브 계정 칸 수. 서브 계정을 지원하지 않는 서비스(Gemini)는 0.</param>
+    /// <param name="secondarySlots">서브 계정 칸 수. 서브 계정을 지원하지 않는 서비스는 0.</param>
     public static List<AccountUsageSlot> Create(ProviderCard main, IReadOnlyList<SecondaryAccountState> accounts, int secondarySlots = 2)
     {
         var slots = new List<AccountUsageSlot>
