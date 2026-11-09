@@ -1,3 +1,4 @@
+using System.IO;
 using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
@@ -12,6 +13,36 @@ internal static partial class Program
     static void TestClaudeDesktop()
     {
         var type = typeof(ClaudeWebClient).Assembly.GetType("AIUsageMonitor.Core.ClaudeDesktopSession", true)!;
+        var resolve = type.GetMethod("ResolveProfileDirectory", BindingFlags.NonPublic | BindingFlags.Static)!;
+        var fixtureRoot = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "AIUsageMonitor-Profile-" + Guid.NewGuid().ToString("N"));
+        var roaming = System.IO.Path.Combine(fixtureRoot, "Roaming");
+        var local = System.IO.Path.Combine(fixtureRoot, "Local");
+        var legacy = System.IO.Path.Combine(roaming, "Claude");
+        var migrated = System.IO.Path.Combine(local, "Claude-Data", "claude_pzs8sxrjxfjjc");
+        string Resolve() => (string)resolve.Invoke(null, [roaming, local])!;
+        try
+        {
+            Check("Desktop missing profile keeps legacy default", Resolve() == legacy, Resolve());
+            Directory.CreateDirectory(legacy);
+            Check("Desktop legacy installations remain supported", Resolve() == legacy, Resolve());
+            Directory.CreateDirectory(migrated);
+            Check("Desktop migrated profile takes precedence over legacy", Resolve() == migrated, Resolve());
+            var readEmpty = type.GetMethod("Read", BindingFlags.NonPublic | BindingFlags.Static)!;
+            var cookies = (System.Collections.ICollection)readEmpty.Invoke(null, [Resolve()])!;
+            Check("Desktop migrated logout never falls back to legacy account", Resolve() == migrated && cookies.Count == 0, "stale profile selected");
+        }
+        finally { if (Directory.Exists(fixtureRoot)) Directory.Delete(fixtureRoot, true); }
+
+        var checkSqlite = type.GetMethod("Check", BindingFlags.NonPublic | BindingFlags.Static)!;
+        foreach (var code in new[] { 5, 6, 14 })
+        {
+            string? message = null;
+            try { checkSqlite.Invoke(null, [code]); }
+            catch (TargetInvocationException e) when (e.InnerException is IOException) { message = e.InnerException.Message; }
+            Check($"Desktop locked store gives an exit-and-refresh action for SQLite {code}",
+                message?.Contains("트레이에서도 종료") == true && message.Contains($"SQLite {code}"), message ?? "error missing");
+        }
+
         var decode = type.GetMethod("DecodeCookie", BindingFlags.NonPublic | BindingFlags.Static)!;
         var key = RandomNumberGenerator.GetBytes(32);
         const string domain = ".claude.ai", value = "synthetic-session-for-offline-test";

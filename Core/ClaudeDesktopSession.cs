@@ -20,8 +20,16 @@ internal static class ClaudeDesktopSession
         public override string ToString() => Name; // 인증값이 진단 출력에 섞이지 않도록 한다.
     }
 
-    internal static string ProfileDirectory => System.IO.Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Claude");
+    internal static string ProfileDirectory => ResolveProfileDirectory(
+        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData));
+
+    internal static string ResolveProfileDirectory(string roamingAppData, string localAppData)
+    {
+        var migrated = System.IO.Path.Combine(localAppData, "Claude-Data", "claude_pzs8sxrjxfjjc");
+        // A logged-out migrated profile must not revive a different account from the legacy profile.
+        return Directory.Exists(migrated) ? migrated : System.IO.Path.Combine(roamingAppData, "Claude");
+    }
 
     internal static List<Cookie> Read(string? profileDirectory = null)
     {
@@ -109,6 +117,8 @@ internal static class ClaudeDesktopSession
     static string Text(IntPtr row, int column) => Marshal.PtrToStringUTF8(SqliteColumnText(row, column)) ?? "";
     static void Check(int code)
     {
+        if (code is 5 or 6 or 14)
+            throw new IOException($"Claude Desktop 로그인 저장소를 읽을 수 없습니다. Desktop을 트레이에서도 종료한 뒤 새로고침해 주세요 (SQLite {code}).");
         if (code != 0) throw new IOException($"Claude Desktop 로그인 저장소를 읽을 수 없습니다 (SQLite {code}).");
     }
 
