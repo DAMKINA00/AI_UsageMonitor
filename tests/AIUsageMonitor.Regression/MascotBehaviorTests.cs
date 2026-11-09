@@ -37,7 +37,9 @@ internal static partial class Program
         Check("exactly 25% remaining sleeps after a fresh 8-15 minute wait",
             thresholdSleep.Count > 0 &&
             WaitFromStart(thresholdSleep[0], start) is >= 8 * 60 and <= 15 * 60 + 1 &&
-            thresholdSleep.All(x => (x.End - x.Start).TotalSeconds is >= 30 and <= 45) &&
+            // The last sleep may still be in progress when the observation window ends.
+            thresholdSleep.All(x => (x.End - x.Start).TotalSeconds <= 45 &&
+                (x.End > thresholdMoods[^1].At || (x.End - x.Start).TotalSeconds >= 30)) &&
             thresholdSleep.Count <= 4 &&
             thresholdSleep.Zip(thresholdSleep.Skip(1))
                 .All(pair => (pair.Second.Start - pair.First.End).TotalSeconds is >= 8 * 60 and <= 15 * 60 + 2),
