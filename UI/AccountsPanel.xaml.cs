@@ -24,6 +24,13 @@ public partial class AccountsPanel : UserControl
         AddCodexButton.IsEnabled = !loginBusy;
     }
 
+    /// <summary>Hosted by ChatterBox: accounts are added, renamed and excluded there; this panel only shows them.</summary>
+    public void SetManagedByChatterBox()
+    {
+        AccountsHint.Text = "계정은 ChatterBox에서 관리합니다 (추가·이름 변경·배정 제외·로그인). 이 목록은 ChatterBox의 계정 그대로입니다.";
+        AddButtons.Visibility = Visibility.Collapsed;
+    }
+
     void AddClaude_Click(object sender, RoutedEventArgs e) => AddClaudeRequested?.Invoke();
 
     void AddCodex_Click(object sender, RoutedEventArgs e) => AddCodexRequested?.Invoke();

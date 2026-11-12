@@ -9,8 +9,9 @@ namespace AIUsageMonitor;
 
 public partial class App : Application
 {
-    const string MutexName = @"Local\AIUsageMonitor.SingleInstance";
-    const string ShowEventName = @"Local\AIUsageMonitor.Show";
+    // A separate data folder (AIUSAGEMONITOR_DATA_DIR, tests and trial runs) is a separate instance.
+    static readonly string MutexName = @"Local\AIUsageMonitor.SingleInstance" + InstanceSuffix();
+    static readonly string ShowEventName = @"Local\AIUsageMonitor.Show" + InstanceSuffix();
     const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
     const string RunValue = "AIUsageMonitor";
 
@@ -37,7 +38,16 @@ public partial class App : Application
     HostedProtocolWriter? _hostedProtocol;
     CancellationTokenSource? _hostedInputLifetime;
     string? _hostedState;
+    /// <summary>Hosted by ChatterBox: its account snapshot is the only account list and usage source.</summary>
+    HostedAccountsSnapshot? _hostedAccounts;
     int _exitStarted;
+
+    static string InstanceSuffix()
+    {
+        if (Environment.GetEnvironmentVariable(Paths.DataDirVariable) is not { Length: > 0 } dir) return "";
+        var hash = System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(System.IO.Path.GetFullPath(dir).ToUpperInvariant()));
+        return "." + Convert.ToHexString(hash)[..16];
+    }
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -73,7 +83,8 @@ public partial class App : Application
         // 캐릭터 기본 표시 마이그레이션을 한 번만 적용한다
         if (_settings.Migrated) _settings.Save();
         _vm = new MainViewModel();
-        _monitor = new MonitorService(_settings);
+        // Hosted: no usage or account queries of its own; ChatterBox pushes its accounts and usage.
+        _monitor = new MonitorService(_settings) { UsageQueriesEnabled = !_hosted };
         _window = new MainWindow(_vm, _settings);
         Action<string, string, bool>? notification = _hosted ? _hostedProtocol!.Notification : null;
         _tray = new Tray(_settings, visible: !_hosted, notification: notification);
@@ -82,6 +93,7 @@ public partial class App : Application
         if (Tray.SettingsLoadNotice(_settings) is { } notice) _tray.Balloon("AI 사용량 모니터", notice, true);
         _alerts = new Alerts(_settings, _tray);
         _secondaryAccounts = new SecondaryAccountService(_settings);
+        if (_hosted) _window.Accounts.SetManagedByChatterBox();
 
         WireUp();
         _taskbar.SetEnabled(_settings.ShowTaskbarUsage);
@@ -95,7 +107,7 @@ public partial class App : Application
         }) { IsBackground = true }.Start();
 
         _monitor.Start();
-        _secondaryAccounts.Start();
+        if (!_hosted) _secondaryAccounts.Start();
         _clock = new DispatcherTimer { Interval = TimeSpan.FromSeconds(15) };
         _clock.Tick += (_, _) => { _vm.Tick(); _taskbar.Tick(); };
         _clock.Start();
@@ -294,6 +306,13 @@ public partial class App : Application
 
     void RefreshAllAccounts()
     {
+        if (_hosted)
+        {
+            // ChatterBox refreshes its accounts and pushes the result back.
+            _monitor.RefreshAll();
+            _hostedProtocol!.Refresh();
+            return;
+        }
         _monitor.RefreshAll();
         _ = _secondaryAccounts.RefreshAsync(force: true);
         EmitHostedState();
@@ -358,8 +377,14 @@ public partial class App : Application
         if (Volatile.Read(ref _exitStarted) != 0) return;
         try
         {
+            if (command.Name is "claude-login" or "claude-logout" or "claude-desktop")
+            {
+                _hostedProtocol?.Error("계정은 ChatterBox에서 관리합니다. ChatterBox의 CLI 계정 관리를 사용하세요.");
+                return;
+            }
             switch (command.Name)
             {
+                case "chatterbox-accounts": ApplyHostedAccounts(command.Data!.Value); break;
                 case "show": ShowMonitor(); break;
                 case "hide": HideMonitor(); break;
                 case "refresh": RefreshAllAccounts(); break;
@@ -399,11 +424,23 @@ public partial class App : Application
             activityAlerts = _settings.ActivityAlerts,
             claudeDesktop = _settings.ClaudeDesktopEnabled,
             claudeLoggedIn = _tray.ClaudeLoggedIn,
+            accountsVersion = ChatterBoxAccounts.Version,
         };
         var signature = JsonSerializer.Serialize(state);
         if (!force && signature == _hostedState) return;
         _hostedState = signature;
         _hostedProtocol!.State(state);
+    }
+
+    void ApplyHostedAccounts(JsonElement value)
+    {
+        if (!ChatterBoxAccounts.TryParse(value, out var snapshot, out var error))
+        {
+            _hostedProtocol?.Error($"ChatterBox 계정 정보를 읽지 못했습니다: {error}");
+            return;
+        }
+        _hostedAccounts = snapshot;
+        Render();
     }
 
     void Render()
@@ -419,21 +456,32 @@ public partial class App : Application
         });
         var codex = Presenter.Codex(_monitor, _settings);
         var grok = Presenter.Grok(_monitor, _settings);
-        claude.AccountSlots = AccountUsageSlot.Create(claude, _secondaryAccounts.Accounts,
-            _secondaryAccounts.Accounts.Count(a => a.Settings.Provider == AccountProvider.Claude));
-        codex.AccountSlots = AccountUsageSlot.Create(codex, _secondaryAccounts.Accounts,
-            _secondaryAccounts.Accounts.Count(a => a.Settings.Provider == AccountProvider.Codex));
-        grok.AccountSlots = AccountUsageSlot.Create(grok, _secondaryAccounts.Accounts, secondarySlots: 0);
+        if (_hosted)
+        {
+            // Activity from this PC, accounts and usage from ChatterBox only.
+            bool received = _hostedAccounts != null;
+            claude = Presenter.Hosted(claude, _hostedAccounts?.For("Claude") ?? [], received);
+            codex = Presenter.Hosted(codex, _hostedAccounts?.For("Codex") ?? [], received);
+            grok = Presenter.Hosted(grok, _hostedAccounts?.For("Grok") ?? [], received);
+        }
+        else
+        {
+            claude.AccountSlots = AccountUsageSlot.Create(claude, _secondaryAccounts.Accounts,
+                _secondaryAccounts.Accounts.Count(a => a.Settings.Provider == AccountProvider.Claude));
+            codex.AccountSlots = AccountUsageSlot.Create(codex, _secondaryAccounts.Accounts,
+                _secondaryAccounts.Accounts.Count(a => a.Settings.Provider == AccountProvider.Codex));
+            grok.AccountSlots = AccountUsageSlot.Create(grok, _secondaryAccounts.Accounts, secondarySlots: 0);
+        }
         _vm.Update(claude, codex, grok, "");
         _taskbar.Update([claude, codex, grok]);
         if (_window.IsAccountsOpen)
         {
-            var accounts = AccountUsageCard.Create(claude, codex, _secondaryAccounts, grok);
+            var accounts = _hosted ? Presenter.HostedAccountCards(_hostedAccounts) : AccountUsageCard.Create(claude, codex, _secondaryAccounts, grok);
             var signature = string.Join('\n', accounts.Select(x => x.Signature));
             if (_accountsSignature != signature)
             {
                 _accountsSignature = signature;
-                _window.Accounts.Update(accounts, _secondaryAccounts.LoginBusy);
+                _window.Accounts.Update(accounts, !_hosted && _secondaryAccounts.LoginBusy);
             }
         }
 
@@ -447,9 +495,20 @@ public partial class App : Application
         _tray.UpdateIcon(claude.MaxUsed, codex.MaxUsed, grok.MaxUsed);
         _tray.SetTooltip(Tray.Tooltip([claude, codex, grok]));
 
-        _alerts.CheckUsage("Claude", claude.RawWindows);
-        _alerts.CheckUsage("Codex", codex.RawWindows);
-        _alerts.CheckUsage("Grok", grok.RawWindows);
+        if (_hosted)
+        {
+            // Every ChatterBox account in assignment, with the monitor's own thresholds (80/95% by default).
+            var now = DateTimeOffset.Now;
+            foreach (var account in _hostedAccounts?.Accounts.Where(a => a.Enabled) ?? [])
+                if (ChatterBoxAccounts.Usage(account) is { } usage)
+                    _alerts.CheckUsage($"{account.Provider} · {account.Label}", usage.Windows.Where(w => w.ResetsAt is not { } r || r > now).ToList());
+        }
+        else
+        {
+            _alerts.CheckUsage("Claude", claude.RawWindows);
+            _alerts.CheckUsage("Codex", codex.RawWindows);
+            _alerts.CheckUsage("Grok", grok.RawWindows);
+        }
         if (_monitor.ClaudeLocal != null) _alerts.CheckActivity("Claude", Presenter.ClaudeSessions(_monitor));
         if (_monitor.CodexLocal is { } xl) _alerts.CheckActivity("Codex", xl.Threads);
         if (_firstUpdate && _monitor.ClaudeLocal != null && _monitor.CodexLocal != null)

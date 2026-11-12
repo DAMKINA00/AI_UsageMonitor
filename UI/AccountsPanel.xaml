@@ -106,7 +106,7 @@
         </Style>
 
         <DataTemplate x:Key="AccountTemplate" DataType="{x:Type ui:AccountUsageCard}">
-            <Border Background="{StaticResource CardBg}" CornerRadius="8" Padding="10,8" Margin="0,0,0,8" MinHeight="170">
+            <Border Background="{StaticResource CardBg}" CornerRadius="8" Padding="10,8" Margin="0,0,0,8" MinHeight="170" Opacity="{Binding CardOpacity}">
                 <StackPanel>
                     <DockPanel>
                         <TextBlock DockPanel.Dock="Right" Text="{Binding Plan, TargetNullValue=—}"
@@ -193,8 +193,8 @@
             </Grid>
 
             <StackPanel Grid.Row="1" Margin="0,7,0,8">
-                <TextBlock Text="브라우저에서 서브 계정 추가 · 기존 앱 계정 유지" Foreground="{StaticResource Fg2}" FontSize="11"/>
-                <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                <TextBlock x:Name="AccountsHint" Text="브라우저에서 서브 계정 추가 · 기존 앱 계정 유지" Foreground="{StaticResource Fg2}" FontSize="11" TextWrapping="Wrap"/>
+                <StackPanel x:Name="AddButtons" Orientation="Horizontal" Margin="0,6,0,0">
                     <Button x:Name="AddClaudeButton" Content="Claude 계정 추가" Style="{StaticResource ActionButton}"
                             Click="AddClaude_Click" AutomationProperties.Name="Claude 계정 추가"/>
                     <Button x:Name="AddCodexButton" Content="Codex 계정 추가" Style="{StaticResource ActionButton}"

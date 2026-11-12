@@ -90,9 +90,15 @@ public sealed class MonitorService : IDisposable
 
     public event Action? Changed;
 
+    /// <summary>
+    /// false when hosted by ChatterBox: no usage or account queries of its own (Claude web/desktop, Codex
+    /// app-server, Grok CLI); usage comes from ChatterBox. Local activity (sessions on this PC) is still read.
+    /// </summary>
+    public bool UsageQueriesEnabled { get; init; } = true;
+
     public void Start()
     {
-        ClaudeWeb.LoginWindowClosed += () =>
+        if (UsageQueriesEnabled) ClaudeWeb.LoginWindowClosed += () =>
         {
             _settings.ClaudeWebEnabled = true;
             _saveSettings(_settings);
@@ -107,6 +113,7 @@ public sealed class MonitorService : IDisposable
     void Tick()
     {
         _ = RefreshLocalAsync();
+        if (!UsageQueriesEnabled) return;
         if (DateTime.UtcNow >= _nextCodex) _ = RefreshCodexRemoteAsync();
         if (DateTime.UtcNow >= _nextGrok) _ = RefreshGrokRemoteAsync();
         bool fastChats = ClaudeEnabled && FastChatPolling;
@@ -164,6 +171,7 @@ public sealed class MonitorService : IDisposable
     public void RefreshAll()
     {
         _ = RefreshLocalAsync();
+        if (!UsageQueriesEnabled) return;
         _ = RefreshCodexRemoteAsync();
         _ = RefreshGrokRemoteAsync();
         if (ClaudeEnabled) _ = RefreshClaudeWebAsync(); // 대화 목록도 함께 읽는다

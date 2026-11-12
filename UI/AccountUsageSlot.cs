@@ -10,7 +10,11 @@ public sealed class AccountUsageSlot : INotifyPropertyChanged
     public required string Role { get; init; }
     public string Id { get; init; } = "";
     public string Provider { get; init; } = "";
-    public bool CanDrag => !IsEmpty && Id.Length > 0;
+    /// <summary>false when hosted by ChatterBox: the order comes from ChatterBox and cannot be changed here.</summary>
+    public bool Draggable { get; init; } = true;
+    public bool CanDrag => Draggable && !IsEmpty && Id.Length > 0;
+    /// <summary>Excluded from assignment in ChatterBox: shown dimmed, its usage is no longer refreshed.</summary>
+    public bool Disabled { get; init; }
     public bool CanSwapWith(AccountUsageSlot? other) => CanDrag && other?.CanDrag == true &&
         Id != other.Id && Provider == other.Provider;
     public string? Account { get; init; }
@@ -43,7 +47,7 @@ public sealed class AccountUsageSlot : INotifyPropertyChanged
     /// <summary>사용량 경고 ("한도 도달(추정)" 등). 원 위 ⚠ 와 툴팁에 보인다 (흐리게 하지는 않는다).</summary>
     public string? Warning { get; init; }
 
-    public bool IsDimmed => HasRefreshError || Freshness?.IsDimmed == true;
+    public bool IsDimmed => Disabled || HasRefreshError || Freshness?.IsDimmed == true;
     public Visibility WarningVisibility => (IsDimmed || !string.IsNullOrEmpty(Warning)) && !IsEmpty ? Visibility.Visible : Visibility.Collapsed;
     public double UsageOpacity => IsDimmed ? 0.45 : 1;
     bool AwaitingReset => Usage?.IsResetPending == true || Usage?.ResetsAt <= DateTimeOffset.Now;
@@ -62,7 +66,7 @@ public sealed class AccountUsageSlot : INotifyPropertyChanged
             Role, Account, Plan, Usage?.Label, Usage?.ResetTextAt(DateTimeOffset.Now), Warning != null ? "⚠ " + Warning : null, Status,
             Freshness is { AsOf: not null } f ? f.ToolTipText : null,
         }.Where(x => !string.IsNullOrWhiteSpace(x)));
-    public string Signature => $"{Role}|{Id}|{Provider}|{Account}|{Plan}|{IsEmpty}|{Usage?.Label}|{Usage?.Value}|{Usage?.IsResetPending}|{Usage?.ResetsAt?.UtcTicks}|{Status}|{HasRefreshError}|{Warning}";
+    public string Signature => $"{Role}|{Id}|{Provider}|{Account}|{Plan}|{IsEmpty}|{Usage?.Label}|{Usage?.Value}|{Usage?.IsResetPending}|{Usage?.ResetsAt?.UtcTicks}|{Status}|{HasRefreshError}|{Warning}|{Disabled}|{Draggable}";
 
     public event PropertyChangedEventHandler? PropertyChanged;
 

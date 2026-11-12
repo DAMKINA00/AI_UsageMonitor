@@ -4,7 +4,8 @@ using System.Text.Json;
 
 namespace AIUsageMonitor.Core;
 
-public sealed record HostedCommand(string Name, bool? BoolValue = null);
+/// <param name="Data">Object value of an object command (chatterbox-accounts), cloned out of the parsed line.</param>
+public sealed record HostedCommand(string Name, bool? BoolValue = null, JsonElement? Data = null);
 
 public readonly record struct HostedInputLine(string? Text, string? Error)
 {
@@ -14,7 +15,8 @@ public readonly record struct HostedInputLine(string? Text, string? Error)
 
 public static class HostedProtocol
 {
-    public const int MaxLineBytes = 8 * 1024;
+    /// <summary>Same limit as ChatterBox's reader; an account snapshot of many accounts still fits.</summary>
+    public const int MaxLineBytes = 64 * 1024;
 
     static readonly HashSet<string> NoValueCommands = new(StringComparer.Ordinal)
     {
@@ -28,13 +30,16 @@ public static class HostedProtocol
         "activity-alerts", "claude-desktop",
     };
 
+    /// <summary>Commands whose value is a JSON object (ChatterBox account snapshot; see ChatterBoxAccounts).</summary>
+    static readonly HashSet<string> ObjectCommands = new(StringComparer.Ordinal) { "chatterbox-accounts" };
+
     public static bool TryParseCommand(string line, out HostedCommand command, out string error)
     {
         command = null!;
         error = "";
         try
         {
-            using var document = JsonDocument.Parse(line, new JsonDocumentOptions { MaxDepth = 8 });
+            using var document = JsonDocument.Parse(line, new JsonDocumentOptions { MaxDepth = 16 });
             var root = document.RootElement;
             if (root.ValueKind != JsonValueKind.Object) return Fail("command must be a JSON object", out error);
 
@@ -72,6 +77,14 @@ public static class HostedProtocol
                 if (!hasValue || value.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
                     return Fail($"command '{name}' requires a boolean value", out error);
                 command = new HostedCommand(name, value.GetBoolean());
+                return true;
+            }
+
+            if (ObjectCommands.Contains(name))
+            {
+                if (!hasValue || value.ValueKind != JsonValueKind.Object)
+                    return Fail($"command '{name}' requires an object value", out error);
+                command = new HostedCommand(name, Data: value.Clone());
                 return true;
             }
 
@@ -137,6 +150,9 @@ public sealed class HostedProtocolWriter(TextWriter writer)
         Write(new { type = "notification", title, message, error });
 
     public void Error(string message) => Write(new { type = "error", message });
+
+    /// <summary>The monitor's refresh button in hosted mode: ChatterBox refreshes its accounts and pushes them back.</summary>
+    public void Refresh() => Write(new { type = "refresh" });
 
     void Write(object value)
     {

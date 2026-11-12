@@ -12,12 +12,15 @@ public sealed class AccountUsageCard
     public required string Status { get; init; }
     public List<UsageRow> Usage { get; init; } = [];
     public bool IsSecondary { get; init; }
+    /// <summary>Excluded from assignment in ChatterBox, or its reading failed or is old.</summary>
+    public bool Dimmed { get; init; }
+    public double CardOpacity => Dimmed ? 0.55 : 1;
     public bool CanLogin { get; init; }
     public string LoginText { get; init; } = "브라우저 로그인";
     public ICommand? LoginCommand { get; init; }
     public ICommand? RemoveCommand { get; init; }
 
-    public string Signature => string.Join('|', Id, ProviderName, DisplayName, Plan, Status, CanLogin, LoginText,
+    public string Signature => string.Join('|', Id, ProviderName, DisplayName, Plan, Status, CanLogin, LoginText, Dimmed,
         string.Join(';', Usage.Select(x => $"{x.Label}|{x.Value}|{x.ResetText}")));
 
     public static List<AccountUsageCard> Create(ProviderCard claude, ProviderCard codex, SecondaryAccountService service, ProviderCard? grok = null)

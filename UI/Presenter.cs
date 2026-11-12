@@ -764,4 +764,99 @@ public static class Presenter
             SoonestReset = effective.OrderByDescending(w => w.UsedPercent).FirstOrDefault()?.ResetsAt,
         };
     }
+
+    // ---------- hosted by ChatterBox: accounts and usage come only from ChatterBox's account store
+
+    /// <summary>ChatterBox refreshes usage every few minutes; older readings are shown as stale (dimmed).</summary>
+    public static readonly TimeSpan HostedStaleAfter = TimeSpan.FromMinutes(15);
+
+    /// <summary>
+    /// The card of one service in hosted mode: activity (sessions, app state) from this PC as before, usage
+    /// and accounts from ChatterBox. The first account in ChatterBox's order is the card's main account.
+    /// </summary>
+    public static ProviderCard Hosted(ProviderCard local, IReadOnlyList<HostedAccount> accounts, bool received, DateTimeOffset? now = null)
+    {
+        var at = now ?? DateTimeOffset.Now;
+        var main = accounts.FirstOrDefault();
+        var usage = main == null ? null : ChatterBoxAccounts.Usage(main);
+        var effective = (usage?.Windows ?? []).Where(w => !IsFable(w) && !IsExpired(w, at))
+            .Select(w => w with { UsedPercent = Math.Clamp(w.UsedPercent, 0, 100) }).ToList();
+        bool resetPending = (usage?.Windows ?? []).Any(w => IsExpired(w, at));
+        var rows = DisplayUsage(usage?.Windows ?? [], at);
+        string? empty = !received ? "ChatterBox에서 계정 정보를 받는 중…"
+            : main == null ? "ChatterBox에 등록된 계정이 없습니다."
+            : main.Error != null ? "사용량 조회 실패" : rows.Count == 0 ? "사용량 데이터 없음" : null;
+        var card = new ProviderCard
+        {
+            Name = local.Name, Accent = local.Accent, AppStatus = local.AppStatus, AppStatusBrush = local.AppStatusBrush,
+            Account = main?.Label,
+            Usage = rows,
+            AccountUsage = AccountUsageRows(usage?.Windows ?? [], false, at),
+            UsageEmpty = rows.Count == 0 ? empty ?? "사용량 데이터 없음" : null,
+            Notice = main?.Error is { } error ? $"사용량 조회 실패: {error}" : main?.AuthStatus == "required" ? "ChatterBox에서 로그인이 필요합니다." : null,
+            Footnote = "계정·사용량: ChatterBox",
+            SessionsHeader = local.SessionsHeader, Sessions = local.Sessions, SessionsEmpty = local.SessionsEmpty,
+            Status = main == null ? new StatusChip() : HostedStatus(main),
+            MaxUsed = effective.Count > 0 ? effective.Max(w => w.UsedPercent) : null,
+            RawWindows = effective,
+            WorkingCount = local.WorkingCount, NeedsInputCount = local.NeedsInputCount, FreshNeedsInputCount = local.FreshNeedsInputCount,
+            AppRunning = local.AppRunning, LastActivity = local.LastActivity,
+            UsageResetPending = resetPending,
+            SoonestReset = effective.OrderByDescending(w => w.UsedPercent).FirstOrDefault()?.ResetsAt,
+        };
+        card.AccountSlots = accounts.Select(a => HostedSlot(card, a, at)).ToList();
+        return card;
+    }
+
+    public static StatusChip HostedStatus(HostedAccount a) => new(
+        a.Error != null ? StatusKind.Failed : a.AuthStatus == "required" ? StatusKind.LoginRequired : StatusKind.None,
+        a.CheckedAt, HostedStaleAfter, busy: false, a.Error ?? (a.AuthStatus == "required" ? "ChatterBox의 CLI 계정 관리에서 로그인하세요." : null));
+
+    static AccountUsageSlot HostedSlot(ProviderCard card, HostedAccount a, DateTimeOffset now)
+    {
+        var usage = ChatterBoxAccounts.Usage(a);
+        return new AccountUsageSlot
+        {
+            Role = a.IsDefault ? "기본 계정" : "계정", Id = a.Id, Provider = card.Name, Account = a.Label, Draggable = false,
+            Usage = DisplayUsage(usage?.Windows ?? [], now).FirstOrDefault(),
+            Freshness = HostedStatus(a), Disabled = !a.Enabled, HasRefreshError = a.Error != null,
+            Status = string.Join('\n', new[]
+            {
+                a.Enabled ? null : "ChatterBox에서 배정 제외된 계정 (사용량을 새로 조회하지 않음)",
+                a.RunningWorkers > 0 ? $"작업자 {a.RunningWorkers}명 실행 중" : null,
+                a.Error,
+            }.Where(x => !string.IsNullOrWhiteSpace(x))),
+        };
+    }
+
+    /// <summary>Accounts panel in hosted mode: one card per ChatterBox account, in ChatterBox's order, plus the DeepSeek balance.</summary>
+    public static List<AccountUsageCard> HostedAccountCards(HostedAccountsSnapshot? snapshot, DateTimeOffset? now = null)
+    {
+        var at = now ?? DateTimeOffset.Now;
+        if (snapshot == null) return [];
+        var cards = snapshot.Accounts.Select(a =>
+        {
+            var usage = ChatterBoxAccounts.Usage(a);
+            var chip = HostedStatus(a);
+            var status = new[]
+            {
+                a.Enabled ? null : "배정 제외",
+                a.AuthStatus == "required" ? "로그인 필요" : null,
+                a.Error is { } e ? $"조회 실패: {e}" : null,
+                a.CheckedAt is { } c ? chip.TextAt(at) + (chip.IsStaleAt(at) ? "" : " 조회") : "조회 기록 없음",
+            }.Where(x => x != null);
+            return new AccountUsageCard
+            {
+                Id = a.Id, ProviderName = $"{a.Provider} · {a.Id}", DisplayName = a.Label, Status = string.Join(" · ", status),
+                Usage = AccountUsageRows(usage?.Windows ?? [], false, at), Dimmed = !a.Enabled || chip.IsDimmedAt(at),
+            };
+        }).ToList();
+        if (snapshot.DeepSeek is { } d && d.State != "unconfigured")
+            cards.Add(new AccountUsageCard
+            {
+                Id = "deepseek", ProviderName = "DeepSeek · API 잔고", DisplayName = d.Error != null ? "조회 실패" : d.Balance.Length > 0 ? d.Balance : "정보 없음",
+                Status = d.Error ?? (d.State == "loading" ? "조회 중" : ""),
+            });
+        return cards;
+    }
 }

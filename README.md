@@ -182,6 +182,8 @@ dotnet publish -c Release -r win-x64 --self-contained false -p:PublishSingleFile
 
 호스트 모드: `AIUsageMonitor.exe --hosted`는 ChatterBox가 private 표준입출력으로 제어하는 자식 프로세스 모드입니다. 이 모드에서는 자체 트레이 아이콘과 Windows 시작 등록을 사용하지 않으며, 기존 설정·로그·WebView·계정 저장 경로와 단독 실행 동작은 그대로 유지합니다. 명령과 상태·알림·오류는 줄 단위 JSON으로 표준입출력에 전달합니다.
 
+호스트 모드의 계정과 사용량은 ChatterBox 계정 저장소만 씁니다. ChatterBox가 `chatterbox-accounts` 메시지(버전 1)로 계정 목록·라벨·배정 제외·로그인 상태와 계정별 사용량·조회 시각·딥시크 잔고를 보내고, 모니터는 표시와 알림만 맡습니다. 이 모드에서는 자체 추가 계정·로그인과 Claude·Codex·Grok 사용량 조회를 하지 않고, 이 PC의 작업 활동만 읽습니다. 새로고침은 ChatterBox에 `refresh`를 보내 요청합니다. 규약은 ChatterBox 저장소의 `docs/usage-monitor-protocol.md`를 따릅니다.
+
 ## 회귀 검증
 
 ```bash
