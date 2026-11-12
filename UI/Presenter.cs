@@ -782,7 +782,7 @@ public static class Presenter
         var effective = (usage?.Windows ?? []).Where(w => !IsFable(w) && !IsExpired(w, at))
             .Select(w => w with { UsedPercent = Math.Clamp(w.UsedPercent, 0, 100) }).ToList();
         bool resetPending = (usage?.Windows ?? []).Any(w => IsExpired(w, at));
-        var rows = DisplayUsage(usage?.Windows ?? [], at);
+        var rows = HostedDisplayUsage(usage?.Windows ?? [], at);
         string? empty = !received ? "ChatterBox에서 계정 정보를 받는 중…"
             : main == null ? "ChatterBox에 등록된 계정이 없습니다."
             : main.Error != null ? "사용량 조회 실패" : rows.Count == 0 ? "사용량 데이터 없음" : null;
@@ -808,6 +808,42 @@ public static class Presenter
         return card;
     }
 
+    /// <summary>ChatterBox's FIVE_HOUR_SWITCH_AT: the 5-hour window is shown once 10% or less of it is left.</summary>
+    const double HostedFiveHourSwitchUsed = 90;
+
+    /// <summary>
+    /// The window ChatterBox shows (shared/usage.ts pickUsage), so both show the same value: the 5-hour window
+    /// when nearly used up, else weekly, else monthly, else the 5-hour window when it is the only one.
+    /// </summary>
+    public static List<UsageRow> HostedDisplayUsage(IEnumerable<UsageWindow> windows, DateTimeOffset? asOf = null)
+    {
+        var now = asOf ?? DateTimeOffset.Now;
+        var all = windows.Select(w => w with { UsedPercent = Math.Clamp(w.UsedPercent, 0, 100) }).ToList();
+        var five = all.FirstOrDefault(IsFiveHour);
+        var weekly = all.FirstOrDefault(IsWeekly);
+        var monthly = all.FirstOrDefault(w => w.Key == "monthly");
+        UsageWindow? pick = five is { UsedPercent: >= HostedFiveHourSwitchUsed } ? five with { Label = "5시간 한도" }
+            : weekly != null ? weekly with { Label = "주간 한도" }
+            : monthly != null ? monthly with { Label = "월간 한도" }
+            : five != null ? five with { Label = "5시간 한도" } : null;
+        return pick == null ? [] : [UsageRowFor(pick, now)];
+    }
+
+    public sealed record HostedAlertTarget(string StateKey, string Display, List<UsageWindow> Windows);
+
+    /// <summary>
+    /// Usage alerts in hosted mode: accounts in assignment whose reading is fresh (no older than
+    /// <see cref="HostedStaleAfter"/>), windows not yet reset. The state key is ChatterBox's account id.
+    /// </summary>
+    public static List<HostedAlertTarget> HostedAlertTargets(HostedAccountsSnapshot? snapshot, DateTimeOffset now) =>
+        (snapshot?.Accounts ?? [])
+            .Where(a => a.Enabled && a.CheckedAt is { } at && at <= now.AddMinutes(1) && now - at <= HostedStaleAfter)
+            .Select(a => (a, usage: ChatterBoxAccounts.Usage(a)))
+            .Where(x => x.usage != null)
+            .Select(x => new HostedAlertTarget($"chatterbox:{x.a.Id}", $"{x.a.Provider} · {x.a.Label}",
+                x.usage!.Windows.Where(w => w.ResetsAt is not { } r || r > now).ToList()))
+            .ToList();
+
     public static StatusChip HostedStatus(HostedAccount a) => new(
         a.Error != null ? StatusKind.Failed : a.AuthStatus == "required" ? StatusKind.LoginRequired : StatusKind.None,
         a.CheckedAt, HostedStaleAfter, busy: false, a.Error ?? (a.AuthStatus == "required" ? "ChatterBox의 CLI 계정 관리에서 로그인하세요." : null));
@@ -818,7 +854,7 @@ public static class Presenter
         return new AccountUsageSlot
         {
             Role = a.IsDefault ? "기본 계정" : "계정", Id = a.Id, Provider = card.Name, Account = a.Label, Draggable = false,
-            Usage = DisplayUsage(usage?.Windows ?? [], now).FirstOrDefault(),
+            Usage = HostedDisplayUsage(usage?.Windows ?? [], now).FirstOrDefault(),
             Freshness = HostedStatus(a), Disabled = !a.Enabled, HasRefreshError = a.Error != null,
             Status = string.Join('\n', new[]
             {

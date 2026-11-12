@@ -213,7 +213,9 @@ public sealed class Alerts(AppSettings settings, Tray tray)
     readonly Dictionary<string, SessionState> _prev = new();
     bool _baseline;
 
-    public void CheckUsage(string provider, List<UsageWindow> windows)
+    /// <param name="stateKey">What identifies the account for "already alerted" (default: <paramref name="provider"/>).
+    /// Hosted mode passes ChatterBox's account id, so two accounts with one label, or a renamed account, are kept apart.</param>
+    public void CheckUsage(string provider, List<UsageWindow> windows, string? stateKey = null)
     {
         if (!settings.UsageAlerts) return;
         var thresholds = settings.AlertThresholds.Where(t => t is > 0 and <= 100).OrderByDescending(t => t).ToArray();
@@ -225,7 +227,7 @@ public sealed class Alerts(AppSettings settings, Tray tray)
             if (hit == 0) continue;
             // 같은 리셋 주기 안에서는 단계별로 한 번만 알린다 (리셋 시각의 초 단위 오차는 시간 단위로 흡수)
             var period = reset.ToUniversalTime().AddMinutes(30);
-            var key = $"{provider}|{w.Key}|{period:yyyyMMddHH}";
+            var key = $"{stateKey ?? provider}|{w.Key}|{period:yyyyMMddHH}";
             if (settings.AlertState.TryGetValue(key, out var done) && done >= hit) continue;
             settings.AlertState[key] = hit;
             changed = true;

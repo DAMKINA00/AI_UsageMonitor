@@ -1,3 +1,4 @@
+using System.IO;
 using System.Text.Json;
 using AIUsageMonitor.Core;
 using AIUsageMonitor.UI;
@@ -10,6 +11,68 @@ internal static partial class Program
     {
         Run("ChatterBox account snapshot command and parsing", TestChatterBoxSnapshotParsing);
         Run("hosted cards follow ChatterBox accounts only", TestHostedCards);
+        Run("hosted window choice matches ChatterBox", TestHostedWindowChoice);
+        Run("hosted alerts: account id keys, fresh readings only", TestHostedAlerts);
+    }
+
+    static HostedAccount Account(string id, string label, DateTimeOffset? checkedAt, HostedWindow? five = null, HostedWindow? weekly = null, bool enabled = true) =>
+        new(id, id.StartsWith("gpt", StringComparison.Ordinal) ? "Codex" : id.StartsWith("grok", StringComparison.Ordinal) ? "Grok" : "Claude",
+            label, enabled, id.EndsWith("-1", StringComparison.Ordinal), "authenticated", 0, checkedAt, null, five, weekly, null);
+
+    static void TestHostedWindowChoice()
+    {
+        var now = DateTimeOffset.Now;
+        var reset = now.AddHours(2);
+        // ChatterBox (shared/usage.ts pickUsage): 5-hour when <= 10% left, else weekly, else monthly, else 5-hour.
+        var fiveOnly = Presenter.HostedDisplayUsage([new UsageWindow("five_hour", "", 30, reset)], now);
+        HostedCheck("an account with only a 5-hour window shows it (70% left)", fiveOnly.Count == 1 && fiveOnly[0].Label == "5시간 한도" && Math.Abs(fiveOnly[0].Value - 30) < 0.01);
+        var nearlyUsed = Presenter.HostedDisplayUsage([new UsageWindow("five_hour", "", 92, reset), new UsageWindow("seven_day", "", 40, reset)], now);
+        HostedCheck("a nearly used 5-hour window wins over weekly", nearlyUsed.Single().Label == "5시간 한도");
+        var weekly = Presenter.HostedDisplayUsage([new UsageWindow("five_hour", "", 89, reset), new UsageWindow("seven_day", "", 40, reset)], now);
+        HostedCheck("otherwise weekly is shown", weekly.Single().Label == "주간 한도" && Math.Abs(weekly[0].Value - 40) < 0.01);
+        HostedCheck("no window, no row", Presenter.HostedDisplayUsage([], now).Count == 0);
+
+        var local = new ProviderCard { Name = "Claude", Accent = Palette.Claude, AppStatus = "", AppStatusBrush = Palette.Muted, Footnote = "", SessionsHeader = "" };
+        var card = Presenter.Hosted(local, [Account("claude-2", "5시간만", now, five: new HostedWindow(30, reset))], received: true, now);
+        HostedCheck("the slot of a 5-hour-only account shows 70% left", Math.Abs(card.AccountSlots.Single().Remaining - 70) < 0.01 && card.UsageEmpty == null);
+    }
+
+    static void TestHostedAlerts()
+    {
+        var now = DateTimeOffset.Now;
+        var reset = now.AddDays(2);
+        var hot = new HostedWindow(96, reset);
+        var snapshot = new HostedAccountsSnapshot(now, [
+            Account("gpt-2", "공용", now.AddMinutes(-1), weekly: hot),
+            Account("gpt-3", "공용", now.AddMinutes(-1), weekly: hot),
+            Account("gpt-4", "오래됨", now.AddMinutes(-20), weekly: hot),
+            Account("gpt-5", "제외", now.AddMinutes(-1), weekly: hot, enabled: false),
+            Account("gpt-6", "미래 시각", now.AddHours(1), weekly: hot),
+        ], null);
+        var targets = Presenter.HostedAlertTargets(snapshot, now);
+        HostedCheck("alert targets are fresh, assigned accounts keyed by id", targets.Select(t => t.StateKey).SequenceEqual(["chatterbox:gpt-2", "chatterbox:gpt-3"]));
+        HostedCheck("the label is only for display", targets.All(t => t.Display == "Codex · 공용"));
+
+        var previous = Environment.GetEnvironmentVariable(Paths.DataDirVariable);
+        var dir = Path.Combine(Path.GetTempPath(), $"AIUsageMonitor-Alerts-{Guid.NewGuid():N}");
+        Environment.SetEnvironmentVariable(Paths.DataDirVariable, dir);
+        try
+        {
+            var settings = new AppSettings { UsageAlerts = true };
+            var shown = new List<string>();
+            using var tray = new Tray(settings, visible: false, notification: (title, _, _) => shown.Add(title));
+            var alerts = new Alerts(settings, tray);
+            foreach (var t in targets) alerts.CheckUsage(t.Display, t.Windows, t.StateKey);
+            HostedCheck("two accounts with the same label both alert", shown.Count == 2);
+            var renamed = new HostedAccountsSnapshot(now, [Account("gpt-2", "새 이름", now.AddMinutes(-1), weekly: hot)], null);
+            foreach (var t in Presenter.HostedAlertTargets(renamed, now)) alerts.CheckUsage(t.Display, t.Windows, t.StateKey);
+            HostedCheck("renaming an account does not alert again", shown.Count == 2);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(Paths.DataDirVariable, previous);
+            try { Directory.Delete(dir, true); } catch (IOException) { }
+        }
     }
 
     /// <summary>The message ChatterBox's usage-monitor-feed.ts sends (labels, flags and numbers only).</summary>

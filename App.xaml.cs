@@ -497,11 +497,10 @@ public partial class App : Application
 
         if (_hosted)
         {
-            // Every ChatterBox account in assignment, with the monitor's own thresholds (80/95% by default).
-            var now = DateTimeOffset.Now;
-            foreach (var account in _hostedAccounts?.Accounts.Where(a => a.Enabled) ?? [])
-                if (ChatterBoxAccounts.Usage(account) is { } usage)
-                    _alerts.CheckUsage($"{account.Provider} · {account.Label}", usage.Windows.Where(w => w.ResetsAt is not { } r || r > now).ToList());
+            // Every ChatterBox account in assignment with a fresh reading, with the monitor's own thresholds
+            // (80/95% by default); keyed by the account id, the label is only shown.
+            foreach (var target in Presenter.HostedAlertTargets(_hostedAccounts, DateTimeOffset.Now))
+                _alerts.CheckUsage(target.Display, target.Windows, target.StateKey);
         }
         else
         {
