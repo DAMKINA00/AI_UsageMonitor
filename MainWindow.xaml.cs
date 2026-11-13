@@ -94,6 +94,15 @@ public partial class MainWindow : Window
             _platformCount = Math.Max(4, slots.Length);
             DockToTaskbar();
         }
+        // 같은 구성이면 보이는 칸을 유지하되, 교체된 카드의 새 조회 상태(기준 시각)는 옮긴다.
+        else if (PlatformItems.ItemsSource is AccountUsageSlot[] shown) RefreshShownSlots(shown, slots);
+    }
+
+    /// <summary>Same layout: carries each newer slot's freshness into the slot already on screen (matched by position and id).</summary>
+    public static void RefreshShownSlots(IReadOnlyList<AccountUsageSlot> shown, IReadOnlyList<AccountUsageSlot> newer)
+    {
+        for (int i = 0; i < shown.Count && i < newer.Count; i++)
+            if (shown[i].Id == newer[i].Id) shown[i].RefreshFrom(newer[i]);
     }
 
     public static Rect DockBounds(Rect area, int platformCount, double inset = 0)

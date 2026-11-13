@@ -70,6 +70,17 @@ public sealed class AccountUsageSlot : INotifyPropertyChanged
 
     public event PropertyChangedEventHandler? PropertyChanged;
 
+    /// <summary>
+    /// 구성(서명)이 같은 새 칸의 조회 상태(기준 시각·오래됨·실패 여부)를 이 칸에 옮긴다. 서명에는 조회 시각이
+    /// 없으므로, 사용률이 그대로인 계정도 이것으로 기준 시각이 갱신된다. 칸을 바꾸지 않아 툴팁·포커스가 유지된다.
+    /// </summary>
+    public void RefreshFrom(AccountUsageSlot newer)
+    {
+        if (ReferenceEquals(this, newer)) return;
+        if (_freshness != null && newer.Freshness != null) _freshness.CopyFrom(newer.Freshness);
+        Tick();
+    }
+
     /// <summary>남은 시간·흐림 상태를 지금 시각으로 다시 계산한다.</summary>
     public void Tick()
     {

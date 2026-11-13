@@ -312,6 +312,9 @@ public sealed class ProviderCard
     public void RefreshFrom(ProviderCard newer)
     {
         Status.CopyFrom(newer.Status);
+        // 계정 칸 서명에는 조회 시각이 없다: 숫자가 그대로인 계정도 새 기준 시각을 받아야 오래됨으로 흐려지지 않는다.
+        for (int i = 0; i < AccountSlots.Count && i < newer.AccountSlots.Count; i++)
+            if (AccountSlots[i].Id == newer.AccountSlots[i].Id) AccountSlots[i].RefreshFrom(newer.AccountSlots[i]);
         for (int i = 0; i < Sessions.Count && i < newer.Sessions.Count; i++)
             if (Sessions[i].Id == newer.Sessions[i].Id) Sessions[i].LastActivity = newer.Sessions[i].LastActivity;
         Tick();

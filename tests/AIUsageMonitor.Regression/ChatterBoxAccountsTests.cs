@@ -13,6 +13,48 @@ internal static partial class Program
         Run("hosted cards follow ChatterBox accounts only", TestHostedCards);
         Run("hosted window choice matches ChatterBox", TestHostedWindowChoice);
         Run("hosted alerts: account id keys, fresh readings only", TestHostedAlerts);
+        Run("hosted slots take a newer as-of time when the numbers are unchanged", TestHostedSlotFreshness);
+    }
+
+    /// <summary>
+    /// Regression: a Codex account whose numbers did not change kept the first reading's as-of time on screen
+    /// (the card and its slots were kept by signature) and went dim after 15 minutes although ChatterBox kept
+    /// sending fresh readings.
+    /// </summary>
+    static void TestHostedSlotFreshness()
+    {
+        var now = DateTimeOffset.Now;
+        var reset = now.AddDays(3);
+        var local = new ProviderCard { Name = "Codex", Accent = Palette.Codex, AppStatus = "CLI 실행 중", AppStatusBrush = Palette.Ok, Footnote = "", SessionsHeader = "", AppRunning = true };
+        HostedAccount[] Snapshot(DateTimeOffset checkedAt) =>
+            [Account("gpt-1", "PRIVATE", checkedAt, weekly: new HostedWindow(57, reset)), Account("gpt-3", "PUBLIC", checkedAt, weekly: new HostedWindow(16, reset))];
+
+        var first = Presenter.Hosted(local, Snapshot(now - TimeSpan.FromMinutes(40)), received: true, now);
+        var vm = new MainViewModel();
+        var claude = new ProviderCard { Name = "Claude", Accent = Palette.Claude, AppStatus = "", AppStatusBrush = Palette.Muted, Footnote = "", SessionsHeader = "" };
+        vm.Update(claude, first, null, "");
+        HostedCheck("the old reading starts out stale", vm.Codex!.AccountSlots.All(s => s.IsDimmed));
+
+        int replaced = 0;
+        vm.PropertyChanged += (_, e) => replaced += e.PropertyName == nameof(MainViewModel.Codex) ? 1 : 0;
+        var second = Presenter.Hosted(local, Snapshot(now), received: true, now);
+        HostedCheck("same numbers keep the same card (no replacement, tooltips stay open)", second.Signature() == first.Signature());
+        vm.Update(vm.Claude!, second, null, "");
+        HostedCheck("the card was kept", replaced == 0 && ReferenceEquals(vm.Codex, first));
+        HostedCheck("kept slots take the newer as-of time and are not stale",
+            vm.Codex!.AccountSlots.All(s => !s.IsDimmed && s.Freshness?.AsOf is { } at && Math.Abs((at - now).TotalSeconds) < 1));
+        HostedCheck("the slot tooltip no longer says the value is old", vm.Codex.AccountSlots.All(s => !s.ToolTipText.Contains("오래되었습니다", StringComparison.Ordinal)));
+
+        // The main window keeps the slots it shows when the layout is unchanged: they must refresh too.
+        var shown = Presenter.Hosted(local, Snapshot(now - TimeSpan.FromMinutes(40)), received: true, now).AccountSlots.ToArray();
+        var newer = Presenter.Hosted(local, Snapshot(now), received: true, now).AccountSlots.ToArray();
+        HostedCheck("shown slots start stale", shown.All(s => s.IsDimmed));
+        MainWindow.RefreshShownSlots(shown, newer);
+        HostedCheck("shown slots take the newer as-of time", shown.All(s => !s.IsDimmed));
+        // A slot for a different account at that position is left alone.
+        var other = Presenter.Hosted(local, [Account("gpt-2", "OTHER", now - TimeSpan.FromMinutes(40), weekly: new HostedWindow(57, reset))], received: true, now).AccountSlots.ToArray();
+        MainWindow.RefreshShownSlots(other, newer);
+        HostedCheck("a different account is not overwritten", other[0].IsDimmed);
     }
 
     static HostedAccount Account(string id, string label, DateTimeOffset? checkedAt, HostedWindow? five = null, HostedWindow? weekly = null, bool enabled = true) =>
