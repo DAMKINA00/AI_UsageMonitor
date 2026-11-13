@@ -76,9 +76,9 @@ public sealed class AccountUsageSlot : INotifyPropertyChanged
     /// </summary>
     public void RefreshFrom(AccountUsageSlot newer)
     {
-        if (ReferenceEquals(this, newer)) return;
+        if (ReferenceEquals(this, newer) || ReferenceEquals(_freshness, newer.Freshness)) return;
+        // CopyFrom notifies IsDimmed, which (constructor hook above) re-raises this slot's dim/tooltip properties.
         if (_freshness != null && newer.Freshness != null) _freshness.CopyFrom(newer.Freshness);
-        Tick();
     }
 
     /// <summary>남은 시간·흐림 상태를 지금 시각으로 다시 계산한다.</summary>

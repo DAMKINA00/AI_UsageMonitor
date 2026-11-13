@@ -55,6 +55,49 @@ internal static partial class Program
         var other = Presenter.Hosted(local, [Account("gpt-2", "OTHER", now - TimeSpan.FromMinutes(40), weekly: new HostedWindow(57, reset))], received: true, now).AccountSlots.ToArray();
         MainWindow.RefreshShownSlots(other, newer);
         HostedCheck("a different account is not overwritten", other[0].IsDimmed);
+
+        TestHostedSlotFreshnessAfterReplacement(now, reset);
+    }
+
+    /// <summary>
+    /// Review 873: card A shown → card B replaces it (only the app status changed, same slots) → card B kept
+    /// on the next reading. The slots on screen must stay the card's current slots with the newest as-of time.
+    /// </summary>
+    static void TestHostedSlotFreshnessAfterReplacement(DateTimeOffset now, DateTimeOffset reset)
+    {
+        HostedAccount[] Snapshot(DateTimeOffset checkedAt) =>
+            [Account("gpt-1", "PRIVATE", checkedAt, weekly: new HostedWindow(57, reset)), Account("gpt-3", "PUBLIC", checkedAt, weekly: new HostedWindow(16, reset))];
+        ProviderCard Local(string status) => new() { Name = "Codex", Accent = Palette.Codex, AppStatus = status, AppStatusBrush = Palette.Ok, Footnote = "", SessionsHeader = "", AppRunning = true };
+        var claude = new ProviderCard { Name = "Claude", Accent = Palette.Claude, AppStatus = "", AppStatusBrush = Palette.Muted, Footnote = "", SessionsHeader = "" };
+        var vm = new MainViewModel();
+        AccountUsageSlot[] shown = [];
+        string shownSignature = "";
+        // The main window's rule (MainWindow.RefreshPlatforms): new objects only when the slot layout changes.
+        void Show()
+        {
+            var slots = vm.Codex!.AccountSlots.ToArray();
+            var signature = string.Join('\n', slots.Select(s => s.Signature));
+            if (signature != shownSignature) { shown = slots; shownSignature = signature; }
+            else MainWindow.RefreshShownSlots(shown, slots);
+        }
+
+        var a = Presenter.Hosted(Local("앱 실행 중"), Snapshot(now - TimeSpan.FromMinutes(40)), received: true, now);
+        vm.Update(claude, a, null, ""); Show();
+        var b = Presenter.Hosted(Local("앱 실행 안 됨"), Snapshot(now - TimeSpan.FromMinutes(20)), received: true, now);
+        vm.Update(claude, b, null, ""); Show();
+        HostedCheck("a status-only change replaces the card", ReferenceEquals(vm.Codex, b));
+        HostedCheck("the replaced card keeps the unchanged slot objects that are on screen", shown.Zip(vm.Codex!.AccountSlots).All(p => ReferenceEquals(p.First, p.Second)));
+        var c = Presenter.Hosted(Local("앱 실행 안 됨"), Snapshot(now), received: true, now);
+        vm.Update(claude, c, null, ""); Show();
+        HostedCheck("the next reading keeps the card", ReferenceEquals(vm.Codex, b));
+        HostedCheck("screen slots and card slots are the same objects with the newest as-of time",
+            shown.Zip(vm.Codex!.AccountSlots).All(p => ReferenceEquals(p.First, p.Second) && p.First.Freshness?.AsOf is { } at && Math.Abs((at - now).TotalSeconds) < 1));
+        HostedCheck("no slot on screen is stale after the replace-then-keep sequence", shown.All(s => !s.IsDimmed));
+        // A changed slot (new usage number) is a new object, not an old one carried over.
+        var d = Presenter.Hosted(Local("앱 실행 중"), [Account("gpt-1", "PRIVATE", now, weekly: new HostedWindow(58, reset)), Account("gpt-3", "PUBLIC", now, weekly: new HostedWindow(16, reset))], received: true, now);
+        var keptSecond = vm.Codex!.AccountSlots[1];
+        vm.Update(claude, d, null, "");
+        HostedCheck("a changed slot is new and an unchanged one is carried over", !ReferenceEquals(vm.Codex!.AccountSlots[0], shown[0]) && ReferenceEquals(vm.Codex.AccountSlots[1], keptSecond));
     }
 
     static HostedAccount Account(string id, string label, DateTimeOffset? checkedAt, HostedWindow? five = null, HostedWindow? weekly = null, bool enabled = true) =>

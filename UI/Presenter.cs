@@ -363,6 +363,10 @@ public sealed class MainViewModel : INotifyPropertyChanged
         var s = next.Signature();
         if (current == null || s != signature)
         {
+            // The card is replaced, but its account slots that did not change (same position, account and
+            // slot signature) carry over as the same objects, refreshed: the main window shows these objects
+            // while its slot layout is unchanged, so it must keep seeing the card's current slots.
+            if (current != null) next.AccountSlots = KeepUnchangedSlots(current.AccountSlots, next.AccountSlots);
             current = next;
             signature = s;
             Raise(name);
@@ -370,6 +374,16 @@ public sealed class MainViewModel : INotifyPropertyChanged
         // 구성이 같으면 카드를 그대로 두어 목록·툴팁·포커스가 유지된다
         else current.RefreshFrom(next);
     }
+
+    /// <summary>Newer slots, where each one unchanged from the previous card is that previous object refreshed.</summary>
+    public static List<AccountUsageSlot> KeepUnchangedSlots(IReadOnlyList<AccountUsageSlot> previous, IReadOnlyList<AccountUsageSlot> newer) =>
+        newer.Select((slot, i) =>
+        {
+            var old = i < previous.Count ? previous[i] : null;
+            if (old == null || old.Id != slot.Id || old.Signature != slot.Signature) return slot;
+            old.RefreshFrom(slot);
+            return old;
+        }).ToList();
 
     /// <summary>"N분 전"·남은 시간·오래됨 표시를 다시 계산한다 (App 의 시계 타이머가 부른다).</summary>
     public void Tick()
