@@ -19,7 +19,7 @@ public sealed class AccountUsageSlot : INotifyPropertyChanged
         Id != other.Id && Provider == other.Provider;
     public string? Account { get; init; }
     public string DisplayAccount => string.IsNullOrWhiteSpace(Account) ? "계정 확인 중" : Account.ToUpperInvariant();
-    public Brush Accent => Provider switch { "Claude" => Palette.Claude, "Codex" => Palette.Codex, "Gemini" => Palette.Gemini, "Grok" => Palette.Grok, _ => Palette.Muted };
+    public Brush Accent => Provider switch { "Claude" => Palette.Claude, "Codex" => Palette.Codex, "Gemini" or "Antigravity" => Palette.Gemini, "Grok" => Palette.Grok, _ => Palette.Muted };
     public UsageRow? Usage { get; init; }
     public string Status { get; init; } = "";
     public string? Plan { get; init; }

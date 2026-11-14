@@ -10,10 +10,35 @@ internal static partial class Program
     static void RunChatterBoxAccountTests()
     {
         Run("ChatterBox account snapshot command and parsing", TestChatterBoxSnapshotParsing);
+        Run("Antigravity hosted account, quota, freshness and display", TestHostedAntigravity);
         Run("hosted cards follow ChatterBox accounts only", TestHostedCards);
         Run("hosted window choice matches ChatterBox", TestHostedWindowChoice);
         Run("hosted alerts: account id keys, fresh readings only", TestHostedAlerts);
         Run("hosted slots take a newer as-of time when the numbers are unchanged", TestHostedSlotFreshness);
+    }
+
+    static void TestHostedAntigravity()
+    {
+        var now = DateTimeOffset.Now;
+        var line = JsonSerializer.SerializeToElement(new { version = 1, sentAt = now.ToUnixTimeMilliseconds(), groups = new[] {
+            new { kind = "gemini", name = "안티그래비티", accounts = new[] { new { accountId = "gemini-1", label = "기본 계정", enabled = true, isDefault = true,
+                authStatus = "authenticated", checkedAt = now.ToUnixTimeMilliseconds(), windows = new { weekly = new { usedPercent = 53, resetsAt = now.AddDays(6).ToUnixTimeSeconds() } } } } }
+        }});
+        HostedCheck("Antigravity snapshot parses", ChatterBoxAccounts.TryParse(line, out var snapshot, out _));
+        HostedCheck("Antigravity keeps its native CLI account id", snapshot.For("Antigravity").Single().Id == "gemini-1");
+        var card = Presenter.Hosted(Presenter.Antigravity(), snapshot.For("Antigravity"), true, now);
+        HostedCheck("Antigravity weekly reading is 47 percent remaining", card.AccountSlots.Single().RemainingText == "47%");
+        HostedCheck("Antigravity uses the Gemini accent", Equals(card.AccountSlots.Single().Accent, Palette.Gemini));
+        var vm = new MainViewModel();
+        vm.Update(Presenter.Antigravity(), Presenter.Antigravity(), null, "", card);
+        HostedCheck("Antigravity card reaches the view model", vm.Gemini?.Name == "Antigravity");
+        HostedCheck("Antigravity appears in the hosted accounts panel", Presenter.HostedAccountCards(snapshot).Single().ProviderName.Contains("Antigravity"));
+        var lowerFive = snapshot.For("Antigravity").Single() with { FiveHour = new HostedWindow(70, now.AddHours(2)), Weekly = new HostedWindow(20, now.AddDays(6)) };
+        var fiveCard = Presenter.Hosted(Presenter.Antigravity(), [lowerFive], true, now);
+        HostedCheck("Antigravity shows lower 5-hour remaining even above 10 percent", fiveCard.AccountSlots.Single().RemainingText == "30%" && fiveCard.Usage.Single().Label == "5시간 한도");
+        HostedCheck("Antigravity account detail shows just the lower window", fiveCard.AccountUsage.Count == 1);
+        var lowerWeek = lowerFive with { FiveHour = new HostedWindow(20, now.AddHours(2)), Weekly = new HostedWindow(80, now.AddDays(6)) };
+        HostedCheck("Antigravity shows lower weekly remaining", Presenter.Hosted(Presenter.Antigravity(), [lowerWeek], true, now).AccountSlots.Single().RemainingText == "20%");
     }
 
     /// <summary>

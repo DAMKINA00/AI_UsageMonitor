@@ -31,10 +31,10 @@ public static partial class ChatterBoxAccounts
 
     static readonly Dictionary<string, string> Providers = new(StringComparer.Ordinal)
     {
-        ["claude"] = "Claude", ["gpt"] = "Codex", ["grok"] = "Grok",
+        ["claude"] = "Claude", ["gpt"] = "Codex", ["gemini"] = "Antigravity", ["grok"] = "Grok",
     };
 
-    [GeneratedRegex(@"^(claude|gpt|grok)-([1-9]|10)$")]
+    [GeneratedRegex(@"^(claude|gpt|gemini|grok)-([1-9]|10)$")]
     private static partial Regex AccountIdPattern();
 
     public static bool TryParse(JsonElement value, out HostedAccountsSnapshot snapshot, out string error)
@@ -140,6 +140,8 @@ public static partial class ChatterBoxAccounts
         if (account.FiveHour is { } five) windows.Add(new("five_hour", "5시간 한도", five.UsedPercent, five.ResetsAt));
         if (account.Weekly is { } week) windows.Add(new("seven_day", "주간 한도", week.UsedPercent, week.ResetsAt));
         if (account.Monthly is { } month) windows.Add(new("monthly", "월간 한도", month.UsedPercent, month.ResetsAt));
+        if (account.Provider == "Antigravity")
+            windows = windows.OrderByDescending(w => w.UsedPercent).ThenBy(w => w.Key == "seven_day" ? 0 : 1).Take(1).ToList();
         return windows.Count == 0 ? null : new UsageSnapshot { Windows = windows, AsOf = asOf, Source = "ChatterBox" };
     }
 

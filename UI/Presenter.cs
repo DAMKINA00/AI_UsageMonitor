@@ -337,12 +337,13 @@ public sealed class RelayCommand(Action run) : ICommand
 
 public sealed class MainViewModel : INotifyPropertyChanged
 {
-    ProviderCard? _claude, _codex, _grok;
+    ProviderCard? _claude, _codex, _gemini, _grok;
     string _footer = "";
-    string _claudeSig = "", _codexSig = "", _grokSig = "";
+    string _claudeSig = "", _codexSig = "", _geminiSig = "", _grokSig = "";
 
     public ProviderCard? Claude => _claude;
     public ProviderCard? Codex => _codex;
+    public ProviderCard? Gemini => _gemini;
     public ProviderCard? Grok => _grok;
     public string Footer => _footer;
 
@@ -350,10 +351,11 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
     public void Update(ProviderCard claude, ProviderCard codex, string footer) => Update(claude, codex, null, footer);
 
-    public void Update(ProviderCard claude, ProviderCard codex, ProviderCard? grok, string footer)
+    public void Update(ProviderCard claude, ProviderCard codex, ProviderCard? grok, string footer, ProviderCard? gemini = null)
     {
         Apply(ref _claude, ref _claudeSig, claude, nameof(Claude));
         Apply(ref _codex, ref _codexSig, codex, nameof(Codex));
+        if (gemini != null) Apply(ref _gemini, ref _geminiSig, gemini, nameof(Gemini));
         if (grok != null) Apply(ref _grok, ref _grokSig, grok, nameof(Grok));
         if (footer != _footer) { _footer = footer; Raise(nameof(Footer)); }
     }
@@ -390,6 +392,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
     {
         _claude?.Tick();
         _codex?.Tick();
+        _gemini?.Tick();
         _grok?.Tick();
     }
 
@@ -680,6 +683,8 @@ public static class Presenter
             null, null, monitor.GrokRemoteBusy ? "사용량을 불러오는 중…" : "사용량 데이터 없음", Footnote(usage), [], "", status);
     }
 
+    public static ProviderCard Antigravity() => Build("Antigravity", Palette.Gemini, null, false, "ChatterBox CLI", Palette.Muted, null, null, null, null, "사용량 데이터 없음", "출처: Antigravity CLI", [], "", new StatusChip());
+
     static readonly AppSettings DefaultSettings = new();
 
     static void OpenUri(string uri)
@@ -808,7 +813,7 @@ public static class Presenter
             Name = local.Name, Accent = local.Accent, AppStatus = local.AppStatus, AppStatusBrush = local.AppStatusBrush,
             Account = main?.Label,
             Usage = rows,
-            AccountUsage = AccountUsageRows(usage?.Windows ?? [], false, at),
+            AccountUsage = main?.Provider == "Antigravity" ? rows : AccountUsageRows(usage?.Windows ?? [], false, at),
             UsageEmpty = rows.Count == 0 ? empty ?? "사용량 데이터 없음" : null,
             Notice = main?.Error is { } error ? $"사용량 조회 실패: {error}" : main?.AuthStatus == "required" ? "ChatterBox에서 로그인이 필요합니다." : null,
             Footnote = "계정·사용량: ChatterBox",
@@ -901,7 +906,7 @@ public static class Presenter
             return new AccountUsageCard
             {
                 Id = a.Id, ProviderName = $"{a.Provider} · {a.Id}", DisplayName = a.Label, Status = string.Join(" · ", status),
-                Usage = AccountUsageRows(usage?.Windows ?? [], false, at), Dimmed = !a.Enabled || chip.IsDimmedAt(at),
+                Usage = a.Provider == "Antigravity" ? HostedDisplayUsage(usage?.Windows ?? [], at) : AccountUsageRows(usage?.Windows ?? [], false, at), Dimmed = !a.Enabled || chip.IsDimmedAt(at),
             };
         }).ToList();
         if (snapshot.DeepSeek is { } d && d.State != "unconfigured")

@@ -456,12 +456,14 @@ public partial class App : Application
         });
         var codex = Presenter.Codex(_monitor, _settings);
         var grok = Presenter.Grok(_monitor, _settings);
+        ProviderCard? gemini = null;
         if (_hosted)
         {
             // Activity from this PC, accounts and usage from ChatterBox only.
             bool received = _hostedAccounts != null;
             claude = Presenter.Hosted(claude, _hostedAccounts?.For("Claude") ?? [], received);
             codex = Presenter.Hosted(codex, _hostedAccounts?.For("Codex") ?? [], received);
+            gemini = Presenter.Hosted(Presenter.Antigravity(), _hostedAccounts?.For("Antigravity") ?? [], received);
             grok = Presenter.Hosted(grok, _hostedAccounts?.For("Grok") ?? [], received);
         }
         else
@@ -472,8 +474,8 @@ public partial class App : Application
                 _secondaryAccounts.Accounts.Count(a => a.Settings.Provider == AccountProvider.Codex));
             grok.AccountSlots = AccountUsageSlot.Create(grok, _secondaryAccounts.Accounts, secondarySlots: 0);
         }
-        _vm.Update(claude, codex, grok, "");
-        _taskbar.Update([claude, codex, grok]);
+        _vm.Update(claude, codex, grok, "", gemini);
+        _taskbar.Update(new[] { claude, codex, gemini, grok }.OfType<ProviderCard>().ToArray());
         if (_window.IsAccountsOpen)
         {
             var accounts = _hosted ? Presenter.HostedAccountCards(_hostedAccounts) : AccountUsageCard.Create(claude, codex, _secondaryAccounts, grok);
@@ -489,11 +491,12 @@ public partial class App : Application
         {
             Animate(_window.Claude, _claudeMood.Update(claude));
             Animate(_window.Codex, _codexMood.Update(codex));
+            if (gemini != null) Animate(_window.Gemini, _geminiMood.Update(gemini));
             Animate(_window.Grok, _grokMood.Update(grok));
         }
 
         _tray.UpdateIcon(claude.MaxUsed, codex.MaxUsed, grok.MaxUsed);
-        _tray.SetTooltip(Tray.Tooltip([claude, codex, grok]));
+        _tray.SetTooltip(Tray.Tooltip(new[] { claude, codex, gemini, grok }.OfType<ProviderCard>().ToArray()));
 
         if (_hosted)
         {
