@@ -106,9 +106,12 @@ public sealed class AppSettings
     public void SetCharacters(IEnumerable<string> ids)
     {
         var list = CharacterSelection.Normalize(ids);
+        // 숨기기 직전에 보이던 선택을 기억한다. 예전 버전이 다시 저장해 Characters 가 빠진 설정(예전 스위치만 켜짐)도
+        // 그때 보이던 네 캐릭터가 마지막 선택이 된다.
+        var shown = list.Count > 0 ? list : EnabledCharacters;
+        if (shown.Count > 0) LastCharacters = [.. shown];
         Characters = list;
         ShowCharacters = list.Count > 0;
-        if (list.Count > 0) LastCharacters = [.. list];
     }
 
     /// <summary>예전 단일 스위치 명령: 끄면 전부 숨기고, 켜면 마지막 선택(없으면 다섯 모두)을 되살린다.</summary>

@@ -72,6 +72,28 @@ internal static partial class Program
         }
         finally { TryDelete(dir); }
 
+        // 예전 버전이 다시 저장한 v4 설정(Characters 없음, 스위치 켜짐): 네 캐릭터 → 모두 숨기기 → 재시작 → 켜기 = 그 네 캐릭터
+        var olderDir = Path.Combine(Path.GetTempPath(), $"AIUsageMonitor-Characters-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(olderDir);
+        try
+        {
+            var file = Path.Combine(olderDir, "settings.json");
+            File.WriteAllText(file, """{"SettingsVersion": 4, "ShowCharacters": true}""");
+            var rewritten = AppSettings.Load(file);
+            Check("a v4 file rewritten by an older monitor shows the four characters",
+                rewritten.EnabledCharacters.SequenceEqual(CharacterSelection.Legacy) && rewritten.Characters == null, string.Join(",", rewritten.EnabledCharacters));
+            rewritten.SetAllCharacters(false);
+            rewritten.Save();
+            var afterRestart = AppSettings.Load(file);
+            Check("hiding them keeps the four as the last selection across a restart", afterRestart.EnabledCharacters.Count == 0 &&
+                CharacterSelection.Normalize(afterRestart.LastCharacters).SequenceEqual(CharacterSelection.Legacy),
+                string.Join(",", afterRestart.LastCharacters ?? []));
+            afterRestart.SetAllCharacters(true);
+            Check("showing again restores exactly those four, not all five", afterRestart.EnabledCharacters.SequenceEqual(CharacterSelection.Legacy),
+                string.Join(",", afterRestart.EnabledCharacters));
+        }
+        finally { TryDelete(olderDir); }
+
         // 표정 원화: ChatterBox의 5캐릭터 × 12표정이 모두 들어 있고, 모든 기분이 있는 표정으로 이어진다
         string[] expressions = ["neutral", "thinking", "speaking", "happy", "confident", "surprised", "embarrassed", "worried", "sad", "angry", "tired", "waiting"];
         var missing = CharacterSelection.All.SelectMany(c => expressions.Where(e => !CharacterTheme.HasFace(c, e)).Select(e => $"{c}/{e}")).ToList();
