@@ -92,11 +92,23 @@ public partial class MainWindow : Window
     public bool ShowCharacterEvent(CharacterEvent evt)
     {
         if (!_seenEvents.Accept(evt.Id)) return false;
-        int index = CharacterSelection.All.ToList().IndexOf(evt.Character);
-        if (index < 0) return false;
+        return Speak(evt.Character, evt.Text);
+    }
+
+    /// <summary>모니터가 화면에 보이는지 (숨김·최소화가 아님). 보이지 않을 때 온 대사는 버린다.</summary>
+    public bool CanSpeak => IsVisible && WindowState != WindowState.Minimized;
+
+    /// <summary>
+    /// 그 캐릭터가 한 번 말한다. 모니터가 숨었거나 최소화됐거나, 캐릭터가 꺼졌거나 그림이 없으면 말하지 않고 버린다
+    /// (다시 보일 때 지난 대사가 나오지 않게).
+    /// </summary>
+    public bool Speak(string id, string text)
+    {
+        int index = CharacterSelection.All.ToList().IndexOf(id);
+        if (index < 0 || !CanSpeak) return false;
         var stage = Stages[index];
         if (stage.Visibility != Visibility.Visible || !stage.HasArt) return false;
-        stage.Say(evt.Text);
+        stage.Say(text);
         return true;
     }
 
@@ -248,7 +260,12 @@ public partial class MainWindow : Window
     void UpdateStages()
     {
         bool visible = IsVisible && WindowState != WindowState.Minimized;
-        foreach (var stage in Stages) stage.SetActive(visible && stage.Visibility == Visibility.Visible);
+        foreach (var stage in Stages)
+        {
+            stage.SetActive(visible && stage.Visibility == Visibility.Visible);
+            // 숨김·최소화: 말하던 대사와 줄 선 대사를 버린다 (다시 열 때 지난 대사가 남지 않게)
+            if (!visible) stage.StopSpeech();
+        }
         if (visible && CharactersShown) _walkTimer?.Start(); else _walkTimer?.Stop();
         if (visible) _dockTimer?.Start(); else _dockTimer?.Stop();
     }

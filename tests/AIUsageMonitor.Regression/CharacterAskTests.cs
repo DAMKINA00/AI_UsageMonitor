@@ -74,13 +74,13 @@ internal static partial class Program
             box.Question = "질문";
             Check("without an open chat the box explains and cannot send", !box.CanSend, "can send");
             var sent = new List<string>();
-            box.Submitted += sent.Add;
+            box.Submitted += (chat, q) => sent.Add($"{chat}:{q}");
             box.SetTarget(new CharacterTarget(12, "모니터 작업"));
             box.Question = "  지금 뭐 해?  ";
             Check("with an open chat the box can send", box.CanSend && box.Target.ChatId == 12, "cannot send");
             box.Send();
             box.Send();
-            Check("sending gives the trimmed question once", sent.SequenceEqual(["지금 뭐 해?"]), string.Join("|", sent));
+            Check("sending gives the trimmed question once, with its chat", sent.SequenceEqual(["12:지금 뭐 해?"]) && box.WasSent, string.Join("|", sent));
         }
         finally { box.Close(); }
 
@@ -99,7 +99,72 @@ internal static partial class Program
             window.AskEnabled = true;
             Check("clicking a shown character opens a question for it", window.ClickCharacter("gpt") && clicks.SequenceEqual(["gpt"]), string.Join(",", clicks));
             Check("hidden characters cannot be clicked", !window.ClickCharacter("claude") && clicks.Count == 1, "hidden");
+
+            // 숨김·최소화: 말하던 대사와 줄 선 대사를 버리고, 그동안 온 이벤트도 버린다
+            CharacterEvent Evt(string id) => new(id, "gpt", "result", true, $"소식 {id}", 12, 1);
+            Check("a shown monitor speaks an event", window.ShowCharacterEvent(Evt("r1")) && window.ShowCharacterEvent(Evt("r2")) &&
+                window.Gpt.IsSpeaking && window.Gpt.PendingSpeech == 1, "shown");
+            var bubble = (System.Windows.Controls.Grid)PrivateField<CharacterStage>("_bubble").GetValue(window.Gpt)!;
+            window.Hide();
+            PumpDisplay();
+            Check("hiding the monitor stops speech and clears the queue", !window.Gpt.IsSpeaking && window.Gpt.PendingSpeech == 0 &&
+                bubble.Visibility != Visibility.Visible, $"speaking={window.Gpt.IsSpeaking}, pending={window.Gpt.PendingSpeech}");
+            Check("events while hidden are dropped", !window.ShowCharacterEvent(Evt("r3")) && !window.Speak("gpt", "답") &&
+                !window.Gpt.IsSpeaking && window.Gpt.PendingSpeech == 0, "hidden events");
+            window.Show();
+            PumpDisplay();
+            Check("showing again brings back no old speech", !window.Gpt.IsSpeaking && window.Gpt.PendingSpeech == 0 &&
+                bubble.Visibility != Visibility.Visible && !window.ShowCharacterEvent(Evt("r3")), "reshown");
+            Check("a new event after showing again is spoken", window.ShowCharacterEvent(Evt("r4")) && window.Gpt.IsSpeaking, "after show");
+            window.WindowState = WindowState.Minimized;
+            PumpDisplay();
+            Check("minimizing stops speech and drops new events", !window.Gpt.IsSpeaking && window.Gpt.PendingSpeech == 0 &&
+                !window.ShowCharacterEvent(Evt("r5")), $"state={window.WindowState}");
+            window.WindowState = WindowState.Normal;
         }
         finally { window.Close(); }
+
+        TestCharacterAskDraftPinning();
+    }
+
+    static void TestCharacterAskDraftPinning()
+    {
+        // 초안은 처음 연 채팅에 묶인다: 활성 채팅이 바뀌면 글은 남기고 보내기만 막는다
+        var a = new CharacterTarget(1, "채팅 A");
+        var b = new CharacterTarget(2, "채팅 B");
+        var box = new CharacterAskWindow("gpt", "지피티", a);
+        var sent = new List<string>();
+        box.Submitted += (chat, q) => sent.Add($"{chat}:{q}");
+        try
+        {
+            box.Question = "A에 보낼 초안";
+            box.SetTarget(b);
+            box.Send();
+            Check("a draft for chat A is never sent to chat B", sent.Count == 0 && !box.CanSend && box.TargetChanged &&
+                box.DraftTarget.ChatId == 1 && box.Question == "A에 보낼 초안", $"sent={string.Join("|", sent)}");
+            box.SetTarget(new CharacterTarget(null, ""));
+            Check("closing every chat keeps the draft and its chat", !box.CanSend && box.DraftTarget.ChatId == 1 && box.Question == "A에 보낼 초안", "no chat");
+            box.SetTarget(a);
+            box.Send();
+            Check("back on chat A the draft goes to chat A", sent.SequenceEqual(["1:A에 보낼 초안"]), string.Join("|", sent));
+        }
+        finally { box.Close(); }
+
+        var empty = new CharacterAskWindow("orch", "마스터", new CharacterTarget(null, ""));
+        try
+        {
+            empty.SetTarget(b);
+            empty.Question = "B 질문";
+            Check("a box opened before any chat takes the first chat that opens", empty.DraftTarget.ChatId == 2 && empty.CanSend, "adopt");
+        }
+        finally { empty.Close(); }
+
+        var reopened = new CharacterAskWindow("gpt", "지피티", b, a, "다시 연 초안");
+        try
+        {
+            Check("a reopened draft stays on its own chat and only explains", reopened.Question == "다시 연 초안" && reopened.DraftTarget.ChatId == 1 &&
+                reopened.TargetChanged && !reopened.CanSend, reopened.DraftTarget.ChatId.ToString() ?? "");
+        }
+        finally { reopened.Close(); }
     }
 }

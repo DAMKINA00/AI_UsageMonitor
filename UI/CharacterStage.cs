@@ -201,6 +201,21 @@ public sealed class CharacterStage : Border
         _announcementUntil = _t + _bubbleShowFor;
     }
 
+    /// <summary>말하던 대사와 줄 선 대사를 모두 버리고 말풍선을 바로 닫는다 (모니터가 숨거나 최소화될 때).</summary>
+    public void StopSpeech()
+    {
+        _speech.Clear();
+        _speaking = false;
+        _announcementUntil = 0;
+        if (_bubbleShown || _bubble.Visibility == Visibility.Visible)
+        {
+            _bubbleShown = false;
+            _bubbleHideT = 99;
+            _bubble.Visibility = Visibility.Collapsed;
+        }
+        _mouthFrame = 0;
+    }
+
     /// <summary>숨긴 캐릭터의 그림·합성 결과를 놓아 준다. 다시 보이면 <see cref="ApplyCharacter"/> 가 다시 읽는다.</summary>
     public void ReleaseArt()
     {

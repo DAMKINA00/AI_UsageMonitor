@@ -623,61 +623,68 @@ public partial class App : Application
         }
     }
 
+    /// <summary>보내지 않고 닫은 초안: 캐릭터마다 하나, 쓰던 채팅에 묶어 둔다.</summary>
+    readonly Dictionary<string, (CharacterTarget Target, string Text)> _askDrafts = new(StringComparer.Ordinal);
+
     /// <summary>캐릭터를 눌렀을 때: 보낼 채팅을 보여 주는 입력창을 그 캐릭터 위에 띄운다.</summary>
     void OpenAsk(string character, Rect anchor)
     {
         if (!_hosted) return;
-        var stage = _window.Stages[CharacterSelection.All.ToList().IndexOf(character)];
         if (_asks.IsWaiting(character))
         {
             // 같은 캐릭터에 두 번 묻지 않는다 (앞 질문의 답을 기다리는 중)
-            stage.Say("앞 질문의 답을 기다리고 있어요.");
+            _window.Speak(character, "앞 질문의 답을 기다리고 있어요.");
             return;
         }
         _askWindow?.Close();
         var name = Tray.CharacterLabels.TryGetValue(character, out var label) ? label : character;
-        var window = new CharacterAskWindow(character, name, _askTarget) { Owner = _window };
-        window.Submitted += text => SendAsk(character, window.Target, text);
-        window.Closed += (_, _) => { if (_askWindow == window) _askWindow = null; };
+        // 쓰다 만 초안이 있으면 그 초안의 채팅에 묶어서 다시 연다 (지금 채팅이 다르면 안내만 하고 보내기를 막는다)
+        _askDrafts.Remove(character, out var draft);
+        var window = new CharacterAskWindow(character, name, _askTarget, draft.Target, draft.Text ?? "") { Owner = _window };
+        window.Submitted += (chatId, text) => SendAsk(character, chatId, text);
+        window.Closed += (_, _) =>
+        {
+            if (_askWindow == window) _askWindow = null;
+            if (!window.WasSent && window.DraftTarget.ChatId != null && window.Question.Trim().Length > 0)
+                _askDrafts[character] = (window.DraftTarget, window.Question);
+        };
         _askWindow = window;
         window.Show();
         window.PlaceAbove(anchor, _window.WorkArea);
         window.Activate();
     }
 
-    void SendAsk(string character, CharacterTarget target, string text)
+    /// <param name="chatId">입력창에 보여 준, 초안이 묶인 채팅. 지금 활성 채팅과 다르면 보내지 않는다.</param>
+    void SendAsk(string character, long chatId, string text)
     {
-        var stage = _window.Stages[CharacterSelection.All.ToList().IndexOf(character)];
-        // 입력창을 여는 사이 채팅이 닫혔거나 바뀌었으면 보내지 않는다
-        if (target.ChatId is not long chatId || _askTarget.ChatId != chatId)
+        if (_askTarget.ChatId != chatId)
         {
-            stage.Say(_askTarget.ChatId == null ? "ChatterBox에서 채팅을 먼저 열어 주세요." : "보던 채팅이 바뀌었어요. 다시 물어봐 주세요.");
+            _window.Speak(character, _askTarget.ChatId == null ? "ChatterBox에서 채팅을 먼저 열어 주세요." : "보던 채팅이 바뀌었어요. 다시 물어봐 주세요.");
             return;
         }
         if (_asks.Start(character, chatId, text, DateTimeOffset.Now) is not { } requestId) return;
-        stage.ExternalThinking = true;
+        _window.Stages[CharacterSelection.All.ToList().IndexOf(character)].ExternalThinking = true;
         _hostedProtocol!.CharacterAsk(requestId, character, chatId, text);
     }
 
-    /// <summary>기다리던 질문의 답만 그 캐릭터 말풍선에 한 번 띄운다 (모르는·늦은·중복 답은 버린다).</summary>
+    /// <summary>
+    /// 기다리던 질문의 답만 그 캐릭터 말풍선에 한 번 띄운다 (모르는·늦은·중복 답은 버린다). 모니터가 숨었으면 말하지 않고 버린다.
+    /// </summary>
     void ApplyCharacterReply(CharacterReply reply)
     {
         if (!_asks.Complete(reply)) return;
-        var stage = _window.Stages[CharacterSelection.All.ToList().IndexOf(reply.Character)];
-        stage.ExternalThinking = false;
-        stage.Say(reply.Spoken);
+        _window.Stages[CharacterSelection.All.ToList().IndexOf(reply.Character)].ExternalThinking = false;
+        _window.Speak(reply.Character, reply.Spoken);
     }
 
     void ExpireAsks()
     {
         foreach (var character in _asks.Expire(DateTimeOffset.Now))
         {
-            var stage = _window.Stages[CharacterSelection.All.ToList().IndexOf(character)];
-            stage.ExternalThinking = false;
-            stage.Say("답을 받지 못했어요. 다시 물어봐 주세요.");
+            _window.Stages[CharacterSelection.All.ToList().IndexOf(character)].ExternalThinking = false;
+            _window.Speak(character, "답을 받지 못했어요. 다시 물어봐 주세요.");
         }
     }
-
     void ExitApp()
     {
         if (Interlocked.Exchange(ref _exitStarted, 1) != 0) return;
