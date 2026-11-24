@@ -33,7 +33,7 @@ internal static partial class Program
             Check("platform fixture has transparent root and four named character stages",
                 window.AllowsTransparency && window.Background is SolidColorBrush brush && brush.Color == Colors.Transparent &&
                 root.Background == null && field.Background == null &&
-                new[] { window.Claude, window.Codex, window.Gemini, window.Grok }.All(stage =>
+                new[] { window.Claude, window.Gpt, window.Gemini, window.Grok }.All(stage =>
                     stage.Width == 144 && stage.Height == 178 && stage.FigureHeight == 106 && stage.IsVisible),
                 $"window={window.AllowsTransparency}, root={root.Background}, field={field.Background}");
 
@@ -42,7 +42,7 @@ internal static partial class Program
             Check("four registered accounts render four non-empty platform blocks",
                 fourSlots.Count == 4 && fourSlots.All(slot => !slot.IsEmpty) && fourRects.Count == 4,
                 $"items={fourSlots.Count}, rects={fourRects.Count}, empty={fourSlots.Count(slot => slot.IsEmpty)}");
-            var stages = new[] { window.Claude, window.Codex, window.Gemini, window.Grok };
+            var stages = new[] { window.Claude, window.Gpt, window.Gemini, window.Grok };
             window.AdvanceCharacters(.1);
             var extent = Math.Max(0, field.ActualWidth - 144);
             Check("four character walkers stay within the resized canvas",
@@ -82,13 +82,13 @@ internal static partial class Program
                 $"items={items.Items.Count}, window={window.Width}x{window.Height}, expected={overflowBounds}, scroll={scroll.ScrollableWidth}");
             RenderFixture(window, "platform-overflow");
 
-            window.ApplyCharacters(false);
+            window.ApplyCharacters([]);
             PumpDisplay();
             Check("reduced character visibility does not resize the platform stage",
                 !window.CharactersShown && window.Width == overflowBounds.Width && window.Height == overflowBounds.Height &&
                 !window.Claude.IsVisible && !window.Grok.IsVisible,
                 $"shown={window.CharactersShown}, size={window.Width}x{window.Height}, expected={overflowBounds.Width}x{overflowBounds.Height}");
-            window.ApplyCharacters(true);
+            window.ApplyCharacters(AIUsageMonitor.Core.CharacterSelection.Legacy);
         }
         finally { window.Close(); }
     }

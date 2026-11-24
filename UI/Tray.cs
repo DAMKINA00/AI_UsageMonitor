@@ -19,6 +19,8 @@ public sealed class Tray : IDisposable
     public event Action? AccountsRequested;
     public event Action<bool>? TopmostChanged, CharactersChanged, StartupChanged, UsageAlertsChanged, ActivityAlertsChanged;
     public event Action<bool>? ClaudeDesktopChanged;
+    /// <summary>캐릭터 하나를 켜거나(true) 끈다(false). CharactersChanged(false) 는 "모두 숨기기"다.</summary>
+    public event Action<string, bool>? CharacterChanged;
     public event Action<bool>? TaskbarUsageChanged;
     public bool ClaudeLoggedIn => _webLoggedIn;
 
@@ -32,7 +34,7 @@ public sealed class Tray : IDisposable
         menu.Items.Add("계정 추가 및 사용량…", null, (_, _) => AccountsRequested?.Invoke());
         menu.Items.Add(new WinForms.ToolStripSeparator());
         _topmost = Check("항상 위에 표시", s.Topmost, v => TopmostChanged?.Invoke(v));
-        _characters = Check("캐릭터 표시", s.ShowCharacters, v => CharactersChanged?.Invoke(v));
+        _characters = CharacterMenu(s.EnabledCharacters);
         _taskbarUsage = Check("작업표시줄 사용량 표시", s.ShowTaskbarUsage, v => TaskbarUsageChanged?.Invoke(v));
         _startup = Check("Windows 시작 시 실행", s.StartWithWindows, v => StartupChanged?.Invoke(v));
         _usageAlerts = Check("사용량 경고 알림 (" + string.Join("/", s.AlertThresholds) + "%)", s.UsageAlerts, v => UsageAlertsChanged?.Invoke(v));
@@ -62,6 +64,49 @@ public sealed class Tray : IDisposable
         var item = new WinForms.ToolStripMenuItem(text) { Checked = value, CheckOnClick = true };
         item.CheckedChanged += (_, _) => changed(item.Checked);
         return item;
+    }
+
+    /// <summary>트레이 메뉴의 캐릭터 이름 (CharacterSelection.All 순서).</summary>
+    public static IReadOnlyDictionary<string, string> CharacterLabels { get; } = new Dictionary<string, string>
+    {
+        [CharacterSelection.Orch] = "마스터 (Orch)", [CharacterSelection.Claude] = "클로드", [CharacterSelection.Gpt] = "지피티",
+        [CharacterSelection.Gemini] = "제미나이", [CharacterSelection.Grok] = "그록",
+    };
+
+    readonly Dictionary<string, WinForms.ToolStripMenuItem> _characterItems = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// "캐릭터 표시" 하위 메뉴: 캐릭터마다 따로 켜고 끈다. 여러 개를 연달아 고를 수 있게 항목을 눌러도 메뉴를 닫지 않는다.
+    /// </summary>
+    WinForms.ToolStripMenuItem CharacterMenu(IReadOnlyList<string> enabled)
+    {
+        var menu = new WinForms.ToolStripMenuItem("캐릭터 표시") { Checked = enabled.Count > 0 };
+        foreach (var id in CharacterSelection.All)
+        {
+            var item = new WinForms.ToolStripMenuItem(CharacterLabels[id]) { Checked = enabled.Contains(id) };
+            // 체크 표시는 App 이 실제로 적용한 뒤 SetCharacters 로 맞춘다 (CheckOnClick 을 쓰지 않는다).
+            item.Click += (_, _) => CharacterChanged?.Invoke(id, !item.Checked);
+            _characterItems[id] = item;
+            menu.DropDownItems.Add(item);
+        }
+        menu.DropDownItems.Add(new WinForms.ToolStripSeparator());
+        menu.DropDownItems.Add("모두 표시", null, (_, _) =>
+        {
+            foreach (var id in CharacterSelection.All) CharacterChanged?.Invoke(id, true);
+        });
+        menu.DropDownItems.Add("모두 숨기기", null, (_, _) => CharactersChanged?.Invoke(false));
+        menu.DropDown.Closing += (_, e) =>
+        {
+            if (e.CloseReason == WinForms.ToolStripDropDownCloseReason.ItemClicked) e.Cancel = true;
+        };
+        return menu;
+    }
+
+    /// <summary>켜진 캐릭터에 맞춰 체크 표시를 바꾼다.</summary>
+    public void SetCharacters(IReadOnlyList<string> enabled)
+    {
+        foreach (var (id, item) in _characterItems) item.Checked = enabled.Contains(id);
+        _characters.Checked = enabled.Count > 0;
     }
 
     public void SetTopmost(bool v) => _topmost.Checked = v;

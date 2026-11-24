@@ -214,19 +214,19 @@ internal static partial class Program
             Check("platform scroll surface is horizontal only", scroll.VerticalScrollBarVisibility == ScrollBarVisibility.Disabled &&
                 scroll.HorizontalScrollBarVisibility == ScrollBarVisibility.Auto, $"scroll={scroll.HorizontalScrollBarVisibility}/{scroll.VerticalScrollBarVisibility}");
 
-            var stages = new[] { window.Claude, window.Codex, window.Gemini, window.Grok };
+            var stages = new[] { window.Claude, window.Gpt, window.Gemini, window.Grok };
             Check("four characters use the fixed independent stage size", window.CharactersShown && field.ActualHeight >= 178 &&
                 stages.All(stage => stage.Width == 144 && stage.Height == 178 && stage.FigureHeight == 106 && stage.IsVisible),
                 string.Join(",", stages.Select(stage => $"{stage.Character}:{stage.Width}x{stage.Height}/{stage.FigureHeight}")));
-            Check("Gemini stage follows the art in the resources", window.Gemini.HasArt == CharacterTheme.HasAsset("gemini", "idle"), window.Gemini.HasArt.ToString());
-            Check("Grok stage follows the art in the resources", window.Grok.HasArt == CharacterTheme.HasAsset("grok", "idle"), window.Grok.HasArt.ToString());
+            Check("Gemini stage follows the art in the resources", window.Gemini.HasArt == CharacterTheme.HasFace("gemini", "neutral"), window.Gemini.HasArt.ToString());
+            Check("Grok stage follows the art in the resources", window.Grok.HasArt == CharacterTheme.HasFace("grok", "neutral"), window.Grok.HasArt.ToString());
 
             var size = new Size(window.Width, window.Height);
-            window.ApplyCharacters(false);
+            window.ApplyCharacters([]);
             PumpDisplay();
             Check("hiding characters keeps the window size", window.Width == size.Width && window.Height == size.Height &&
                 !window.Claude.IsVisible && !window.Grok.IsVisible, $"{window.Width}x{window.Height}");
-            window.ApplyCharacters(true);
+            window.ApplyCharacters(AIUsageMonitor.Core.CharacterSelection.Legacy);
             PumpDisplay();
             Check("showing characters restores all four stages without resizing", window.CharactersShown && stages.All(stage => stage.IsVisible) &&
                 window.Width == size.Width && window.Height == size.Height, $"size={window.Width}x{window.Height}");

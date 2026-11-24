@@ -87,17 +87,48 @@ public sealed class AppSettings
     public double? WindowWidth { get; set; }
     public double? WindowHeight { get; set; }
     public bool TrayHintShown { get; set; }
-    /// <summary>세션 목록을 대신하는 캐릭터 표시.</summary>
+    /// <summary>
+    /// 예전 단일 "캐릭터 표시" 스위치. 4 버전부터는 <see cref="Characters"/> 가 기준이고, 이 값은 "하나라도 켜짐"으로 맞춰 둔다
+    /// (예전 버전으로 되돌려도 표시 여부가 이어지게).
+    /// </summary>
     public bool ShowCharacters { get; set; } = true;
+    /// <summary>모니터에 세울 캐릭터 (orch, claude, gpt, gemini, grok 순). null = 아직 옮기지 않은 예전 설정.</summary>
+    public List<string>? Characters { get; set; }
+    /// <summary>마지막으로 비어 있지 않던 선택. 전부 숨겼다가 다시 "표시"하면 이 선택을 되살린다.</summary>
+    public List<string>? LastCharacters { get; set; }
+
+    /// <summary>지금 표시할 캐릭터. 옮기지 않은 설정은 예전 스위치 값을 따른다 (켜짐 = 예전 네 캐릭터).</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public IReadOnlyList<string> EnabledCharacters =>
+        Characters is { } list ? CharacterSelection.Normalize(list) : ShowCharacters ? CharacterSelection.Legacy : [];
+
+    /// <summary>캐릭터 선택을 바꾼다 (예전 스위치 값과 마지막 선택도 함께 맞춘다). 저장은 부르는 쪽이 한다.</summary>
+    public void SetCharacters(IEnumerable<string> ids)
+    {
+        var list = CharacterSelection.Normalize(ids);
+        Characters = list;
+        ShowCharacters = list.Count > 0;
+        if (list.Count > 0) LastCharacters = [.. list];
+    }
+
+    /// <summary>예전 단일 스위치 명령: 끄면 전부 숨기고, 켜면 마지막 선택(없으면 다섯 모두)을 되살린다.</summary>
+    public void SetAllCharacters(bool on)
+    {
+        if (!on) { SetCharacters([]); return; }
+        if (EnabledCharacters.Count > 0) return;
+        var last = CharacterSelection.Normalize(LastCharacters);
+        SetCharacters(last.Count > 0 ? last : CharacterSelection.All);
+    }
     public Dictionary<string, int> AlertState { get; set; } = new();
     public List<SecondaryAccountSettings> SecondaryAccounts { get; set; } = [];
 
     /// <summary>
     /// 설정 파일 형식 버전. 키가 없는 예전 파일은 0 으로 읽혀 <see cref="Migrate"/> 가 한 번 적용된다.
     /// 3: 세션 목록을 제거하고 캐릭터를 기본으로 표시한다.
+    /// 4: 단일 캐릭터 스위치를 캐릭터별 선택(<see cref="Characters"/>)으로 옮긴다.
     /// </summary>
     public int SettingsVersion { get; set; }
-    public const int CurrentSettingsVersion = 3;
+    public const int CurrentSettingsVersion = 4;
 
     /// <summary>이번 실행에서 마이그레이션을 적용했는지 (저장하지 않는다). 읽기에 실패한 경우는 true 가 되지 않는다.</summary>
     [System.Text.Json.Serialization.JsonIgnore]
@@ -312,6 +343,8 @@ public sealed class AppSettings
     {
         if (SettingsVersion >= CurrentSettingsVersion) return;
         if (SettingsVersion < 3) ShowCharacters = true;
+        // 켜 두었던 예전 스위치는 그때 보이던 네 캐릭터로, 꺼 두었던 스위치는 빈 선택으로 옮긴다.
+        if (SettingsVersion < 4 && Characters == null) SetCharacters(ShowCharacters ? CharacterSelection.Legacy : []);
         SettingsVersion = CurrentSettingsVersion;
         Migrated = true;
     }

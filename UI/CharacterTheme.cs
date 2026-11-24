@@ -49,17 +49,45 @@ public sealed class CharacterTheme
 
     public static IReadOnlyList<CharacterTheme> All { get; } = [Claude, Codex, Gemini, Grok];
 
+    // 표정 원화(ChatterBox와 같은 5캐릭터)에만 있는 마스터와 GPT. 연출 색은 ChatterBox 원화의 색을 따른다.
+    public static readonly CharacterTheme Orch = new()
+    {
+        Key = "orch", DisplayName = "마스터",
+        FxStroke = Frozen(Color.FromRgb(0x5A, 0x34, 0x24)),
+        Sparkles = [Color.FromRgb(0xF6, 0xB0, 0x94), Colors.White, Color.FromRgb(0xF2, 0xE6, 0xC8), Color.FromRgb(0x9C, 0xB0, 0x7C)],
+    };
+
+    public static readonly CharacterTheme Gpt = new()
+    {
+        Key = "gpt", DisplayName = "지피티",
+        FxStroke = Frozen(Color.FromRgb(0x08, 0x2A, 0x36)),
+        Sparkles = [Color.FromRgb(0x2B, 0xC8, 0xF0), Colors.White, Color.FromRgb(0xC8, 0xC8, 0xE8), Color.FromRgb(0x4D, 0xA8, 0xFF)],
+    };
+
+    /// <summary>모니터에 세우는 다섯 캐릭터의 테마 (표정 원화, CharacterSelection.All 순서).</summary>
+    public static IReadOnlyList<CharacterTheme> Faces { get; } = [Orch, Claude, Gpt, Gemini, Grok];
+
     /// <summary>모르는 이름은 클쨩 테마로 대체한다 (기존 동작과 같다).</summary>
     public static CharacterTheme For(string? key) =>
-        All.FirstOrDefault(t => string.Equals(t.Key, key, StringComparison.OrdinalIgnoreCase)) ?? Claude;
+        All.Concat([Orch, Gpt]).FirstOrDefault(t => string.Equals(t.Key, key, StringComparison.OrdinalIgnoreCase)) ?? Claude;
 
     public static string AssetPath(string key, string pose) => $"Assets/Characters/{key}_{pose}.png";
 
-    public static Uri AssetUri(string key, string pose) =>
-        new($"pack://application:,,,/AIUsageMonitor;component/{AssetPath(key, pose)}");
+    public static Uri AssetUri(string key, string pose) => PackUri(AssetPath(key, pose));
 
     /// <summary>포즈 이미지가 앱 리소스에 들어 있는지. 없는 리소스를 열어 예외가 나지 않게 미리 확인한다.</summary>
-    public static bool HasAsset(string key, string pose) => ResourceNames.Value.Contains(AssetPath(key, pose).ToLowerInvariant());
+    public static bool HasAsset(string key, string pose) => HasResource(AssetPath(key, pose));
+
+    /// <summary>ChatterBox에서 가져온 표정 원화: Assets/Faces/{key}/{expression}.png (art/import_chatterbox_faces.ps1).</summary>
+    public static string FacePath(string key, string expression) => $"Assets/Faces/{key}/{expression}.png";
+
+    public static Uri FaceUri(string key, string expression) => PackUri(FacePath(key, expression));
+
+    public static bool HasFace(string key, string expression) => HasResource(FacePath(key, expression));
+
+    static Uri PackUri(string path) => new($"pack://application:,,,/AIUsageMonitor;component/{path}");
+
+    static bool HasResource(string path) => ResourceNames.Value.Contains(path.ToLowerInvariant());
 
     static readonly Lazy<HashSet<string>> ResourceNames = new(() =>
     {

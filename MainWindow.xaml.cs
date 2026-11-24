@@ -19,9 +19,11 @@ public partial class MainWindow : Window
     readonly MainViewModel _vm;
     readonly DispatcherTimer _walkTimer;
     readonly DispatcherTimer _dockTimer;
-    readonly PlatformWalker[] _walkers = Enumerable.Range(0, 4).Select(i => new PlatformWalker(i + 31)).ToArray();
-    readonly CharacterLayers _layers = new(4);
-    bool _positioned, _showCharacters, _dockQueued;
+    // 예전 네 캐릭터(claude..grok)는 예전과 같은 산책 씨앗(31~34)을 쓴다.
+    readonly PlatformWalker[] _walkers = Enumerable.Range(0, 5).Select(i => new PlatformWalker(i + 30)).ToArray();
+    readonly CharacterLayers _layers = new(5);
+    IReadOnlyList<string> _characters = [];
+    bool _positioned, _dockQueued;
     int _platformCount = 4;
     double _taskbarInset;
     string _slotSignature = "";
@@ -30,13 +32,18 @@ public partial class MainWindow : Window
     public event Action<string, string>? SecondaryAccountSwapRequested;
     public bool AllowClose { get; set; }
     public bool IsAccountsOpen { get; private set; }
-    public bool CharactersShown => _showCharacters;
+    /// <summary>하나라도 켜져 있는지 (예전 단일 스위치 값).</summary>
+    public bool CharactersShown => _characters.Count > 0;
+    /// <summary>켜져 있는 캐릭터 (CharacterSelection.All 순서).</summary>
+    public IReadOnlyList<string> ShownCharacters => _characters;
     public AccountsPanel Accounts { get; } = new();
+    public CharacterStage Orch => OrchStage;
     public CharacterStage Claude => ClaudeStage;
-    public CharacterStage Codex => CodexStage;
+    public CharacterStage Gpt => GptStage;
     public CharacterStage Gemini => GeminiStage;
     public CharacterStage Grok => GrokStage;
-    CharacterStage[] Stages => [ClaudeStage, CodexStage, GeminiStage, GrokStage];
+    /// <summary>CharacterSelection.All 순서의 다섯 무대.</summary>
+    public CharacterStage[] Stages => [OrchStage, ClaudeStage, GptStage, GeminiStage, GrokStage];
 
     public MainWindow(MainViewModel vm, AppSettings settings, Action<AppSettings>? saveSettings = null)
     {
@@ -48,7 +55,7 @@ public partial class MainWindow : Window
         MinWidth = MinWindowWidth;
         MinHeight = MinWindowHeight;
         ApplyTopmost(settings.Topmost);
-        ApplyCharacters(settings.ShowCharacters);
+        ApplyCharacters(settings.EnabledCharacters);
         foreach (var stage in Stages) stage.ExternalWalking = true;
         _walkTimer = new DispatcherTimer(DispatcherPriority.Render) { Interval = TimeSpan.FromMilliseconds(66) };
         _walkTimer.Tick += (_, _) => AdvanceCharacters(0.066);
@@ -152,12 +159,21 @@ public partial class MainWindow : Window
         double extent = Math.Max(0, CharacterField.ActualWidth - 144);
         var stages = Stages;
         var bodies = new Rect[stages.Length];
+        // 켜진 캐릭터끼리만 자리를 나눈다 (예전 네 캐릭터만 켜면 예전과 같은 자리).
+        var shown = Enumerable.Range(0, stages.Length).Where(i => stages[i].Visibility == Visibility.Visible).ToList();
         for (int i = 0; i < stages.Length; i++)
         {
             var stage = stages[i];
+            int slot = shown.IndexOf(i);
+            if (slot < 0)
+            {
+                bodies[i] = Rect.Empty;
+                stage.IsWalking = false;
+                continue;
+            }
             bool walking = SystemParameters.ClientAreaAnimation && stage.Mood is Mood.Idle or Mood.Playing or Mood.Happy;
             var walker = _walkers[i];
-            walker.Advance(seconds, extent, walking, (i + 0.5) / stages.Length);
+            walker.Advance(seconds, extent, walking, (slot + 0.5) / shown.Count);
             Canvas.SetLeft(stage, walker.Position);
             Canvas.SetTop(stage, Math.Max(0, CharacterField.ActualHeight - stage.Height));
             stage.IsWalking = walker.IsMoving;
@@ -172,16 +188,20 @@ public partial class MainWindow : Window
     void UpdateStages()
     {
         bool visible = IsVisible && WindowState != WindowState.Minimized;
-        foreach (var stage in Stages) stage.SetActive(visible && _showCharacters);
-        if (visible && _showCharacters) _walkTimer?.Start(); else _walkTimer?.Stop();
+        foreach (var stage in Stages) stage.SetActive(visible && stage.Visibility == Visibility.Visible);
+        if (visible && CharactersShown) _walkTimer?.Start(); else _walkTimer?.Stop();
         if (visible) _dockTimer?.Start(); else _dockTimer?.Stop();
     }
 
-    public void ApplyCharacters(bool on)
+    /// <summary>켜진 캐릭터만 세운다. 창 크기·위치와 다른 캐릭터의 자리는 그대로 둔다.</summary>
+    public void ApplyCharacters(IEnumerable<string> characters)
     {
-        _showCharacters = on;
-        foreach (var stage in Stages) stage.Visibility = on ? Visibility.Visible : Visibility.Collapsed;
+        _characters = CharacterSelection.Normalize(characters);
+        var stages = Stages;
+        for (int i = 0; i < stages.Length; i++)
+            stages[i].Visibility = _characters.Contains(CharacterSelection.All[i]) ? Visibility.Visible : Visibility.Collapsed;
         UpdateStages();
+        AdvanceCharacters(0);
     }
 
     public void ApplyTopmost(bool on)

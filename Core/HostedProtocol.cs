@@ -30,8 +30,9 @@ public static class HostedProtocol
         "activity-alerts", "claude-desktop",
     };
 
-    /// <summary>Commands whose value is a JSON object (ChatterBox account snapshot; see ChatterBoxAccounts).</summary>
-    static readonly HashSet<string> ObjectCommands = new(StringComparer.Ordinal) { "chatterbox-accounts" };
+    /// <summary>Commands whose value is a JSON object: ChatterBox account snapshot (see ChatterBoxAccounts) and
+    /// one character switched on or off (<c>{"id":"gpt","on":false}</c>, see CharacterSelection).</summary>
+    static readonly HashSet<string> ObjectCommands = new(StringComparer.Ordinal) { "chatterbox-accounts", "character" };
 
     public static bool TryParseCommand(string line, out HostedCommand command, out string error)
     {

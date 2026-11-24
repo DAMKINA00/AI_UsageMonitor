@@ -1,4 +1,4 @@
-﻿using System.IO;
+using System.IO;
 using System.Reflection;
 using System.Text;
 using System.Text.Json;
@@ -74,6 +74,7 @@ internal static partial class Program
         Run("Transparent account platforms and bounded roaming", TestPlatformLayout);
         Run("Confirmed full recovery announcement once per cycle", TestResetAnnouncement);
         Run("Idle roaming and rare low-quota naps", TestMascotBehavior);
+        Run("Per-character selection, migration and restore", TestCharacterSelection);
     }
 
     static string ReadShared(string path)

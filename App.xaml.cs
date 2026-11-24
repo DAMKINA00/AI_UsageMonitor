@@ -156,19 +156,20 @@ public partial class App : Application
         _demo = true;
         foreach (var mood in Enum.GetValues<Mood>())
         {
+            _window.Orch.SetMood(mood, [$"[{mood}] 말풍선"]);
             _window.Claude.SetMood(mood, [$"[{mood}] 말풍선 테스트"]);
-            _window.Codex.SetMood(mood, [$"[{mood}] 말풍선"]);
+            _window.Gpt.SetMood(mood, [$"[{mood}] 말풍선"]);
             _window.Gemini.SetMood(mood, [$"[{mood}] 말풍선"]);
             _window.Grok.SetMood(mood, [$"[{mood}] 말풍선"]);
             await Task.Delay(1500);
             if (mood == Mood.Working)
             {
                 _window.Claude.PopText("+3%", System.Windows.Media.Color.FromRgb(0x9B, 0xF0, 0xC0));
-                _window.Codex.PopText("+1%", System.Windows.Media.Color.FromRgb(0xFF, 0xC8, 0x6B));
+                _window.Gpt.PopText("+1%", System.Windows.Media.Color.FromRgb(0xFF, 0xC8, 0x6B));
                 _window.Gemini.PopText("+2%", System.Windows.Media.Color.FromRgb(0x9B, 0xF0, 0xC0));
                 await Task.Delay(500);
             }
-            if (mood == Mood.Happy) { _window.Claude.Celebrate(); _window.Codex.Celebrate(); _window.Gemini.Celebrate(); _window.Grok.Celebrate(); await Task.Delay(300); }
+            if (mood == Mood.Happy) { _window.Orch.Celebrate(); _window.Claude.Celebrate(); _window.Gpt.Celebrate(); _window.Gemini.Celebrate(); _window.Grok.Celebrate(); await Task.Delay(300); }
             SaveWindowPng(System.IO.Path.Combine(dir, $"mood_{(int)mood}_{mood}.png"));
         }
         ExitApp();
@@ -223,7 +224,8 @@ public partial class App : Application
         _tray.AccountsRequested += ShowAccounts;
         _tray.ExitRequested += ExitApp;
         _tray.TopmostChanged += SetTopmost;
-        _tray.CharactersChanged += SetCharacters;
+        _tray.CharactersChanged += SetAllCharacters;
+        _tray.CharacterChanged += SetCharacter;
         _tray.StartupChanged += SetStartup;
         _tray.UsageAlertsChanged += SetUsageAlerts;
         _tray.ActivityAlertsChanged += SetActivityAlerts;
@@ -241,11 +243,25 @@ public partial class App : Application
 
     void HideMonitor() => _window.Hide();
 
-    void SetCharacters(bool on)
+    /// <summary>예전 단일 스위치: 끄면 모두 숨기고, 켜면 마지막 선택(없으면 다섯 모두)을 되살린다.</summary>
+    void SetAllCharacters(bool on)
     {
-        _settings.ShowCharacters = on;
+        _settings.SetAllCharacters(on);
+        ApplyCharacterSelection();
+    }
+
+    /// <summary>캐릭터 하나만 켜거나 끈다. 다른 캐릭터와 창 위치는 그대로다.</summary>
+    void SetCharacter(string id, bool on)
+    {
+        _settings.SetCharacters(CharacterSelection.Set(_settings.EnabledCharacters, id, on));
+        ApplyCharacterSelection();
+    }
+
+    void ApplyCharacterSelection()
+    {
         _settings.Save();
-        _window.ApplyCharacters(on);
+        _window.ApplyCharacters(_settings.EnabledCharacters);
+        _tray.SetCharacters(_settings.EnabledCharacters);
         EmitHostedState();
     }
 
@@ -390,7 +406,15 @@ public partial class App : Application
                 case "refresh": RefreshAllAccounts(); break;
                 case "accounts": ShowAccounts(); break;
                 case "topmost": SetTopmost(command.BoolValue!.Value); break;
-                case "characters": SetCharacters(command.BoolValue!.Value); break;
+                case "characters": SetAllCharacters(command.BoolValue!.Value); break;
+                case "character":
+                    if (!CharacterSelection.TryParseCommand(command.Data!.Value, out var id, out var on, out var characterError))
+                    {
+                        _hostedProtocol?.Error(characterError);
+                        return;
+                    }
+                    SetCharacter(id, on);
+                    break;
                 case "taskbar": SetTaskbarUsage(command.BoolValue!.Value); break;
                 case "startup": SetStartup(command.BoolValue!.Value); break;
                 case "usage-alerts": SetUsageAlerts(command.BoolValue!.Value); break;
@@ -418,6 +442,7 @@ public partial class App : Application
             visible = _window.IsVisible && _window.WindowState != WindowState.Minimized,
             topmost = _window.Topmost,
             characters = _window.CharactersShown,
+            characterSet = _window.ShownCharacters.ToArray(),
             taskbar = _settings.ShowTaskbarUsage,
             startup = _settings.StartWithWindows,
             usageAlerts = _settings.UsageAlerts,
@@ -489,10 +514,17 @@ public partial class App : Application
 
         if (!_demo)
         {
-            Animate(_window.Claude, _claudeMood.Update(claude));
-            Animate(_window.Codex, _codexMood.Update(codex));
-            if (gemini != null) Animate(_window.Gemini, _geminiMood.Update(gemini));
-            Animate(_window.Grok, _grokMood.Update(grok));
+            var moods = new List<MoodTracker.Result> { _claudeMood.Update(claude), _codexMood.Update(codex), _grokMood.Update(grok) };
+            Animate(_window.Claude, moods[0]);
+            Animate(_window.Gpt, moods[1]);
+            Animate(_window.Grok, moods[2]);
+            if (gemini != null)
+            {
+                moods.Add(_geminiMood.Update(gemini));
+                Animate(_window.Gemini, moods[^1]);
+            }
+            // 마스터는 팀 전체를 지켜본다: 가장 급한 캐릭터의 기분을 따르고, 대사는 각 캐릭터에게 맡긴다.
+            _window.Orch.SetMood(MoodTracker.Overall(moods.Select(m => m.Mood)), []);
         }
 
         _tray.UpdateIcon(claude.MaxUsed, codex.MaxUsed, grok.MaxUsed);

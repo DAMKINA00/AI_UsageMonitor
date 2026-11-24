@@ -72,7 +72,7 @@ internal static partial class Program
             window.Show();
             PumpDisplay();
             CheckDocked("show re-docks without content zoom", window);
-            window.ApplyCharacters(true);
+            window.ApplyCharacters(AIUsageMonitor.Core.CharacterSelection.Legacy);
             PumpDisplay();
             CheckDocked("character toggle preserves docked size without content zoom", window);
         }

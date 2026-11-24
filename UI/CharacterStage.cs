@@ -26,6 +26,8 @@ public sealed class CharacterStage : Border
     static readonly FontFamily PopFont = new("Malgun Gothic");
     // 캐릭터 그림 영역의 원래 비율 (_figure 150×318 을 Viewbox 로 줄여 쓴다)
     const double FigureAspect = 150.0 / 318.0;
+    // 표정 원화(상반신)의 보이는 높이 (_figure 318 기준)
+    const double FaceHeight = 185;
 
     readonly Grid _root = new();
     readonly TranslateTransform _wander = new();
@@ -120,20 +122,46 @@ public sealed class CharacterStage : Border
         set
         {
             _character = value;
-            _pose = "";
-            // 리셋 반짝이와 "+N%" 표시 색은 캐릭터 테마가 정한다
-            var theme = CharacterTheme.For(value);
-            _figureBox.Width = _figureBox.Height * FigureAspect;
-            _fxStroke = theme.FxStroke;
-            _sparkles = theme.Sparkles;
-            AutomationProperties.SetName(this, theme.DisplayName);
-            // 포즈 이미지가 아직 없는 캐릭터는 자리만 비워 둔다 (말풍선·효과도 숨김)
-            HasArt = CharacterTheme.HasAsset(value, "idle");
-            _root.Visibility = HasArt ? Visibility.Visible : Visibility.Hidden;
-            ApplyPose();
-            UpdateRunning();
+            ApplyCharacter();
         }
     }
+
+    bool _faceArt;
+
+    /// <summary>
+    /// true 면 ChatterBox와 같은 표정 원화(Assets/Faces/{캐릭터}/{표정}.png)를 쓴다. 기분마다 표정 하나를 보여 주고,
+    /// 걷기·말풍선·효과는 포즈 원화와 똑같이 움직인다.
+    /// </summary>
+    public bool FaceArt
+    {
+        get => _faceArt;
+        set
+        {
+            if (_faceArt == value) return;
+            _faceArt = value;
+            ApplyCharacter();
+        }
+    }
+
+    string BasePose => _faceArt ? "neutral" : "idle";
+
+    void ApplyCharacter()
+    {
+        _pose = "";
+        // 리셋 반짝이와 "+N%" 표시 색은 캐릭터 테마가 정한다
+        var theme = CharacterTheme.For(_character);
+        _figureBox.Width = _figureBox.Height * FigureAspect;
+        _fxStroke = theme.FxStroke;
+        _sparkles = theme.Sparkles;
+        AutomationProperties.SetName(this, theme.DisplayName);
+        // 포즈 이미지가 아직 없는 캐릭터는 자리만 비워 둔다 (말풍선·효과도 숨김)
+        HasArt = HasImage(BasePose);
+        _root.Visibility = HasArt ? Visibility.Visible : Visibility.Hidden;
+        ApplyPose();
+        UpdateRunning();
+    }
+
+    bool HasImage(string pose) => _faceArt ? CharacterTheme.HasFace(_character, pose) : CharacterTheme.HasAsset(_character, pose);
 
     /// <summary>이 캐릭터의 기본 포즈 이미지가 리소스에 있는지.</summary>
     public bool HasArt { get; private set; }
@@ -420,7 +448,20 @@ public sealed class CharacterStage : Border
     // 작업 중: 짚쨩은 홀로그램 타이핑, 클쨩은 수첩 메모. 1→2→1→3 순서로 손이 움직이고 가끔 눈을 깜빡인다
     static readonly string[] WorkFrames = ["work1", "work2", "work1", "work3"];
 
-    string[] FramesFor(Mood m) => _character == "grok" ? m switch
+    /// <summary>표정 원화에서 기분마다 쓰는 표정 (ChatterBox의 12표정 중).</summary>
+    public static string ExpressionFor(Mood m) => m switch
+    {
+        Mood.Playing or Mood.Happy => "happy",
+        Mood.Sleeping or Mood.Tired => "tired",
+        Mood.Working => "thinking",
+        Mood.WorkingHard => "speaking",
+        Mood.Waiting => "waiting",
+        Mood.Exhausted => "sad",
+        Mood.Panic => "surprised",
+        _ => "neutral",
+    };
+
+    string[] FramesFor(Mood m) => _faceArt ? [ExpressionFor(m)] : _character == "grok" ? m switch
     {
         Mood.Working or Mood.WorkingHard => ["work1"],
         Mood.Sleeping => ["sleeping"],
@@ -462,24 +503,26 @@ public sealed class CharacterStage : Border
         _pose = pose;
         var bmp = LoadPose(pose);
         _img.Source = bmp ?? _img.Source;
-        if (bmp != null) _bodyBounds = _visibleBounds[$"{_character}_{pose}"];
+        if (bmp != null) _bodyBounds = _visibleBounds[CacheKey(pose)];
         ApplyImageSize();
     }
 
+    string CacheKey(string pose) => $"{(_faceArt ? "face:" : "")}{_character}_{pose}";
+
     BitmapSource? LoadPose(string pose)
     {
-        var key = $"{_character}_{pose}";
+        var key = CacheKey(pose);
         if (!_poseCache.TryGetValue(key, out var bmp))
         {
             bmp = null;
             // 아직 그리지 않은 포즈는 열지 않는다 (없는 리소스를 열면 예외가 난다)
-            if (CharacterTheme.HasAsset(_character, pose))
+            if (HasImage(pose))
             {
                 try
                 {
                     var decoded = new BitmapImage();
                     decoded.BeginInit();
-                    decoded.UriSource = CharacterTheme.AssetUri(_character, pose);
+                    decoded.UriSource = _faceArt ? CharacterTheme.FaceUri(_character, pose) : CharacterTheme.AssetUri(_character, pose);
                     decoded.CacheOption = BitmapCacheOption.OnLoad;
                     decoded.EndInit();
                     decoded.Freeze();
@@ -532,12 +575,13 @@ public sealed class CharacterStage : Border
 
     void ApplyImageSize()
     {
-        if (_img.Source is not BitmapSource b || _figure.ActualHeight <= 0 || LoadPose("idle") is not { } idle) return;
+        if (_img.Source is not BitmapSource b || _figure.ActualHeight <= 0 || LoadPose(BasePose) is not { } idle) return;
         // 모든 자세는 서 있는 몸 높이 기준으로 같은 배율을 쓰고, 실제 발끝과 오른쪽 외곽선을 맞춘다.
-        double standingHeight = idle.PixelHeight * _visibleBounds[$"{_character}_idle"].Height;
-        double k = 240 / standingHeight;
+        double standingHeight = idle.PixelHeight * _visibleBounds[CacheKey(BasePose)].Height;
+        // 표정 원화는 상반신이라 전신 포즈보다 낮게 세운다 (머리 크기가 전신 캐릭터와 비슷해 보이게).
+        double k = (_faceArt ? FaceHeight : 240) / standingHeight;
         // 초기 두 기절 원화는 머리까지 축소돼 있어 대기 자세의 머리 크기에 맞춘다.
-        if (_pose == "collapsed") k *= _character switch { "claude" => 1.25, "codex" => 1.2, _ => 1 };
+        if (!_faceArt && _pose == "collapsed") k *= _character switch { "claude" => 1.25, "codex" => 1.2, _ => 1 };
         _img.Width = b.PixelWidth * k;
         _img.Height = b.PixelHeight * k;
         Canvas.SetLeft(_img, _figure.Width - 30 - _bodyBounds.Right * _img.Width);

@@ -28,6 +28,17 @@ public sealed class MoodTracker(string character)
         public string? ResetAnnouncement { get; init; }
     }
 
+    // 급한 순서: 한도 위급 > 기진맥진 > 지침 > 입력 대기 > 바쁜 작업 > 작업 > 리셋 기쁨 > 놀이 > 대기 > 졸음
+    static readonly Mood[] Urgency =
+        [Mood.Panic, Mood.Exhausted, Mood.Tired, Mood.Waiting, Mood.WorkingHard, Mood.Working, Mood.Happy, Mood.Playing, Mood.Idle, Mood.Sleeping];
+
+    /// <summary>마스터(Orch)의 기분: 팀에서 가장 급한 캐릭터의 기분 (아무도 없으면 대기).</summary>
+    public static Mood Overall(IEnumerable<Mood> moods)
+    {
+        var list = moods.ToList();
+        return list.Count == 0 ? Mood.Idle : Urgency.First(list.Contains);
+    }
+
     public Result Update(ProviderCard card, DateTimeOffset? at = null)
     {
         var now = at ?? DateTimeOffset.Now;

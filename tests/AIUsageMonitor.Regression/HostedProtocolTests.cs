@@ -14,6 +14,7 @@ internal static partial class Program
         Run("hosted command validation", TestHostedCommandValidation);
         Run("hosted input line limits", () => TestHostedInputLines().GetAwaiter().GetResult());
         Run("hosted protocol output", TestHostedOutput);
+        Run("hosted per-character command", TestHostedCharacterCommand);
         RunChatterBoxAccountTests();
         Console.WriteLine($"Totals: {s_assertions} assertions, {s_failures} failures.");
         return s_failures == 0 ? 0 : 1;
