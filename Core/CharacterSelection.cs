@@ -3,14 +3,14 @@ using System.Text.Json;
 namespace AIUsageMonitor.Core;
 
 /// <summary>
-/// Which of the five characters (Orch, Claude, GPT, Gemini, Grok) stand on the monitor.
+/// Which of the six characters (Orch = the master, Claude, GPT, Gemini, Grok, DeepSeek) stand on the monitor.
 /// Each one is switched on or off on its own; lists are always in <see cref="All"/> order without duplicates.
 /// </summary>
 public static class CharacterSelection
 {
-    public const string Orch = "orch", Claude = "claude", Gpt = "gpt", Gemini = "gemini", Grok = "grok";
+    public const string Orch = "orch", Claude = "claude", Gpt = "gpt", Gemini = "gemini", Grok = "grok", DeepSeek = "deepseek";
 
-    public static IReadOnlyList<string> All { get; } = [Orch, Claude, Gpt, Gemini, Grok];
+    public static IReadOnlyList<string> All { get; } = [Orch, Claude, Gpt, Gemini, Grok, DeepSeek];
 
     /// <summary>What the single "캐릭터 표시" switch showed before: the four provider characters (no Orch).</summary>
     public static IReadOnlyList<string> Legacy { get; } = [Claude, Gpt, Gemini, Grok];

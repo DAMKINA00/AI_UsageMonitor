@@ -20,8 +20,9 @@ public partial class MainWindow : Window
     readonly DispatcherTimer _walkTimer;
     readonly DispatcherTimer _dockTimer;
     // 예전 네 캐릭터(claude..grok)는 예전과 같은 산책 씨앗(31~34)을 쓴다.
-    readonly PlatformWalker[] _walkers = Enumerable.Range(0, 5).Select(i => new PlatformWalker(i + 30)).ToArray();
-    readonly CharacterLayers _layers = new(5);
+    readonly PlatformWalker[] _walkers = Enumerable.Range(0, 6).Select(i => new PlatformWalker(i + 30)).ToArray();
+    readonly CharacterLayers _layers = new(6);
+    readonly CharacterEventDeduper _seenEvents = new();
     IReadOnlyList<string> _characters = [];
     bool _positioned, _dockQueued;
     int _platformCount = 4;
@@ -42,8 +43,62 @@ public partial class MainWindow : Window
     public CharacterStage Gpt => GptStage;
     public CharacterStage Gemini => GeminiStage;
     public CharacterStage Grok => GrokStage;
-    /// <summary>CharacterSelection.All 순서의 다섯 무대.</summary>
-    public CharacterStage[] Stages => [OrchStage, ClaudeStage, GptStage, GeminiStage, GrokStage];
+    public CharacterStage DeepSeek => DeepSeekStage;
+    /// <summary>CharacterSelection.All 순서의 여섯 무대.</summary>
+    public CharacterStage[] Stages => [OrchStage, ClaudeStage, GptStage, GeminiStage, GrokStage, DeepSeekStage];
+
+    /// <summary>
+    /// 호스트가 보낸 실제 이벤트를 그 캐릭터의 말풍선에 한 번 띄운다. 같은 id 는 다시 말하지 않고, 꺼져 있거나 그림이 없는
+    /// 캐릭터에게 온 이벤트는 버린다. 반환: 말풍선에 띄웠거나 줄 세웠는지.
+    /// </summary>
+    /// <summary>캐릭터를 눌렀을 때 (질문 가능할 때만): 캐릭터 id 와 화면 위치(DIP).</summary>
+    public event Action<string, Rect>? CharacterClicked;
+
+    bool _askEnabled;
+
+    /// <summary>호스트가 질문을 받을 수 있으면 캐릭터를 눌러 질문한다 (손가락 커서).</summary>
+    public bool AskEnabled
+    {
+        get => _askEnabled;
+        set
+        {
+            _askEnabled = value;
+            foreach (var stage in Stages) stage.Cursor = value ? Cursors.Hand : null;
+        }
+    }
+
+    /// <summary>캐릭터를 누른 것으로 처리한다 (마우스 이벤트와 테스트가 함께 쓴다).</summary>
+    public bool ClickCharacter(string id)
+    {
+        int index = CharacterSelection.All.ToList().IndexOf(id);
+        if (!_askEnabled || index < 0) return false;
+        var stage = Stages[index];
+        if (stage.Visibility != Visibility.Visible || !stage.HasArt) return false;
+        CharacterClicked?.Invoke(id, ScreenRect(stage));
+        return true;
+    }
+
+    Rect ScreenRect(FrameworkElement element)
+    {
+        if (PresentationSource.FromVisual(element) is not { CompositionTarget: { } target }) return Rect.Empty;
+        var topLeft = target.TransformFromDevice.Transform(element.PointToScreen(new Point(0, 0)));
+        var bottomRight = target.TransformFromDevice.Transform(element.PointToScreen(new Point(element.ActualWidth, element.ActualHeight)));
+        return new Rect(topLeft, bottomRight);
+    }
+
+    /// <summary>이 창이 있는 화면의 작업 영역 (DIP).</summary>
+    public Rect WorkArea => CurrentWorkArea();
+
+    public bool ShowCharacterEvent(CharacterEvent evt)
+    {
+        if (!_seenEvents.Accept(evt.Id)) return false;
+        int index = CharacterSelection.All.ToList().IndexOf(evt.Character);
+        if (index < 0) return false;
+        var stage = Stages[index];
+        if (stage.Visibility != Visibility.Visible || !stage.HasArt) return false;
+        stage.Say(evt.Text);
+        return true;
+    }
 
     public MainWindow(MainViewModel vm, AppSettings settings, Action<AppSettings>? saveSettings = null)
     {
@@ -56,7 +111,12 @@ public partial class MainWindow : Window
         MinHeight = MinWindowHeight;
         ApplyTopmost(settings.Topmost);
         ApplyCharacters(settings.EnabledCharacters);
-        foreach (var stage in Stages) stage.ExternalWalking = true;
+        foreach (var stage in Stages)
+        {
+            stage.ExternalWalking = true;
+            var id = stage.Character;
+            stage.MouseLeftButtonUp += (_, e) => { if (ClickCharacter(id)) e.Handled = true; };
+        }
         _walkTimer = new DispatcherTimer(DispatcherPriority.Render) { Interval = TimeSpan.FromMilliseconds(66) };
         _walkTimer.Tick += (_, _) => AdvanceCharacters(0.066);
         _dockTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
@@ -199,7 +259,12 @@ public partial class MainWindow : Window
         _characters = CharacterSelection.Normalize(characters);
         var stages = Stages;
         for (int i = 0; i < stages.Length; i++)
-            stages[i].Visibility = _characters.Contains(CharacterSelection.All[i]) ? Visibility.Visible : Visibility.Collapsed;
+        {
+            bool on = _characters.Contains(CharacterSelection.All[i]);
+            stages[i].Visibility = on ? Visibility.Visible : Visibility.Collapsed;
+            // 숨긴 캐릭터는 그림·합성 결과·줄 선 대사를 놓아 주고, 다시 켜면 읽어 들인다.
+            if (on) stages[i].ReloadArt(); else stages[i].ReleaseArt();
+        }
         UpdateStages();
         AdvanceCharacters(0);
     }

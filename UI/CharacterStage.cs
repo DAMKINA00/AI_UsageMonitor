@@ -143,7 +143,83 @@ public sealed class CharacterStage : Border
         }
     }
 
-    string BasePose => _faceArt ? "neutral" : "idle";
+    string BasePose => UsesParts ? "body" : _faceArt ? "neutral" : "idle";
+
+    /// <summary>파츠 원화(Assets/CharacterActions)가 있으면 body·눈·눈썹·입을 겹쳐 그린다. 없으면 표정 원화로 대신한다.</summary>
+    public bool UsesParts => _usesParts;
+    bool _usesParts;
+
+    /// <summary>
+    /// true 면 기분·대기 상태로는 말하지 않는다 (랜덤·주기 대사, 회복 안내 없음). 말풍선은 <see cref="Say"/> 로 받은 실제 이벤트만
+    /// 한 번씩 띄우고, 입은 그동안만 움직인다.
+    /// </summary>
+    public bool EventSpeechOnly { get; set; }
+
+    /// <summary>외부에서 알려 준 "생각 중" (예: 배정된 작업). 작업 중 기분과 함께 눈썹을 바꾼다.</summary>
+    public bool ExternalThinking { get; set; }
+
+    /// <summary>생각 중: 작업 중 기분이거나 외부에서 알려 준 상태. 말하기와 동시에 가능하다.</summary>
+    public bool IsThinking => ExternalThinking || _mood is Mood.Working or Mood.WorkingHard;
+
+    /// <summary>이벤트 대사를 말하는 중 (입이 움직인다).</summary>
+    public bool IsSpeaking => _speaking && _bubbleShown;
+
+    /// <summary>줄 서 있는 이벤트 대사 수.</summary>
+    public int PendingSpeech => _speech.Count;
+
+    /// <summary>지금 겹친 파츠 ("eyes-open|brows-neutral|mouth-closed"). 파츠를 쓰지 않으면 빈 문자열.</summary>
+    public string PartsState => UsesParts ? _partsKey : "";
+
+    const int MaxPendingSpeech = 8;
+    readonly Queue<string> _speech = new();
+    bool _speaking;
+    string _partsKey = "";
+    double _nextBlinkAt = -1;
+    int _blinkFrame = -1, _mouthFrame;
+    readonly Dictionary<string, BitmapSource?> _partLayers = new();
+
+    /// <summary>
+    /// 실제 이벤트 한 줄을 이 캐릭터의 말풍선에 한 번 띄운다. 말하는 중이면 줄 세워 순서대로 말한다(오래된 것부터, 최대 8개).
+    /// </summary>
+    public void Say(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text) || !HasArt) return;
+        if (_bubbleShown || _speech.Count > 0 || _bubbleHideT < 0.2)
+        {
+            _speech.Enqueue(text);
+            while (_speech.Count > MaxPendingSpeech) _speech.Dequeue();
+            return;
+        }
+        StartSpeech(text);
+    }
+
+    void StartSpeech(string text)
+    {
+        ShowBubble(text);
+        _speaking = true;
+        _bubbleShowFor = 3 + Math.Min(5, 0.09 * text.Length);
+        _announcementUntil = _t + _bubbleShowFor;
+    }
+
+    /// <summary>숨긴 캐릭터의 그림·합성 결과를 놓아 준다. 다시 보이면 <see cref="ApplyCharacter"/> 가 다시 읽는다.</summary>
+    public void ReleaseArt()
+    {
+        _poseCache.Clear();
+        _visibleBounds.Clear();
+        _partLayers.Clear();
+        _speech.Clear();
+        _speaking = false;
+        _img.Source = null;
+        _frame = -1;
+        _partsKey = "";
+        if (_bubbleShown) { _bubbleShown = false; _bubble.Visibility = Visibility.Collapsed; }
+    }
+
+    /// <summary>놓아 준 그림을 다시 읽어 지금 상태로 그린다.</summary>
+    public void ReloadArt()
+    {
+        if (_img.Source == null) ApplyCharacter();
+    }
 
     void ApplyCharacter()
     {
@@ -155,13 +231,16 @@ public sealed class CharacterStage : Border
         _sparkles = theme.Sparkles;
         AutomationProperties.SetName(this, theme.DisplayName);
         // 포즈 이미지가 아직 없는 캐릭터는 자리만 비워 둔다 (말풍선·효과도 숨김)
-        HasArt = HasImage(BasePose);
+        _partsKey = "";
+        _usesParts = _faceArt && CharacterTheme.HasParts(_character);
+        HasArt = _usesParts || HasImage(BasePose);
         _root.Visibility = HasArt ? Visibility.Visible : Visibility.Hidden;
         ApplyPose();
         UpdateRunning();
     }
 
-    bool HasImage(string pose) => _faceArt ? CharacterTheme.HasFace(_character, pose) : CharacterTheme.HasAsset(_character, pose);
+    bool HasImage(string pose) => UsesParts ? CharacterTheme.Parts.Contains(pose)
+        : _faceArt ? CharacterTheme.HasFace(_character, pose) : CharacterTheme.HasAsset(_character, pose);
 
     /// <summary>이 캐릭터의 기본 포즈 이미지가 리소스에 있는지.</summary>
     public bool HasArt { get; private set; }
@@ -220,7 +299,7 @@ public sealed class CharacterStage : Border
     /// <summary>Event speech is shown once; regular mood updates cannot replay or cut it short.</summary>
     public void ShowAnnouncement(string text)
     {
-        if (string.IsNullOrWhiteSpace(text)) return;
+        if (string.IsNullOrWhiteSpace(text) || EventSpeechOnly) return;
         ShowBubble(text);
         _announcementUntil = _t + 6;
         _bubbleShowFor = 6;
@@ -252,6 +331,20 @@ public sealed class CharacterStage : Border
     /// <param name="keys">각 대사의 원문 템플릿 (lines 와 같은 순서). 없으면 대사 자체를 키로 쓴다.</param>
     public void SetMood(Mood mood, IReadOnlyList<string> lines, IReadOnlyList<string>? keys = null)
     {
+        if (EventSpeechOnly)
+        {
+            // 기분은 몸짓·표정만 바꾼다. 말풍선은 실제 이벤트(Say) 것만 남긴다.
+            _lines = [];
+            _keys = [];
+            if (mood == _mood) return;
+            _mood = mood;
+            if (mood != Mood.Idle) _wander.X = 0;
+            _moodT = 0;
+            _nextSpawn = 0.3;
+            _popT = 0;
+            ApplyPose();
+            return;
+        }
         var pairs = lines.Select((line, i) => (Line: line, Key: keys != null && i < keys.Count ? keys[i] : line))
             .Where(p => !string.IsNullOrEmpty(p.Line)).ToArray();
         _lines = pairs.Select(p => p.Line).ToArray();
@@ -303,6 +396,8 @@ public sealed class CharacterStage : Border
     {
         if (!_bubbleShown) return;
         _bubbleShown = false;
+        _speaking = false;
+        _nextSpeechAt = _t + 0.4;
         _bubbleHideT = 0;
         _nextBubbleAt = _t + (_mood == Mood.Sleeping ? 25 + _rng.NextDouble() * 20 : 3 + _rng.NextDouble() * 9);
     }
@@ -322,11 +417,19 @@ public sealed class CharacterStage : Border
             _bubble.Opacity = 1 - k;
             if (k >= 1) _bubble.Visibility = Visibility.Collapsed;
         }
-        else if (_lines.Length > 0 && _t >= _nextBubbleAt)
+        else if (_speech.Count > 0 && _bubbleHideT >= 0.2 && _t >= _nextSpeechAt)
+        {
+            // 줄 서 있던 실제 이벤트 대사를 차례로 (앞 말풍선이 닫히고 잠깐 쉰 뒤)
+            StartSpeech(_speech.Dequeue());
+        }
+        // 기분 대사(랜덤·주기)는 이벤트 전용 무대에서는 절대 띄우지 않는다
+        else if (!EventSpeechOnly && _lines.Length > 0 && _t >= _nextBubbleAt)
         {
             ShowBubble(PickLine());
         }
     }
+
+    double _nextSpeechAt;
 
     string _bubbleContent = "";
 
@@ -492,8 +595,75 @@ public sealed class CharacterStage : Border
         _img.Opacity = _mood == Mood.Exhausted ? 0.85 : 1;
     }
 
+    /// <summary>
+    /// 파츠 상태: 눈은 캐릭터마다 따로 깜빡이고(졸음은 감고, 지치면 반쯤), 생각 중이면 눈썹을 바꾸고, 입은 이벤트 대사를 말할 때만 움직인다.
+    /// </summary>
+    string DesiredParts()
+    {
+        string eyes;
+        if (_mood == Mood.Sleeping) eyes = "eyes-closed";
+        else if (_mood is Mood.Tired or Mood.Exhausted) eyes = _blinkFrame is 1 or 2 ? "eyes-closed" : "eyes-half";
+        else eyes = _blinkFrame switch { 0 or 3 => "eyes-half", 1 or 2 => "eyes-closed", _ => "eyes-open" };
+        var brows = IsThinking ? "brows-thinking" : "brows-neutral";
+        var mouth = IsSpeaking ? (_mouthFrame % 4) switch { 0 => "mouth-open", 1 => "mouth-small", 2 => "mouth-open", _ => "mouth-closed" } : "mouth-closed";
+        return $"{eyes}|{brows}|{mouth}";
+    }
+
+    /// <summary>한 프레임만큼 깜빡임·입 상태를 넘긴다 (15fps 기준).</summary>
+    void AdvanceParts()
+    {
+        if (_nextBlinkAt < 0) _nextBlinkAt = _t + 1.5 + _rng.NextDouble() * 4;
+        if (_blinkFrame >= 0)
+        {
+            if (++_blinkFrame > 3)
+            {
+                _blinkFrame = -1;
+                // 가끔 두 번 연달아 깜빡인다
+                _nextBlinkAt = _t + (_rng.NextDouble() < 0.15 ? 0.35 : 2.5 + _rng.NextDouble() * 4);
+            }
+        }
+        else if (_t >= _nextBlinkAt) _blinkFrame = 0;
+        // 입: 두 프레임마다 다음 모양 (가끔 한 번 더 머문다)
+        if (IsSpeaking) { if (_rng.NextDouble() < 0.6) _mouthFrame++; }
+        else _mouthFrame = 0;
+    }
+
+    void UpdateParts()
+    {
+        var key = DesiredParts();
+        if (key == _partsKey && _img.Source != null) return;
+        var composite = ComposeParts(key);
+        if (composite == null) return;
+        _partsKey = key;
+        _pose = "body";
+        _img.Source = composite;
+        _bodyBounds = _visibleBounds[CacheKey("body")];
+        ApplyImageSize();
+    }
+
+    /// <summary>body → 눈 → 눈썹 → 입을 0,0 에 겹친 한 장 (조합마다 한 번만 만든다).</summary>
+    BitmapSource? ComposeParts(string key)
+    {
+        var cacheKey = CacheKey("composite:" + key);
+        if (_poseCache.TryGetValue(cacheKey, out var cached)) return cached;
+        if (LoadPose("body") is not { } body) return null;
+        var layers = new List<BitmapSource> { body };
+        foreach (var part in key.Split('|'))
+            if (LoadPose(part) is { } layer) layers.Add(layer);
+        var visual = new DrawingVisual();
+        using (var dc = visual.RenderOpen())
+            foreach (var layer in layers)
+                dc.DrawImage(layer, new Rect(0, 0, body.PixelWidth, body.PixelHeight));
+        var bitmap = new RenderTargetBitmap(body.PixelWidth, body.PixelHeight, 96, 96, PixelFormats.Pbgra32);
+        bitmap.Render(visual);
+        bitmap.Freeze();
+        _poseCache[cacheKey] = bitmap;
+        return bitmap;
+    }
+
     void ShowFrame(int index)
     {
+        if (UsesParts) { UpdateParts(); return; }
         var frames = FramesFor(_mood);
         index %= frames.Length;
         if (index == _frame && _img.Source != null) return;
@@ -507,7 +677,7 @@ public sealed class CharacterStage : Border
         ApplyImageSize();
     }
 
-    string CacheKey(string pose) => $"{(_faceArt ? "face:" : "")}{_character}_{pose}";
+    string CacheKey(string pose) => $"{(UsesParts ? "part:" : _faceArt ? "face:" : "")}{_character}_{pose}";
 
     BitmapSource? LoadPose(string pose)
     {
@@ -522,7 +692,8 @@ public sealed class CharacterStage : Border
                 {
                     var decoded = new BitmapImage();
                     decoded.BeginInit();
-                    decoded.UriSource = _faceArt ? CharacterTheme.FaceUri(_character, pose) : CharacterTheme.AssetUri(_character, pose);
+                    decoded.UriSource = UsesParts ? CharacterTheme.PartUri(_character, pose)
+                        : _faceArt ? CharacterTheme.FaceUri(_character, pose) : CharacterTheme.AssetUri(_character, pose);
                     decoded.CacheOption = BitmapCacheOption.OnLoad;
                     decoded.EndInit();
                     decoded.Freeze();
@@ -666,6 +837,11 @@ public sealed class CharacterStage : Border
         // 왼쪽 말풍선 배치에서는 말풍선 자리를 침범하지 않도록 산책하지 않는다.
         _wander.X = !ExternalWalking && _mood == Mood.Idle && _placement == BubblePlacement.Above ? -18 * (1 - Math.Cos(_moodT * 2 * Math.PI / 12)) : 0;
 
+        if (_usesParts)
+        {
+            AdvanceParts();
+            UpdateParts();
+        }
         UpdateBubble(dt);
         PositionBubble();
 

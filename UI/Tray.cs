@@ -70,7 +70,7 @@ public sealed class Tray : IDisposable
     public static IReadOnlyDictionary<string, string> CharacterLabels { get; } = new Dictionary<string, string>
     {
         [CharacterSelection.Orch] = "마스터 (Orch)", [CharacterSelection.Claude] = "클로드", [CharacterSelection.Gpt] = "지피티",
-        [CharacterSelection.Gemini] = "제미나이", [CharacterSelection.Grok] = "그록",
+        [CharacterSelection.Gemini] = "제미나이", [CharacterSelection.Grok] = "그록", [CharacterSelection.DeepSeek] = "딥시크",
     };
 
     readonly Dictionary<string, WinForms.ToolStripMenuItem> _characterItems = new(StringComparer.Ordinal);

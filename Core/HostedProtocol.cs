@@ -32,7 +32,7 @@ public static class HostedProtocol
 
     /// <summary>Commands whose value is a JSON object: ChatterBox account snapshot (see ChatterBoxAccounts) and
     /// one character switched on or off (<c>{"id":"gpt","on":false}</c>, see CharacterSelection).</summary>
-    static readonly HashSet<string> ObjectCommands = new(StringComparer.Ordinal) { "chatterbox-accounts", "character" };
+    static readonly HashSet<string> ObjectCommands = new(StringComparer.Ordinal) { "chatterbox-accounts", "character", "character-event", "character-target", "character-reply" };
 
     public static bool TryParseCommand(string line, out HostedCommand command, out string error)
     {
@@ -154,6 +154,10 @@ public sealed class HostedProtocolWriter(TextWriter writer)
 
     /// <summary>The monitor's refresh button in hosted mode: ChatterBox refreshes its accounts and pushes them back.</summary>
     public void Refresh() => Write(new { type = "refresh" });
+
+    /// <summary>A question typed after clicking a character, for the chat that was shown in the input box.</summary>
+    public void CharacterAsk(string requestId, string character, long chatId, string text) =>
+        Write(new { type = "character-ask", requestId, character, chatId, text });
 
     void Write(object value)
     {

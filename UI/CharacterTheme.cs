@@ -64,12 +64,33 @@ public sealed class CharacterTheme
         Sparkles = [Color.FromRgb(0x2B, 0xC8, 0xF0), Colors.White, Color.FromRgb(0xC8, 0xC8, 0xE8), Color.FromRgb(0x4D, 0xA8, 0xFF)],
     };
 
-    /// <summary>모니터에 세우는 다섯 캐릭터의 테마 (표정 원화, CharacterSelection.All 순서).</summary>
-    public static IReadOnlyList<CharacterTheme> Faces { get; } = [Orch, Claude, Gpt, Gemini, Grok];
+    public static readonly CharacterTheme DeepSeek = new()
+    {
+        Key = "deepseek", DisplayName = "딥시크",
+        FxStroke = Frozen(Color.FromRgb(0x1E, 0x2A, 0x5A)),
+        Sparkles = [Color.FromRgb(0x4D, 0x6B, 0xFE), Colors.White, Color.FromRgb(0xA8, 0xB8, 0xFF)],
+    };
+
+    /// <summary>모니터에 세우는 여섯 캐릭터의 테마 (CharacterSelection.All 순서).</summary>
+    public static IReadOnlyList<CharacterTheme> Faces { get; } = [Orch, Claude, Gpt, Gemini, Grok, DeepSeek];
 
     /// <summary>모르는 이름은 클쨩 테마로 대체한다 (기존 동작과 같다).</summary>
     public static CharacterTheme For(string? key) =>
-        All.Concat([Orch, Gpt]).FirstOrDefault(t => string.Equals(t.Key, key, StringComparison.OrdinalIgnoreCase)) ?? Claude;
+        All.Concat([Orch, Gpt, DeepSeek]).FirstOrDefault(t => string.Equals(t.Key, key, StringComparison.OrdinalIgnoreCase)) ?? Claude;
+
+    /// <summary>파츠 원화의 레이어 이름. 모두 256×256, 0,0 정렬이고 body → 눈 → 눈썹 → 입 순서로 겹친다.</summary>
+    public static IReadOnlyList<string> Parts { get; } =
+        ["body", "eyes-open", "eyes-half", "eyes-closed", "brows-neutral", "brows-thinking", "mouth-closed", "mouth-open", "mouth-small"];
+
+    /// <summary>합성용 파츠: Assets/CharacterActions/{key}/{part}.png.</summary>
+    public static string PartPath(string key, string part) => $"Assets/CharacterActions/{key}/{part}.png";
+
+    public static Uri PartUri(string key, string part) => PackUri(PartPath(key, part));
+
+    /// <summary>이 캐릭터의 파츠 9장이 모두 리소스에 있는지 (하나라도 없으면 표정 원화로 대신한다).</summary>
+    public static bool HasParts(string key) => Parts.All(part => HasPart(key, part));
+
+    public static bool HasPart(string key, string part) => HasResource(PartPath(key, part));
 
     public static string AssetPath(string key, string pose) => $"Assets/Characters/{key}_{pose}.png";
 
