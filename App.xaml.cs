@@ -49,7 +49,7 @@ public partial class App : Application
     readonly List<(MeetingMessage Message, bool Draft)> _meetingPosts = [];
     string? _meetingActive, _meetingPending, _meetingFolder;
     string _meetingDraft = "", _meetingStatus = "", _submittedAgenda = "";
-    string[]? _meetingMembers;
+    string[]? _meetingMembers, _meetingResting;
     long _meetingSequence;
     bool _meetingSnapshotLoaded;
     int _exitStarted;
@@ -438,6 +438,7 @@ public partial class App : Application
                         _meetingSequence = room.Seq;
                         _meetingActive = room.RequestId;
                         _meetingMembers = room.Connected;
+                        _meetingResting = MeetingEvent.IsRoster(room.Resting) ? room.Resting : null;
                         _meetingStatus = room.Status;
                         _meetingPosts.Clear();
                         _meetingWindow?.ResetMessages();
@@ -753,7 +754,10 @@ public partial class App : Application
         if (_meetingPending == item.RequestId) _meetingPending = null;
         switch (item.Type)
         {
-            case "roster": _meetingMembers = item.Connected; break;
+            case "roster":
+                _meetingMembers = item.Connected;
+                _meetingResting = item.Resting;
+                break;
             case "status": _meetingStatus = item.Text!; break;
             case "message": UpdateMeetingPost(item.Message!, false); break;
             case "draft": UpdateMeetingPost(item.Message!, true); break;
@@ -781,7 +785,7 @@ public partial class App : Application
 
     void RefreshMeeting()
     {
-        _meetingWindow?.SetRoster(_meetingMembers, _meetingPosts.Where(post => post.Draft).Select(post => post.Message.Sender).ToArray());
+        _meetingWindow?.SetRoster(_meetingMembers, _meetingPosts.Where(post => post.Draft).Select(post => post.Message.Sender).ToArray(), _meetingResting);
         _meetingWindow?.SetStatus(_meetingStatus, _meetingPending != null || _meetingActive != null);
     }
 

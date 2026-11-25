@@ -9,10 +9,11 @@ public sealed record MeetingMessage(string Id, long At, string Sender, string Te
         && (Sender is "user" or "system" || CharacterSelection.All.Contains(Sender));
 }
 
-public sealed record MeetingReset(long Seq, string? RequestId, string Status, string[] Connected);
+public sealed record MeetingReset(long Seq, string? RequestId, string Status, string[] Connected, string[]? Resting);
 public sealed record MeetingRestore(MeetingMessage Message, bool Draft);
 
-public sealed record MeetingEvent(string RequestId, long Seq, string Type, string? Text, MeetingMessage? Message, string[]? Connected, string? Id)
+public sealed record MeetingEvent(string RequestId, long Seq, string Type, string? Text, MeetingMessage? Message, string[]? Connected, string? Id,
+    string[]? Resting)
 {
     static readonly JsonSerializerOptions JsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 
@@ -22,7 +23,7 @@ public sealed record MeetingEvent(string RequestId, long Seq, string Type, strin
         if (item == null || !CharacterAsk.IsRequestId(item.RequestId)) return null;
         return item.Type switch
         {
-            "roster" when IsRoster(item.Connected) => item,
+            "roster" when IsRoster(item.Connected) && (item.Resting == null || IsRoster(item.Resting)) => item,
             "status" or "end" when item.Text is { Length: <= 500 } => item,
             "message" or "draft" when item.Message?.IsValid(item.Type == "draft") == true => item,
             "withdraw" when item.Id is { Length: > 0 and <= 100 } => item,

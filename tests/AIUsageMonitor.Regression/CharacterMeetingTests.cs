@@ -62,7 +62,7 @@ internal static partial class Program
             Check("the finished message replaces its draft", messages.Children.Count == 4, $"rows={messages.Children.Count}");
             room.Upsert(new MeetingMessage("finish", time + 100, "orch", summary, "summary"), false);
             room.Upsert(new MeetingMessage("review", time + 200, "gpt", "두 번째 방안은 자료가 더 필요해요.", "discussion"), true);
-            room.SetRoster(["orch", "gpt", "deepseek"], ["gpt"]);
+            room.SetRoster(["orch", "gpt", "deepseek"], ["gpt"], ["deepseek"]);
             room.SetStatus("참가자들이 내용을 검토하는 중…", true);
             room.Show();
             PumpDisplay();

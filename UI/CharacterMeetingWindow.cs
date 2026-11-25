@@ -305,15 +305,16 @@ public sealed class CharacterMeetingWindow : Window
         RefreshComposer();
     }
 
-    public void SetRoster(IReadOnlyCollection<string>? connected, IReadOnlyCollection<string> speaking)
+    public void SetRoster(IReadOnlyCollection<string>? connected, IReadOnlyCollection<string> speaking, IReadOnlyCollection<string>? resting = null)
     {
         _rosterCount.Text = connected == null ? "참가자" : $"참가자  ·  {connected.Count}/{_participants.Count} 연결";
         foreach (var (id, entry) in _participants)
         {
             bool writing = speaking.Contains(id);
             bool available = connected?.Contains(id) == true;
-            entry.Note.Text = writing ? "●  작성 중" : connected == null ? "연결 확인 중" : available ? "참여 가능" : "연결 필요";
-            entry.Note.Foreground = writing ? Mint : Muted;
+            bool paused = resting?.Contains(id) == true;
+            entry.Note.Text = writing ? "●  작성 중" : connected == null ? "연결 확인 중" : paused ? "잔여량 낮음 · 발언 쉼" : available ? "참여 가능" : "연결 필요";
+            entry.Note.Foreground = writing ? Mint : paused ? Coral : Muted;
             entry.Avatar.Surface.Opacity = available || writing || connected == null ? 1 : 0.50;
             Animate(entry.Avatar, id, writing);
         }
