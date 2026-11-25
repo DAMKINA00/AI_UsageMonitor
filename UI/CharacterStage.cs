@@ -699,6 +699,7 @@ public sealed class CharacterStage : Border
                     decoded.EndInit();
                     decoded.Freeze();
                     bmp = ClearTransparentNoise(decoded);
+                    if (_fullBodyArt) bmp = StandingSprite.Render(_character, bmp, VisibleBounds(bmp));
                 }
                 catch (Exception ex) when (ex is System.IO.IOException or NotSupportedException or InvalidOperationException or System.IO.FileFormatException)
                 {
@@ -749,7 +750,7 @@ public sealed class CharacterStage : Border
     {
         if (_img.Source is not BitmapSource b || _figure.ActualHeight <= 0 || LoadPose(BasePose) is not { } idle) return;
         // 모든 자세는 서 있는 몸 높이 기준으로 같은 배율을 쓰고, 실제 발끝과 오른쪽 외곽선을 맞춘다.
-        double standingHeight = idle.PixelHeight * _visibleBounds[CacheKey(BasePose)].Height;
+        double standingHeight = _fullBodyArt ? StandingSprite.Height : idle.PixelHeight * _visibleBounds[CacheKey(BasePose)].Height;
         // 표정 원화는 상반신이라 전신 포즈보다 낮게 세운다 (머리 크기가 전신 캐릭터와 비슷해 보이게).
         double k = (_fullBodyArt ? StandingHeight : _faceArt ? FaceHeight : 240) / standingHeight;
         // 초기 두 기절 원화는 머리까지 축소돼 있어 대기 자세의 머리 크기에 맞춘다.

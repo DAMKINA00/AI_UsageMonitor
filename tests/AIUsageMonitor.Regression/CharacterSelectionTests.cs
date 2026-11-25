@@ -145,6 +145,14 @@ internal static partial class Program
             window.AdvanceCharacters(0.1);
             var lefts = window.Stages.Select(s => Canvas(s)).ToList();
             Check("all six can be shown together", Visible() == "orch,claude,gpt,gemini,grok,deepseek" && lefts.All(double.IsFinite), Visible());
+            var field = FindNamed<System.Windows.Controls.Canvas>(window, "CharacterField");
+            var bodyBounds = PrivateMethod<CharacterStage>("BodyBoundsIn");
+            var bodies = window.Stages.Select(stage => (Rect)bodyBounds.Invoke(stage, [field])!).ToArray();
+            Check("all six soles share the platform baseline after separation",
+                bodies.All(body => Math.Abs(body.Bottom - field.ActualHeight) < 0.5), string.Join(", ", bodies.Select(body => body.Bottom)));
+            Check("tufts extend above the shared height rather than shrinking the characters",
+                bodies[0].Height > bodies[2].Height + 8 && bodies[3].Height > bodies[2].Height + 8 &&
+                bodies[5].Height > bodies[2].Height + 8, string.Join(", ", bodies.Select(body => body.Height)));
             Check("changing characters keeps the window position and size",
                 window.Left == size.Left && window.Top == size.Top && window.Width == size.Width && window.Height == size.Height,
                 $"{size} -> {window.Left},{window.Top},{window.Width},{window.Height}");

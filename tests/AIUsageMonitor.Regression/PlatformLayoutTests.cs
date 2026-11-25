@@ -144,7 +144,7 @@ internal static partial class Program
     static void TestCharacterPlacement()
     {
         var body = new Rect(32, 112, 66, 66);
-        var limits = new Rect(0, -108, 220, 110);
+        var limits = new Rect(0, 2, 220, 0);
         var destination = new Point(80, 2);
         Rect obstacle = CharacterPlacement.At(body, destination);
         var stationary = new Point(8, 2);
@@ -153,12 +153,13 @@ internal static partial class Program
         Check("an overlap triggers only the nearest move needed to clear it", (separated - destination).Length == 66, separated.ToString());
         var outside = CharacterPlacement.Clamp(new Point(-30, -500), limits);
         Check("a manual move is kept inside the field", outside == limits.TopLeft, outside.ToString());
-        Check("manual height adjustment preserves the horizontal position and clamps to the floor",
-            CharacterPlacement.DragHeight(destination, 500, limits) == destination &&
-            CharacterPlacement.DragHeight(destination, -37, limits) == new Point(destination.X, destination.Y - 37), "vertical drag");
-        var narrow = new Rect(0, -108, 20, 110);
-        var above = CharacterPlacement.Separate(new Point(10, 2), body, narrow, [CharacterPlacement.At(body, narrow.BottomLeft)]);
-        Check("on a narrow field the characters can separate vertically", above.Y <= -64, above.ToString());
+        Check("manual drag moves only horizontally and is bounded by the edge",
+            CharacterPlacement.Drag(destination, new Vector(0, -500), limits) == destination &&
+            CharacterPlacement.Drag(destination, new Vector(37, -50), limits) == new Point(destination.X + 37, destination.Y) &&
+            CharacterPlacement.Drag(destination, new Vector(500, 50), limits) == limits.BottomRight, "horizontal drag");
+        var narrow = new Rect(0, 2, 20, 0);
+        var sameFloor = CharacterPlacement.Separate(new Point(10, 2), body, narrow, [CharacterPlacement.At(body, narrow.BottomLeft)]);
+        Check("even in a narrow field collisions never send characters above the floor", sameFloor.Y == narrow.Bottom, sameFloor.ToString());
     }
 
     static MainViewModel PlatformViewModel(int count)
