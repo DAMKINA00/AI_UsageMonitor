@@ -71,7 +71,7 @@ public sealed class CharacterAskWindow : Window
         header.Children.Add(badge);
         var heading = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
         heading.Children.Add(new TextBlock { Text = displayName, Foreground = Ink, FontSize = 17, FontWeight = FontWeights.SemiBold });
-        heading.Children.Add(new TextBlock { Text = character == "orch" ? "캐릭터 대화 · Win + Space" : "캐릭터 대화", Foreground = Muted, FontSize = 12, Margin = new Thickness(0, 2, 0, 0) });
+        heading.Children.Add(new TextBlock { Text = "캐릭터 대화", Foreground = Muted, FontSize = 12, Margin = new Thickness(0, 2, 0, 0) });
         header.Children.Add(heading);
         layout.Children.Add(new Border { BorderBrush = Outline, BorderThickness = new Thickness(0, 0, 0, 1), Child = header });
 

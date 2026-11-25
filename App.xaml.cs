@@ -43,7 +43,8 @@ public partial class App : Application
     /// <summary>캐릭터를 눌러 묻는 질문: 캐릭터마다 하나만 기다린다.</summary>
     readonly CharacterAsk _asks = new();
     readonly Dictionary<string, CharacterAskWindow> _askWindows = new(StringComparer.Ordinal);
-    MasterChatShortcut? _masterChatShortcut;
+    BoardroomShortcut? _boardroomShortcut;
+    DispatcherTimer? _boardroomSizeSave;
     CharacterMeetingWindow? _meetingWindow;
     readonly List<(MeetingMessage Message, bool Draft)> _meetingPosts = [];
     string? _meetingActive, _meetingPending, _meetingFolder;
@@ -109,9 +110,8 @@ public partial class App : Application
             _window.Accounts.SetManagedByChatterBox();
             _window.AskEnabled = true;
             _window.CharacterClicked += OpenAsk;
-            _masterChatShortcut = new MasterChatShortcut(Dispatcher, () =>
-                OpenAsk(CharacterSelection.Orch, _window.CharacterAnchor(CharacterSelection.Orch)), OpenMeeting);
-            if (!_masterChatShortcut.IsActive) Log.Write("Master chat shortcut could not be registered.");
+            _boardroomShortcut = new BoardroomShortcut(Dispatcher, ToggleMeeting);
+            if (!_boardroomShortcut.IsActive) Log.Write("Boardroom shortcut could not be registered.");
         }
 
         WireUp();
@@ -680,12 +680,19 @@ public partial class App : Application
         window.ActivateConversation();
     }
 
+    void ToggleMeeting()
+    {
+        if (_meetingWindow?.HideIfOpen() != true) OpenMeeting();
+    }
+
     void OpenMeeting()
     {
         if (!_hosted || _exitStarted != 0) return;
-        if (_meetingWindow is { } existing) { existing.Activate(); return; }
+        if (_meetingWindow is { } existing) { existing.Present(); return; }
         var portraits = _window.Stages.ToDictionary(stage => stage.Character, stage => stage.Portrait);
-        var window = _meetingWindow = new CharacterMeetingWindow(portraits, _meetingDraft, _meetingFolder);
+        var window = _meetingWindow = new CharacterMeetingWindow(portraits, _meetingDraft, _meetingFolder,
+            _settings.BoardroomWidth, _settings.BoardroomHeight);
+        window.UserSizeChanged += RememberBoardroomSize;
         window.Submitted += (text, folder) =>
         {
             if (_meetingPending != null || _meetingActive != null) return;
@@ -708,9 +715,25 @@ public partial class App : Application
         foreach (var (message, draft) in _meetingPosts) window.Upsert(message, draft);
         RefreshMeeting();
         window.PlaceIn(_window.WorkArea);
-        window.Show();
-        window.Activate();
+        window.Present();
         if (!_meetingSnapshotLoaded) _hostedProtocol!.MeetingSync();
+    }
+
+    void RememberBoardroomSize(Size size)
+    {
+        _settings.BoardroomWidth = size.Width;
+        _settings.BoardroomHeight = size.Height;
+        if (_boardroomSizeSave == null)
+        {
+            _boardroomSizeSave = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(400) };
+            _boardroomSizeSave.Tick += (_, _) =>
+            {
+                _boardroomSizeSave.Stop();
+                _settings.Save();
+            };
+        }
+        _boardroomSizeSave.Stop();
+        _boardroomSizeSave.Start();
     }
 
     void ApplyMeeting(MeetingEvent item)
@@ -805,7 +828,8 @@ public partial class App : Application
     {
         if (Interlocked.Exchange(ref _exitStarted, 1) != 0) return;
         try { _hostedInputLifetime?.Cancel(); } catch (ObjectDisposedException) { }
-        _masterChatShortcut?.Dispose();
+        _boardroomShortcut?.Dispose();
+        _boardroomSizeSave?.Stop();
         _meetingWindow?.Close();
         foreach (var chat in _askWindows.Values.ToArray()) chat.Close();
         _window.AllowClose = true;
@@ -823,7 +847,7 @@ public partial class App : Application
 
     protected override void OnExit(ExitEventArgs e)
     {
-        _masterChatShortcut?.Dispose();
+        _boardroomShortcut?.Dispose();
         try { _mutex?.ReleaseMutex(); } catch { }
         base.OnExit(e);
     }

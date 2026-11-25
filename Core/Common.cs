@@ -86,6 +86,8 @@ public sealed class AppSettings
     /// <summary>사용자가 끌어서 정한 창 크기 (DIP). null 이면 기본 크기.</summary>
     public double? WindowWidth { get; set; }
     public double? WindowHeight { get; set; }
+    public double? BoardroomWidth { get; set; }
+    public double? BoardroomHeight { get; set; }
     public bool TrayHintShown { get; set; }
     /// <summary>
     /// 예전 단일 "캐릭터 표시" 스위치. 4 버전부터는 <see cref="Characters"/> 가 기준이고, 이 값은 "하나라도 켜짐"으로 맞춰 둔다

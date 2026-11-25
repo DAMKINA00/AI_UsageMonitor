@@ -11,34 +11,41 @@ namespace AIUsageMonitor.UI;
 
 public sealed class CharacterMeetingWindow : Window
 {
-    static readonly Brush Paper = ColorBrush(0x242735), Side = ColorBrush(0x1B1E2A), Well = ColorBrush(0x1F222F),
-        Outline = ColorBrush(0x3B4054), Ink = ColorBrush(0xF4F1FC), Muted = ColorBrush(0xBCC1D6),
-        Mint = ColorBrush(0xA0EDCD), Coral = ColorBrush(0xF5AB99), Active = ColorBrush(0x273C3C);
-    readonly StackPanel _messages = new() { Margin = new Thickness(22, 16, 22, 12) };
+    const double DefaultWidth = 1020, DefaultHeight = 750, MinimumWidth = 490, MinimumHeight = 380;
+    static readonly Brush Paper = ColorBrush(0x22262E), Side = ColorBrush(0x1B1E26), Well = ColorBrush(0x2A303C),
+        Outline = ColorBrush(0x363E4D), Ink = ColorBrush(0xF2F4FA), Muted = ColorBrush(0xB4BDCE),
+        Accent = ColorBrush(0xAFC2FF), Mint = ColorBrush(0x96E2CB), Coral = ColorBrush(0xFFB1A7),
+        Active = ColorBrush(0x27353D), Conclusion = ColorBrush(0x2D2D43);
+    readonly StackPanel _messages = new() { Margin = new Thickness(16, 10, 16, 10), MaxWidth = 920 };
+    readonly List<string> _results = [];
     readonly Dictionary<string, Row> _rows = new();
     readonly Dictionary<string, (Avatar Avatar, TextBlock Note)> _participants = new();
     readonly Dictionary<string, (ImageSource? Neutral, ImageSource? Speaking)> _portraits = new();
-    readonly TextBlock _status, _empty, _placeholder;
+    readonly TextBlock _status, _empty, _placeholder, _rosterCount;
     readonly TextBox _input;
     readonly ScrollViewer _scroll;
-    readonly Button _send, _stop, _folderButton, _clearFolder;
-    bool _busy, _pickingFolder, _closing;
+    readonly Button _send, _stop, _folderButton, _clearFolder, _latestResult, _latestMessage;
+    Size _preferredSize, _appliedSize;
+    bool _busy, _pickingFolder;
 
     public event Action<string, string?>? Submitted;
     public event Action? StopRequested;
+    public event Action<Size>? UserSizeChanged;
     public string Draft => _input.Text;
     public string? Folder { get; private set; }
     public void RestoreDraft(string text) => _input.Text = text;
 
-    public CharacterMeetingWindow(IReadOnlyDictionary<string, ImageSource?> stagePortraits, string draft, string? folder)
+    public CharacterMeetingWindow(IReadOnlyDictionary<string, ImageSource?> stagePortraits, string draft, string? folder,
+        double? savedWidth = null, double? savedHeight = null)
     {
         Title = "Boardroom · 캐릭터 회의실";
         FontFamily = new FontFamily("Segoe UI, Malgun Gothic");
         FontSize = 14;
-        Width = 1020;
-        Height = 750;
-        MinWidth = 595;
-        MinHeight = 420;
+        _preferredSize = _appliedSize = new Size(SavedDimension(savedWidth, DefaultWidth), SavedDimension(savedHeight, DefaultHeight));
+        Width = _appliedSize.Width;
+        Height = _appliedSize.Height;
+        MinWidth = MinimumWidth;
+        MinHeight = MinimumHeight;
         Background = Paper;
         SnapsToDevicePixels = UseLayoutRounding = true;
         WindowStyle = WindowStyle.None;
@@ -53,57 +60,94 @@ public sealed class CharacterMeetingWindow : Window
 
         var shell = new Grid();
         shell.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        shell.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         shell.RowDefinitions.Add(new RowDefinition());
-        var header = new DockPanel { Background = Side, Margin = new Thickness(18, 12, 14, 12) };
-        header.MouseLeftButtonDown += (_, e) => { if (e.ButtonState == MouseButtonState.Pressed) DragMove(); };
+        var header = new DockPanel { Background = Side, Margin = new Thickness(14, 6, 9, 6) };
+        header.MouseLeftButtonDown += (_, e) =>
+        {
+            if (e.ClickCount == 2) ToggleMaximize();
+            else if (WindowState == WindowState.Normal) DragMove();
+        };
         var close = ButtonFor("×", Ink, Side);
-        System.Windows.Automation.AutomationProperties.SetName(close, "회의실 닫기");
-        close.Click += (_, _) => Close();
+        System.Windows.Automation.AutomationProperties.SetName(close, "회의실 숨기기");
+        close.ToolTip = "숨기기 · Win+Space";
+        close.Click += (_, _) => HideIfOpen();
         DockPanel.SetDock(close, Dock.Right);
         header.Children.Add(close);
-        var shortcut = Label("Alt + Space", Muted, 12);
+        var maximize = ButtonFor("□", Muted, Side);
+        var maximizeLabel = "최대화";
+        maximize.ToolTip = maximizeLabel;
+        System.Windows.Automation.AutomationProperties.SetName(maximize, maximizeLabel);
+        maximize.Click += (_, _) => ToggleMaximize();
+        StateChanged += (_, _) =>
+        {
+            bool full = WindowState == WindowState.Maximized;
+            maximize.Content = full ? "❐" : "□";
+            maximize.ToolTip = full ? "창 크기 복원" : maximizeLabel;
+            System.Windows.Automation.AutomationProperties.SetName(maximize, (string)maximize.ToolTip);
+        };
+        DockPanel.SetDock(maximize, Dock.Right);
+        header.Children.Add(maximize);
+        var shortcut = Label("Win + Space", Muted, 11);
         shortcut.VerticalAlignment = VerticalAlignment.Center;
         shortcut.Margin = new Thickness(0, 0, 12, 0);
         DockPanel.SetDock(shortcut, Dock.Right);
         header.Children.Add(shortcut);
-        var mark = new Border { Width = 38, Height = 38, CornerRadius = new CornerRadius(12), Background = Mint,
-            Margin = new Thickness(0, 0, 11, 0), Child = new TextBlock { Text = "✦", Foreground = Side, FontSize = 22,
+        var mark = new Border { Width = 26, Height = 26, CornerRadius = new CornerRadius(7), Background = Accent,
+            Margin = new Thickness(0, 0, 9, 0), Child = new TextBlock { Text = "✦", Foreground = Side, FontSize = 16,
                 HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center } };
         DockPanel.SetDock(mark, Dock.Left);
         header.Children.Add(mark);
-        var title = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
-        title.Children.Add(Label("Boardroom", Ink, 17, true));
-        title.Children.Add(Label("캐릭터 회의실", Muted, 12));
+        var title = Label("Boardroom", Ink, 13, true);
+        title.VerticalAlignment = VerticalAlignment.Center;
         header.Children.Add(title);
         shell.Children.Add(new Border { Background = Side, BorderBrush = Outline, BorderThickness = new Thickness(0, 0, 0, 1), Child = header });
 
         var body = new Grid();
         body.ColumnDefinitions.Add(new ColumnDefinition());
-        body.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(204) });
-        Grid.SetRow(body, 1);
+        body.ColumnDefinitions.Add(new ColumnDefinition());
+        Grid.SetRow(body, 2);
         shell.Children.Add(body);
+        var channelHeader = new DockPanel { Margin = new Thickness(14, 7, 11, 7), LastChildFill = true };
+        var members = ButtonFor("참가자", Muted, Side);
+        DockPanel.SetDock(members, Dock.Right);
+        channelHeader.Children.Add(members);
+        _latestResult = ButtonFor("최근 결론", Accent, Side);
+        _latestResult.IsEnabled = false;
+        _latestResult.Click += (_, _) => JumpToResult();
+        DockPanel.SetDock(_latestResult, Dock.Right);
+        channelHeader.Children.Add(_latestResult);
+        var channelName = Label("#  회의실", Ink, 15, true);
+        channelName.VerticalAlignment = VerticalAlignment.Center;
+        channelHeader.Children.Add(channelName);
+        var channelBar = new Border { Background = Paper, BorderBrush = Outline, BorderThickness = new Thickness(0, 0, 0, 1), Child = channelHeader };
+        Grid.SetRow(channelBar, 1);
+        shell.Children.Add(channelBar);
+
         var channel = new Grid();
         channel.RowDefinitions.Add(new RowDefinition());
         channel.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        _empty = Label("함께 검토할 안건을 적어 보세요.\n마스터가 한 명을 지명하면 담당자가 발표하고 참가자들이 의견을 나눠요.", Muted, 14);
+        _empty = Label("검토할 안건을 보내면 마스터가 담당자를 지정합니다.", Muted, 14);
         _empty.LineHeight = 24;
-        _empty.Margin = new Thickness(48, 32, 48, 8);
+        _empty.Margin = new Thickness(18, 26, 20, 6);
         _messages.Children.Add(_empty);
         _scroll = new ScrollViewer { Content = _messages, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
         channel.Children.Add(_scroll);
         body.Children.Add(channel);
 
-        var rail = new StackPanel { Margin = new Thickness(16, 18, 13, 12) };
-        rail.Children.Add(Label("참가자", Ink, 14, true));
+        var rail = new StackPanel { Margin = new Thickness(13, 16, 11, 12) };
+        _rosterCount = Label("참가자", Ink, 13, true);
+        _rosterCount.Margin = new Thickness(5, 0, 0, 3);
+        rail.Children.Add(_rosterCount);
         foreach (var id in CharacterSelection.All)
         {
-            var avatar = MakeAvatar(id, 34);
+            var avatar = MakeAvatar(id, 32);
             var titleText = Label(NameFor(id), Ink, 13, true);
             var note = Label("연결 확인 중", Muted, 11);
             var info = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(9, 0, 0, 0) };
             info.Children.Add(titleText);
             info.Children.Add(note);
-            var item = new DockPanel { Margin = new Thickness(0, 10, 0, 0) };
+            var item = new DockPanel { Margin = new Thickness(5, 9, 2, 1) };
             item.Children.Add(avatar.Surface);
             item.Children.Add(info);
             rail.Children.Add(item);
@@ -111,24 +155,44 @@ public sealed class CharacterMeetingWindow : Window
         }
         var side = new Border { Background = Side, BorderBrush = Outline, BorderThickness = new Thickness(1, 0, 0, 0),
             Child = new ScrollViewer { VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Content = rail } };
-        Grid.SetColumn(side, 1);
         body.Children.Add(side);
-        SizeChanged += (_, _) =>
+        bool? rosterPreference = null;
+        void LayoutRoster(double width)
         {
-            bool wide = ActualWidth >= 690;
-            body.ColumnDefinitions[1].Width = new GridLength(wide ? 204 : 0);
-            side.Visibility = wide ? Visibility.Visible : Visibility.Collapsed;
+            bool wide = width >= 720;
+            bool show = rosterPreference ?? wide;
+            body.ColumnDefinitions[1].Width = new GridLength(show && wide ? 206 : 0);
+            Grid.SetColumn(side, wide ? 1 : 0);
+            side.Width = wide ? double.NaN : 194;
+            side.HorizontalAlignment = wide ? HorizontalAlignment.Stretch : HorizontalAlignment.Right;
+            side.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
+            members.Background = show ? Well : Side;
+            members.Foreground = show ? Accent : Muted;
+            members.ToolTip = show ? "참가자 목록 숨기기" : "참가자 목록 보기";
+        }
+        members.Click += (_, _) =>
+        {
+            rosterPreference = side.Visibility != Visibility.Visible;
+            LayoutRoster(ActualWidth);
         };
 
-        var footer = new StackPanel { Margin = new Thickness(20, 0, 20, 16) };
+        var footer = new StackPanel { Margin = new Thickness(18, 0, 18, 12), MaxWidth = 916 };
+        var information = new DockPanel { Margin = new Thickness(3, 0, 3, 5) };
+        _latestMessage = ButtonFor("↓ 최신 메시지", Accent, Well);
+        _latestMessage.Visibility = Visibility.Collapsed;
+        _latestMessage.Click += (_, _) => _scroll.ScrollToEnd();
+        DockPanel.SetDock(_latestMessage, Dock.Right);
+        information.Children.Add(_latestMessage);
+        _scroll.ScrollChanged += (_, _) => _latestMessage.Visibility = AtEnd() ? Visibility.Collapsed : Visibility.Visible;
         _status = Label("", Mint, 12);
-        _status.Margin = new Thickness(5, 0, 5, 6);
-        footer.Children.Add(_status);
+        _status.VerticalAlignment = VerticalAlignment.Center;
+        information.Children.Add(_status);
+        footer.Children.Add(information);
         var composer = new StackPanel();
         var field = new Grid();
-        _input = new TextBox { MaxLength = CharacterAsk.MaxQuestionLength, AcceptsReturn = true, MinHeight = 56, MaxHeight = 145,
+        _input = new TextBox { MaxLength = CharacterAsk.MaxQuestionLength, AcceptsReturn = true, MinHeight = 39, MaxHeight = 145,
             TextWrapping = TextWrapping.Wrap, Padding = new Thickness(2, 5, 2, 4), Background = Brushes.Transparent, BorderThickness = new Thickness(0),
-            Foreground = Ink, CaretBrush = Mint, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
+            Foreground = Ink, CaretBrush = Accent, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
         System.Windows.Automation.AutomationProperties.SetName(_input, "회의 안건");
         field.Children.Add(_input);
         _placeholder = Label("회의실에 안건 보내기", Muted, 14);
@@ -145,7 +209,7 @@ public sealed class CharacterMeetingWindow : Window
         _clearFolder.ToolTip = "조사 폴더 해제";
         _clearFolder.Click += (_, _) => SetFolder(null);
         controls.Children.Add(_clearFolder);
-        _send = ButtonFor("보내기", Side, Mint);
+        _send = ButtonFor("보내기", Side, Accent);
         _send.ToolTip = "Enter로 보내기 · Shift+Enter로 줄바꿈";
         _send.Click += (_, _) => Send();
         DockPanel.SetDock(_send, Dock.Right);
@@ -155,9 +219,9 @@ public sealed class CharacterMeetingWindow : Window
         DockPanel.SetDock(_stop, Dock.Right);
         controls.Children.Add(_stop);
         composer.Children.Add(controls);
-        var box = new Border { Child = composer, Padding = new Thickness(11, 7, 11, 8), CornerRadius = new CornerRadius(13),
+        var box = new Border { Child = composer, Padding = new Thickness(9, 5, 9, 7), CornerRadius = new CornerRadius(9),
             Background = Well, BorderBrush = Outline, BorderThickness = new Thickness(1) };
-        _input.IsKeyboardFocusWithinChanged += (_, _) => box.BorderBrush = _input.IsKeyboardFocusWithin ? Mint : Outline;
+        _input.IsKeyboardFocusWithinChanged += (_, _) => box.BorderBrush = _input.IsKeyboardFocusWithin ? Accent : Outline;
         footer.Children.Add(box);
         Grid.SetRow(footer, 1);
         channel.Children.Add(footer);
@@ -170,10 +234,12 @@ public sealed class CharacterMeetingWindow : Window
             e.Handled = true;
             Send();
         };
-        PreviewKeyDown += (_, e) => { if (e.Key == Key.Escape) Close(); };
-        Deactivated += (_, _) => Dispatcher.BeginInvoke(() => { if (!IsActive && !_pickingFolder && !_closing) Close(); });
-        Closing += (_, _) => _closing = true;
-        Loaded += (_, _) => { _input.Focus(); _scroll.ScrollToEnd(); };
+        SizeChanged += (_, e) =>
+        {
+            LayoutRoster(e.NewSize.Width);
+            RememberSize(e.NewSize);
+        };
+        Loaded += (_, _) => { LayoutRoster(ActualWidth); _scroll.ScrollToEnd(); };
         SetFolder(folder);
         _input.Text = draft;
         SetStatus("", false);
@@ -182,13 +248,53 @@ public sealed class CharacterMeetingWindow : Window
     public void PlaceIn(Rect area)
     {
         if (area.IsEmpty) return;
-        MinWidth = Math.Min(MinWidth, area.Width);
-        MinHeight = Math.Min(MinHeight, area.Height);
-        Width = Math.Min(Width, area.Width - 12);
-        Height = Math.Min(Height, area.Height - 12);
+        double availableWidth = Math.Max(1, area.Width - 12);
+        double availableHeight = Math.Max(1, area.Height - 12);
+        MinWidth = Math.Min(MinimumWidth, availableWidth);
+        MinHeight = Math.Min(MinimumHeight, availableHeight);
+        _appliedSize = new Size(Math.Clamp(_preferredSize.Width, MinWidth, availableWidth), Math.Clamp(_preferredSize.Height, MinHeight, availableHeight));
+        Width = _appliedSize.Width;
+        Height = _appliedSize.Height;
         Left = area.Left + (area.Width - Width) / 2;
         Top = area.Top + (area.Height - Height) / 2;
     }
+
+    public bool HideIfOpen()
+    {
+        if (!IsVisible || WindowState == WindowState.Minimized) return false;
+        if (!_pickingFolder) Hide();
+        return true;
+    }
+
+    public void Present()
+    {
+        if (_pickingFolder) return;
+        if (!IsVisible) Show();
+        if (WindowState == WindowState.Minimized) WindowState = WindowState.Normal;
+        if (!Activate())
+        {
+            Topmost = true;
+            Activate();
+            Topmost = false;
+        }
+        _input.Focus();
+    }
+
+    void ToggleMaximize() => WindowState = WindowState == WindowState.Maximized ? WindowState.Normal : WindowState.Maximized;
+
+    void RememberSize(Size size)
+    {
+        if (!IsLoaded || !IsVisible || WindowState != WindowState.Normal) return;
+        bool widthChanged = Math.Abs(size.Width - _appliedSize.Width) > 1;
+        bool heightChanged = Math.Abs(size.Height - _appliedSize.Height) > 1;
+        if (!widthChanged && !heightChanged) return;
+        _appliedSize = size;
+        _preferredSize = new Size(widthChanged ? size.Width : _preferredSize.Width, heightChanged ? size.Height : _preferredSize.Height);
+        UserSizeChanged?.Invoke(_preferredSize);
+    }
+
+    static double SavedDimension(double? saved, double fallback) =>
+        saved is { } value && double.IsFinite(value) && value > 0 ? value : fallback;
 
     public void SetStatus(string text, bool busy)
     {
@@ -201,11 +307,12 @@ public sealed class CharacterMeetingWindow : Window
 
     public void SetRoster(IReadOnlyCollection<string>? connected, IReadOnlyCollection<string> speaking)
     {
+        _rosterCount.Text = connected == null ? "참가자" : $"참가자  ·  {connected.Count}/{_participants.Count} 연결";
         foreach (var (id, entry) in _participants)
         {
             bool writing = speaking.Contains(id);
             bool available = connected?.Contains(id) == true;
-            entry.Note.Text = writing ? "작성 중…" : connected == null ? "연결 확인 중" : available ? "참여 가능" : "연결 필요";
+            entry.Note.Text = writing ? "●  작성 중" : connected == null ? "연결 확인 중" : available ? "참여 가능" : "연결 필요";
             entry.Note.Foreground = writing ? Mint : Muted;
             entry.Avatar.Surface.Opacity = available || writing || connected == null ? 1 : 0.50;
             Animate(entry.Avatar, id, writing);
@@ -217,15 +324,17 @@ public sealed class CharacterMeetingWindow : Window
         _messages.Children.Clear();
         _messages.Children.Add(_empty);
         _rows.Clear();
+        _results.Clear();
+        _latestResult.IsEnabled = false;
         _empty.Visibility = Visibility.Visible;
     }
 
     public void Upsert(MeetingMessage message, bool draft)
     {
-        bool scroll = message.Sender == "user" || _scroll.ScrollableHeight - _scroll.VerticalOffset < 36;
+        bool scroll = message.Sender == "user" || AtEnd();
         if (!_rows.TryGetValue(message.Id, out var row))
         {
-            var avatar = MakeAvatar(message.Sender, 40);
+            var avatar = MakeAvatar(message.Sender, 34);
             var top = new WrapPanel();
             top.Children.Add(Label(NameFor(message.Sender), SenderColor(message.Sender), 14, true));
             var time = Label(DateTimeOffset.FromUnixTimeMilliseconds(message.At).ToLocalTime().ToString("HH:mm"), Muted, 11);
@@ -233,9 +342,9 @@ public sealed class CharacterMeetingWindow : Window
             top.Children.Add(time);
             if (message.Kind is { } kind)
             {
-                var role = Label(kind switch { "assignment" => "지명", "report" => "발표", "review" => "의견", _ => "회의 결과" }, Mint, 11);
-                role.Margin = new Thickness(9, 3, 0, 0);
-                top.Children.Add(role);
+                var role = Label(kind switch { "assignment" => "지명", "report" => "발표", "review" => "의견", _ => "결론" }, Accent, 11);
+                top.Children.Add(new Border { Background = Well, CornerRadius = new CornerRadius(4), Margin = new Thickness(8, 1, 0, 0),
+                    Padding = new Thickness(5, 1, 5, 1), Child = role });
             }
             var content = new ContentControl { Margin = new Thickness(0, 3, 0, 0), HorizontalContentAlignment = HorizontalAlignment.Stretch };
             var text = new StackPanel { Margin = new Thickness(12, 0, 1, 0) };
@@ -244,8 +353,8 @@ public sealed class CharacterMeetingWindow : Window
             var layout = new DockPanel();
             layout.Children.Add(avatar.Surface);
             layout.Children.Add(text);
-            var border = new Border { Padding = new Thickness(10, 8, 10, 9), Margin = new Thickness(0, 0, 0, 4),
-                CornerRadius = new CornerRadius(10), Child = layout };
+            var border = new Border { Padding = new Thickness(9, 6, 9, 7), Margin = new Thickness(0, 0, 0, 3),
+                CornerRadius = new CornerRadius(6), BorderThickness = new Thickness(2, 0, 0, 0), Child = layout };
             row = new Row(border, content, avatar, Label("", Ink, 14));
             row.Live.LineHeight = 21;
             _rows.Add(message.Id, row);
@@ -258,8 +367,16 @@ public sealed class CharacterMeetingWindow : Window
             row.Content.Content = row.Live;
         }
         else
-            row.Content.Content = ChatRichContent.Create(message.Text, Ink, Mint, Outline);
-        row.Surface.Background = draft || message.Kind == "summary" ? Active : message.Kind == "assignment" ? Well : Brushes.Transparent;
+        {
+            row.Content.Content = ChatRichContent.Create(message.Text, Ink, Accent, Outline);
+            if (message.Kind == "summary" && !_results.Contains(message.Id))
+            {
+                _results.Add(message.Id);
+                _latestResult.IsEnabled = true;
+            }
+        }
+        row.Surface.Background = message.Kind == "summary" ? Conclusion : draft ? Active : message.Kind == "assignment" ? Well : Brushes.Transparent;
+        row.Surface.BorderBrush = message.Kind == "summary" ? Accent : draft ? Mint : Brushes.Transparent;
         Animate(row.Avatar, message.Sender, draft);
         if (scroll) _scroll.ScrollToEnd();
     }
@@ -267,7 +384,17 @@ public sealed class CharacterMeetingWindow : Window
     public void Remove(string id)
     {
         if (_rows.Remove(id, out var row)) _messages.Children.Remove(row.Surface);
+        if (_results.Remove(id)) _latestResult.IsEnabled = _results.Count > 0;
         _empty.Visibility = _rows.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    bool AtEnd() => _scroll.ScrollableHeight - _scroll.VerticalOffset < 24;
+
+    void JumpToResult()
+    {
+        if (_results.Count == 0 || !_rows.TryGetValue(_results[^1], out var row)) return;
+        double offset = _scroll.VerticalOffset + row.Surface.TranslatePoint(new Point(0, 0), _scroll).Y;
+        _scroll.ScrollToVerticalOffset(offset);
     }
 
     void RefreshComposer()
@@ -317,7 +444,7 @@ public sealed class CharacterMeetingWindow : Window
         var image = new Image { Width = size - 6, Height = size - 6, RenderTransform = new TranslateTransform() };
         if (_portraits.TryGetValue(id, out var portrait)) image.Source = portrait.Neutral;
         RenderOptions.SetBitmapScalingMode(image, BitmapScalingMode.HighQuality);
-        var surface = new Border { Width = size, Height = size, CornerRadius = new CornerRadius(12), Background = Well,
+        var surface = new Border { Width = size, Height = size, CornerRadius = new CornerRadius(size / 2), Background = Side,
             BorderBrush = Outline, BorderThickness = new Thickness(1), VerticalAlignment = VerticalAlignment.Top, Child = image };
         if (id is "user" or "system")
         {

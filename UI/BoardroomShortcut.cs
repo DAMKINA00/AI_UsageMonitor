@@ -22,8 +22,8 @@ public sealed class WindowsSpaceChord
     }
 }
 
-/// <summary>Handle Win+Space and Alt+Space while the hosted monitor runs.</summary>
-internal sealed class MasterChatShortcut : IDisposable
+/// <summary>Handle Win+Space while the hosted monitor runs.</summary>
+internal sealed class BoardroomShortcut : IDisposable
 {
     const int LowLevelKeyboard = 13, SpaceKey = 0x20, LeftWindows = 0x5B, RightWindows = 0x5C;
     const int Shift = 0x10, Control = 0x11, Alt = 0x12, Injected = 0x10;
@@ -31,14 +31,13 @@ internal sealed class MasterChatShortcut : IDisposable
     readonly WindowsSpaceChord _chord = new();
     readonly HookProc _callback;
     readonly Dispatcher _dispatcher;
-    readonly Action _open, _meeting;
+    readonly Action _toggle;
     IntPtr _hook;
 
-    public MasterChatShortcut(Dispatcher dispatcher, Action open, Action meeting)
+    public BoardroomShortcut(Dispatcher dispatcher, Action toggle)
     {
         _dispatcher = dispatcher;
-        _open = open;
-        _meeting = meeting;
+        _toggle = toggle;
         _callback = OnKey;
         _hook = SetWindowsHookEx(LowLevelKeyboard, _callback, GetModuleHandle(null), 0);
     }
@@ -54,17 +53,14 @@ internal sealed class MasterChatShortcut : IDisposable
 
         bool windows = Held(LeftWindows) || Held(RightWindows);
         bool alt = Held(Alt) || (Marshal.ReadInt32(data, 8) & 0x20) != 0;
-        var (suppress, open) = _chord.Space(kind is KeyDown or SystemKeyDown, windows ^ alt, Held(Shift) || Held(Control));
-        if (open)
+        var (suppress, toggle) = _chord.Space(kind is KeyDown or SystemKeyDown, windows, alt || Held(Shift) || Held(Control));
+        if (toggle)
         {
             // Mark this Win press as part of a chord so releasing it doesn't open the Start menu.
             // Windows PowerToys uses the same unassigned VK 0xFF release for custom Win chords.
-            if (windows)
-            {
-                var input = new Input { Type = 1, Data = new InputData { Keyboard = new KeyboardInput { Key = 0xFF, Flags = 0x0002 } } };
-                SendInput(1, ref input, Marshal.SizeOf<Input>());
-            }
-            _dispatcher.BeginInvoke(DispatcherPriority.Input, windows ? _open : _meeting);
+            var input = new Input { Type = 1, Data = new InputData { Keyboard = new KeyboardInput { Key = 0xFF, Flags = 0x0002 } } };
+            SendInput(1, ref input, Marshal.SizeOf<Input>());
+            _dispatcher.BeginInvoke(DispatcherPriority.Input, _toggle);
         }
         return suppress ? new IntPtr(1) : CallNextHookEx(_hook, code, message, data);
     }

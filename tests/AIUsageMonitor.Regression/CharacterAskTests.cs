@@ -95,10 +95,11 @@ internal static partial class Program
         finally { if (!focusClosed) box.Close(); }
 
         var shortcut = new WindowsSpaceChord();
-        Check("Space by itself and modified Win+Space pass through", shortcut.Space(true, false, false) == (false, false) &&
+        Check("Space, Alt+Space and modified Win+Space pass through", shortcut.Space(true, false, false) == (false, false) &&
+            shortcut.Space(false, false, false) == (false, false) && shortcut.Space(true, false, true) == (false, false) &&
             shortcut.Space(false, false, false) == (false, false) && shortcut.Space(true, true, true) == (false, false) &&
             shortcut.Space(false, true, false) == (false, false), "pass through");
-        Check("Win+Space opens once and consumes the repeat and matching release", shortcut.Space(true, true, false) == (true, true) &&
+        Check("Win+Space toggles once and consumes the repeat and matching release", shortcut.Space(true, true, false) == (true, true) &&
             shortcut.Space(true, true, false) == (true, false) && shortcut.Space(false, false, false) == (true, false) &&
             shortcut.Space(true, true, false) == (true, true), "Win+Space");
 
@@ -119,7 +120,7 @@ internal static partial class Program
             Check("hidden characters cannot be clicked", !window.ClickCharacter("claude") && clicks.Count == 1, "hidden");
 
             var masterAnchor = window.CharacterAnchor("orch");
-            Check("Win+Space can read the rendered master's on-screen anchor", !masterAnchor.IsEmpty && masterAnchor.IntersectsWith(window.WorkArea), masterAnchor.ToString());
+            Check("the rendered master has an on-screen anchor for its individual chat", !masterAnchor.IsEmpty && masterAnchor.IntersectsWith(window.WorkArea), masterAnchor.ToString());
             var masterBox = new CharacterAskWindow("orch", "마스터");
             try
             {

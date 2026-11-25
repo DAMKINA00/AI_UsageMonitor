@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
@@ -41,11 +42,14 @@ internal static partial class Program
             ((Border)bubbles.Children[0]).Child is StackPanel { Children.Count: 3 }, "personal rich content");
         personal.Close();
 
-        var room = new CharacterMeetingWindow(new Dictionary<string, ImageSource?>(), "", null)
+        var portraits = new Dictionary<string, ImageSource?>();
+        var room = new CharacterMeetingWindow(portraits, "", null)
             { Opacity = 0, ShowActivated = false, ShowInTaskbar = false };
         Check("DeepSeek's meeting portrait is available when its desktop character is hidden",
             CharacterTheme.ConversationPortrait("deepseek") != null && CharacterTheme.ConversationPortrait("deepseek", true) != null, "layered portraits");
         room.PlaceIn(new Rect(0, 0, 1160, 920));
+        Size? newSize = null;
+        room.UserSizeChanged += size => newSize = size;
         try
         {
             room.Upsert(new MeetingMessage("agenda", time, "user", "세 가지 안의 장단점을 비교해 줘."), false);
@@ -63,6 +67,35 @@ internal static partial class Program
             room.Show();
             PumpDisplay();
             RenderFixture(room, "boardroom");
+            PrivateMethod<Window>("OnDeactivated").Invoke(room, [EventArgs.Empty]);
+            PumpDisplay();
+            Check("Boardroom stays visible when another window receives focus", room.IsVisible && newSize == null, "visible; default size is not saved");
+            room.Width = 880;
+            room.Height = 610;
+            PumpDisplay();
+            Check("resizing updates the normal Boardroom dimensions", newSize is { Width: 880, Height: 610 }, newSize?.ToString() ?? "missing");
+            room.RestoreDraft("작성 중인 후속 질문");
+            Check("toggling hides the visible window only", room.HideIfOpen() && !room.IsVisible && !room.HideIfOpen(), "hide");
+            room.Show();
+            PumpDisplay();
+            Check("reopening preserves the size, chat rows and draft",
+                room.Width == 880 && room.Height == 610 && messages.Children.Count == 6 && room.Draft == "작성 중인 후속 질문", "preserved");
+            var settingsFile = Path.Combine(Paths.AppData, "boardroom-size-test.json");
+            var settings = AppSettings.Load(settingsFile);
+            settings.BoardroomWidth = newSize?.Width;
+            settings.BoardroomHeight = newSize?.Height;
+            settings.Save();
+            var saved = AppSettings.Load(settingsFile);
+            var restored = new CharacterMeetingWindow(portraits, "", null, saved.BoardroomWidth, saved.BoardroomHeight)
+                { ShowActivated = false, ShowInTaskbar = false };
+            try
+            {
+                restored.PlaceIn(new Rect(0, 0, 740, 590));
+                Check("stored size is clamped to a smaller work area", restored.Width == 728 && restored.Height == 578, "clamped");
+                restored.PlaceIn(new Rect(0, 0, 1160, 920));
+                Check("the original saved size returns on a larger work area", restored.Width == 880 && restored.Height == 610, "restored");
+            }
+            finally { restored.Close(); }
             room.Remove("review");
             Check("the interrupted draft disappears without removing the completed posts", messages.Children.Count == 5, "withdrawal");
         }
