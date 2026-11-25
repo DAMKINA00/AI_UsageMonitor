@@ -14,7 +14,7 @@ internal static partial class Program
     {
         var requestId = new string('e', 32);
         var time = DateTimeOffset.Now.ToUnixTimeMilliseconds();
-        var report = new MeetingMessage("report", time, "deepseek", "첫 근거를 확인했어요.", "report");
+        var report = new MeetingMessage("report", time, "deepseek", "첫 근거를 확인했어요.", "discussion");
         var summary = """
             세 가지 안을 비교했어요.
 
@@ -61,7 +61,7 @@ internal static partial class Program
             room.Upsert(report, false);
             Check("the finished message replaces its draft", messages.Children.Count == 4, $"rows={messages.Children.Count}");
             room.Upsert(new MeetingMessage("finish", time + 100, "orch", summary, "summary"), false);
-            room.Upsert(new MeetingMessage("review", time + 200, "gpt", "두 번째 방안은 자료가 더 필요해요.", "review"), true);
+            room.Upsert(new MeetingMessage("review", time + 200, "gpt", "두 번째 방안은 자료가 더 필요해요.", "discussion"), true);
             room.SetRoster(["orch", "gpt", "deepseek"], ["gpt"]);
             room.SetStatus("참가자들이 내용을 검토하는 중…", true);
             room.Show();

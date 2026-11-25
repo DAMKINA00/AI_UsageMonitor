@@ -127,7 +127,7 @@ public sealed class CharacterMeetingWindow : Window
         var channel = new Grid();
         channel.RowDefinitions.Add(new RowDefinition());
         channel.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        _empty = Label("검토할 안건을 보내면 마스터가 담당자를 지정합니다.", Muted, 14);
+        _empty = Label("안건을 보내면 마스터가 첫 질문을 던지고 참가자들이 차례로 의견을 이어갑니다.", Muted, 14);
         _empty.LineHeight = 24;
         _empty.Margin = new Thickness(18, 26, 20, 6);
         _messages.Children.Add(_empty);
@@ -342,7 +342,7 @@ public sealed class CharacterMeetingWindow : Window
             top.Children.Add(time);
             if (message.Kind is { } kind)
             {
-                var role = Label(kind switch { "assignment" => "지명", "report" => "발표", "review" => "의견", _ => "결론" }, Accent, 11);
+                var role = Label(kind switch { "assignment" => "질문", "report" => "발표", "review" => "의견", "discussion" => "발언", _ => "결론" }, Accent, 11);
                 top.Children.Add(new Border { Background = Well, CornerRadius = new CornerRadius(4), Margin = new Thickness(8, 1, 0, 0),
                     Padding = new Thickness(5, 1, 5, 1), Child = role });
             }
