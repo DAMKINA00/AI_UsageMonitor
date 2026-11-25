@@ -21,7 +21,7 @@ public static class HostedProtocol
     static readonly HashSet<string> NoValueCommands = new(StringComparer.Ordinal)
     {
         "show", "hide", "refresh", "accounts", "claude-login", "claude-logout",
-        "data-folder", "quit",
+        "data-folder", "quit", "meeting-open",
     };
 
     static readonly HashSet<string> BoolCommands = new(StringComparer.Ordinal)
@@ -32,7 +32,8 @@ public static class HostedProtocol
 
     /// <summary>Commands whose value is a JSON object: ChatterBox account snapshot (see ChatterBoxAccounts) and
     /// one character switched on or off (<c>{"id":"gpt","on":false}</c>, see CharacterSelection).</summary>
-    static readonly HashSet<string> ObjectCommands = new(StringComparer.Ordinal) { "chatterbox-accounts", "character", "character-event", "character-reply" };
+    static readonly HashSet<string> ObjectCommands = new(StringComparer.Ordinal) { "chatterbox-accounts", "character", "character-event", "character-reply",
+        "meeting-event", "meeting-reset", "meeting-restore" };
 
     public static bool TryParseCommand(string line, out HostedCommand command, out string error)
     {
@@ -158,6 +159,16 @@ public sealed class HostedProtocolWriter(TextWriter writer)
     /// <summary>A private question typed after clicking a character.</summary>
     public void CharacterAsk(string requestId, string character, string text) =>
         Write(new { type = "character-ask", requestId, character, text });
+
+    public void MeetingStart(string requestId, string text, string? folder)
+    {
+        if (folder == null) Write(new { type = "meeting-start", requestId, text });
+        else Write(new { type = "meeting-start", requestId, text, folder });
+    }
+
+    public void MeetingCancel(string requestId) => Write(new { type = "meeting-cancel", requestId });
+
+    public void MeetingSync() => Write(new { type = "meeting-sync" });
 
     void Write(object value)
     {

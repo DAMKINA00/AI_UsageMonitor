@@ -44,6 +44,13 @@ public partial class App : Application
     readonly CharacterAsk _asks = new();
     readonly Dictionary<string, CharacterAskWindow> _askWindows = new(StringComparer.Ordinal);
     MasterChatShortcut? _masterChatShortcut;
+    CharacterMeetingWindow? _meetingWindow;
+    readonly List<(MeetingMessage Message, bool Draft)> _meetingPosts = [];
+    string? _meetingActive, _meetingPending, _meetingFolder;
+    string _meetingDraft = "", _meetingStatus = "", _submittedAgenda = "";
+    string[]? _meetingMembers;
+    long _meetingSequence;
+    bool _meetingSnapshotLoaded;
     int _exitStarted;
 
     static string InstanceSuffix()
@@ -103,7 +110,7 @@ public partial class App : Application
             _window.AskEnabled = true;
             _window.CharacterClicked += OpenAsk;
             _masterChatShortcut = new MasterChatShortcut(Dispatcher, () =>
-                OpenAsk(CharacterSelection.Orch, _window.CharacterAnchor(CharacterSelection.Orch)));
+                OpenAsk(CharacterSelection.Orch, _window.CharacterAnchor(CharacterSelection.Orch)), OpenMeeting);
             if (!_masterChatShortcut.IsActive) Log.Write("Master chat shortcut could not be registered.");
         }
 
@@ -419,6 +426,31 @@ public partial class App : Application
                 case "accounts": ShowAccounts(); break;
                 case "topmost": SetTopmost(command.BoolValue!.Value); break;
                 case "characters": SetAllCharacters(command.BoolValue!.Value); break;
+                case "meeting-open": OpenMeeting(); break;
+                case "meeting-event":
+                    if (MeetingEvent.Read(command.Data!.Value) is { } meeting) ApplyMeeting(meeting);
+                    break;
+                case "meeting-reset":
+                    if (MeetingEvent.Decode<MeetingReset>(command.Data!.Value) is { } room && room.Seq >= _meetingSequence
+                        && room.Status is { Length: <= 500 } && MeetingEvent.IsRoster(room.Connected))
+                    {
+                        _meetingSnapshotLoaded = true;
+                        _meetingSequence = room.Seq;
+                        _meetingActive = room.RequestId;
+                        _meetingMembers = room.Connected;
+                        _meetingStatus = room.Status;
+                        _meetingPosts.Clear();
+                        _meetingWindow?.ResetMessages();
+                        RefreshMeeting();
+                    }
+                    break;
+                case "meeting-restore":
+                    if (MeetingEvent.Decode<MeetingRestore>(command.Data!.Value) is { } restore && restore.Message?.IsValid(restore.Draft) == true)
+                    {
+                        UpdateMeetingPost(restore.Message, restore.Draft);
+                        RefreshMeeting();
+                    }
+                    break;
                 case "character-event":
                     if (!CharacterEvent.TryParse(command.Data!.Value, out var characterEvent, out var eventError))
                     {
@@ -476,6 +508,7 @@ public partial class App : Application
             characterIds = CharacterSelection.All.ToArray(),
             characterEvents = 1,
             characterAsk = 2,
+            characterMeeting = 1,
             taskbar = _settings.ShowTaskbarUsage,
             startup = _settings.StartWithWindows,
             usageAlerts = _settings.UsageAlerts,
@@ -647,6 +680,88 @@ public partial class App : Application
         window.ActivateConversation();
     }
 
+    void OpenMeeting()
+    {
+        if (!_hosted || _exitStarted != 0) return;
+        if (_meetingWindow is { } existing) { existing.Activate(); return; }
+        var portraits = _window.Stages.ToDictionary(stage => stage.Character, stage => stage.Portrait);
+        var window = _meetingWindow = new CharacterMeetingWindow(portraits, _meetingDraft, _meetingFolder);
+        window.Submitted += (text, folder) =>
+        {
+            if (_meetingPending != null || _meetingActive != null) return;
+            _meetingPending = Guid.NewGuid().ToString("N");
+            _submittedAgenda = text;
+            _meetingStatus = "회의에 안건을 보내는 중…";
+            RefreshMeeting();
+            _hostedProtocol!.MeetingStart(_meetingPending, text, folder);
+        };
+        window.StopRequested += () =>
+        {
+            if ((_meetingActive ?? _meetingPending) is { } id) _hostedProtocol!.MeetingCancel(id);
+        };
+        window.Closed += (_, _) =>
+        {
+            _meetingDraft = window.Draft;
+            _meetingFolder = window.Folder;
+            _meetingWindow = null;
+        };
+        foreach (var (message, draft) in _meetingPosts) window.Upsert(message, draft);
+        RefreshMeeting();
+        window.PlaceIn(_window.WorkArea);
+        window.Show();
+        window.Activate();
+        if (!_meetingSnapshotLoaded) _hostedProtocol!.MeetingSync();
+    }
+
+    void ApplyMeeting(MeetingEvent item)
+    {
+        if (item.Seq == 0 && item.Type == "end" && item.RequestId == _meetingPending)
+        {
+            _meetingPending = null;
+            _meetingStatus = item.Text!;
+            if (_meetingWindow is { Draft.Length: 0 } window) window.RestoreDraft(_submittedAgenda);
+            else if (_meetingWindow == null && _meetingDraft.Length == 0) _meetingDraft = _submittedAgenda;
+            RefreshMeeting();
+            return;
+        }
+        if (item.Seq <= _meetingSequence) return;
+        _meetingSequence = item.Seq;
+        _meetingActive = item.Type == "end" ? null : item.RequestId;
+        if (_meetingPending == item.RequestId) _meetingPending = null;
+        switch (item.Type)
+        {
+            case "roster": _meetingMembers = item.Connected; break;
+            case "status": _meetingStatus = item.Text!; break;
+            case "message": UpdateMeetingPost(item.Message!, false); break;
+            case "draft": UpdateMeetingPost(item.Message!, true); break;
+            case "withdraw":
+                _meetingPosts.RemoveAll(post => post.Message.Id == item.Id);
+                _meetingWindow?.Remove(item.Id!);
+                break;
+            case "end": _meetingStatus = item.Text!; break;
+        }
+        RefreshMeeting();
+    }
+
+    void UpdateMeetingPost(MeetingMessage message, bool draft)
+    {
+        int index = _meetingPosts.FindIndex(post => post.Message.Id == message.Id);
+        if (index < 0) _meetingPosts.Add((message, draft));
+        else _meetingPosts[index] = (message, draft);
+        _meetingWindow?.Upsert(message, draft);
+        if (_meetingPosts.Count > 51 && _meetingPosts.FindIndex(post => !post.Draft) is >= 0 and var oldest)
+        {
+            _meetingWindow?.Remove(_meetingPosts[oldest].Message.Id);
+            _meetingPosts.RemoveAt(oldest);
+        }
+    }
+
+    void RefreshMeeting()
+    {
+        _meetingWindow?.SetRoster(_meetingMembers, _meetingPosts.Where(post => post.Draft).Select(post => post.Message.Sender).ToArray());
+        _meetingWindow?.SetStatus(_meetingStatus, _meetingPending != null || _meetingActive != null);
+    }
+
     void SendAsk(string character, string text)
     {
         if (_asks.Start(character, text, DateTimeOffset.Now) is not { } requestId) return;
@@ -691,6 +806,7 @@ public partial class App : Application
         if (Interlocked.Exchange(ref _exitStarted, 1) != 0) return;
         try { _hostedInputLifetime?.Cancel(); } catch (ObjectDisposedException) { }
         _masterChatShortcut?.Dispose();
+        _meetingWindow?.Close();
         foreach (var chat in _askWindows.Values.ToArray()) chat.Close();
         _window.AllowClose = true;
         _settings.Save();

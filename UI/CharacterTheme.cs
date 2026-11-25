@@ -1,7 +1,9 @@
 using System.Collections;
 using System.Globalization;
 using System.Resources;
+using System.Windows;
 using System.Windows.Media;
+using System.Windows.Media.Imaging;
 
 namespace AIUsageMonitor.UI;
 
@@ -105,6 +107,29 @@ public sealed class CharacterTheme
     public static Uri FaceUri(string key, string expression) => PackUri(FacePath(key, expression));
 
     public static bool HasFace(string key, string expression) => HasResource(FacePath(key, expression));
+
+    public static ImageSource? ConversationPortrait(string key, bool speaking = false, ImageSource? stage = null)
+    {
+        string expression = speaking ? "speaking" : "neutral";
+        if (HasFace(key, expression)) return new BitmapImage(FaceUri(key, expression));
+        if (!speaking && stage != null) return stage;
+        if (!HasParts(key)) return stage;
+        string[] parts = ["body", "eyes-open", "brows-neutral", speaking ? "mouth-open" : "mouth-closed"];
+        return Composite(parts.Select(part => new BitmapImage(PartUri(key, part))).ToArray());
+    }
+
+    internal static BitmapSource Composite(IReadOnlyList<BitmapSource> layers)
+    {
+        var body = layers[0];
+        var visual = new DrawingVisual();
+        using (var dc = visual.RenderOpen())
+            foreach (var layer in layers)
+                dc.DrawImage(layer, new Rect(0, 0, body.PixelWidth, body.PixelHeight));
+        var result = new RenderTargetBitmap(body.PixelWidth, body.PixelHeight, 96, 96, PixelFormats.Pbgra32);
+        result.Render(visual);
+        result.Freeze();
+        return result;
+    }
 
     static Uri PackUri(string path) => new($"pack://application:,,,/AIUsageMonitor;component/{path}");
 

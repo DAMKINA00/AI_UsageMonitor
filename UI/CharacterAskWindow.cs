@@ -5,7 +5,6 @@ using System.Windows.Controls;
 using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
-using System.Windows.Media.Imaging;
 using System.Windows.Shell;
 using AIUsageMonitor.Core;
 
@@ -64,8 +63,7 @@ public sealed class CharacterAskWindow : Window
         close.Click += (_, _) => Close();
         DockPanel.SetDock(close, Dock.Right);
         header.Children.Add(close);
-        var portrait = new Image { Width = 35, Height = 35, Source = CharacterTheme.HasFace(character, "neutral")
-            ? new BitmapImage(CharacterTheme.FaceUri(character, "neutral")) : stagePortrait };
+        var portrait = new Image { Width = 35, Height = 35, Source = CharacterTheme.ConversationPortrait(character, stage: stagePortrait) };
         RenderOptions.SetBitmapScalingMode(portrait, BitmapScalingMode.HighQuality);
         var badge = new Border { Width = 45, Height = 45, CornerRadius = new CornerRadius(16), Background = Well,
             BorderBrush = _accent, BorderThickness = new Thickness(1), Margin = new Thickness(0, 0, 11, 0), Child = portrait };
@@ -155,8 +153,7 @@ public sealed class CharacterAskWindow : Window
     public void AddMessage(CharacterMessage message)
     {
         bool scroll = message.FromUser || _scroll.ScrollableHeight - _scroll.VerticalOffset < 32;
-        var body = new TextBlock { Foreground = Ink, TextWrapping = TextWrapping.Wrap, LineHeight = 21, LineStackingStrategy = LineStackingStrategy.BlockLineHeight };
-        foreach (var inline in ChatLinks.Inlines(message.Text, _accent)) body.Inlines.Add(inline);
+        var body = ChatRichContent.Create(message.Text, Ink, _accent, BrushOf(0xFF3D3749));
         var bubble = new Border { Background = message.FromUser ? BrushOf(0xFF3C3549) : Well, CornerRadius = new CornerRadius(14),
             HorizontalAlignment = message.FromUser ? HorizontalAlignment.Right : HorizontalAlignment.Left, Padding = new Thickness(15, 9, 15, 10),
             Margin = new Thickness(message.FromUser ? 48 : 0, 0, message.FromUser ? 0 : 48, 12), Child = body };

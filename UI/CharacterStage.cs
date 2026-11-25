@@ -639,13 +639,7 @@ public sealed class CharacterStage : Border
         var layers = new List<BitmapSource> { body };
         foreach (var part in key.Split('|'))
             if (LoadPose(part) is { } layer) layers.Add(layer);
-        var visual = new DrawingVisual();
-        using (var dc = visual.RenderOpen())
-            foreach (var layer in layers)
-                dc.DrawImage(layer, new Rect(0, 0, body.PixelWidth, body.PixelHeight));
-        var bitmap = new RenderTargetBitmap(body.PixelWidth, body.PixelHeight, 96, 96, PixelFormats.Pbgra32);
-        bitmap.Render(visual);
-        bitmap.Freeze();
+        var bitmap = CharacterTheme.Composite(layers);
         _poseCache[cacheKey] = bitmap;
         return bitmap;
     }
