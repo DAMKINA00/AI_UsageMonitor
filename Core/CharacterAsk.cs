@@ -52,7 +52,7 @@ public sealed record CharacterReply(string RequestId, string Character, string S
 /// </summary>
 public sealed class CharacterAsk
 {
-    public const int MaxQuestionLength = 1000;
+    public const int MaxQuestionLength = 4_000;
     public static readonly TimeSpan Timeout = TimeSpan.FromMinutes(3);
 
     readonly Dictionary<string, (string RequestId, DateTimeOffset At)> _pending = new(StringComparer.Ordinal);

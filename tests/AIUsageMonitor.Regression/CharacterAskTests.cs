@@ -1,4 +1,6 @@
 using System.Windows.Controls;
+using System.Windows.Documents;
+using System.Windows.Media;
 using System.IO;
 using System.Text.Json;
 using System.Windows;
@@ -29,7 +31,8 @@ internal static partial class Program
         var id = asks.Start("gpt", "  지금 뭐 해?  ", now);
         Check("a question gets a 32-hex request id", CharacterAsk.IsRequestId(id) && asks.IsWaiting("gpt"), id ?? "null");
         Check("one question per character can be pending", asks.Start("gpt", "또 질문", now) == null && asks.Start("orch", "마스터에게", now) != null, "one each");
-        Check("empty or too long questions are not sent", asks.Start("claude", "   ", now) == null && asks.Start("claude", new string('a', 1001), now) == null, "length");
+        Check("empty or too long questions are not sent", asks.Start("claude", "   ", now) == null &&
+            asks.Start("claude", new string('a', CharacterAsk.MaxQuestionLength + 1), now) == null, "length");
         CharacterReply Reply(string requestId, string who) => new(requestId, who, "answer", "답");
         Check("the request id and character must match", !asks.Complete(Reply(id!, "claude")) && !asks.Complete(Reply(rid, "gpt")), "mismatch");
         Check("the matching reply completes the question once", asks.Complete(Reply(id!, "gpt")) && !asks.IsWaiting("gpt") && !asks.Complete(Reply(id!, "gpt")), "complete");
@@ -57,25 +60,40 @@ internal static partial class Program
             box.Question = "한 번 더";
             box.Send();
             Check("the input waits for the first reply", sent.SequenceEqual(["지금 뭐 해?"]) && !box.CanSend, string.Join("|", sent));
-            box.ShowReply(full);
-            var reply = (TextBlock)PrivateField<CharacterAskWindow>("_reply").GetValue(box)!;
-            Check("four lines display three lines and an ellipsis", reply.Text == "첫 줄\n둘째 줄\n셋째 줄..." && box.CanSend, reply.Text);
-            box.ShowReply(new string('가', 120));
-            Check("one long unbroken line also fits three lines", reply.Text.Split('\n').Length == 3 && reply.Text.EndsWith("..."), reply.Text);
-            box.ShowReply("첫 줄\n둘째 줄\n셋째 줄");
-            Check("three lines fit without an ellipsis", reply.Text == "첫 줄\n둘째 줄\n셋째 줄", reply.Text);
+            box.AddMessage(new CharacterMessage(true, "윈도우 단축키를 어디서 확인해요?"));
+            box.AddMessage(new CharacterMessage(false, full + "\n[Windows 도움말](https://support.microsoft.com/windows)"));
+            box.SetWaiting(false);
+            var messages = (StackPanel)PrivateField<CharacterAskWindow>("_messages").GetValue(box)!;
+            var reply = (TextBlock)((Border)messages.Children[1]).Child;
+            Check("the dedicated chat renders complete multi-line answers and keeps previous turns", messages.Children.Count == 2 &&
+                new TextRange(reply.ContentStart, reply.ContentEnd).Text.Contains("넷째 줄") && box.CanSend, "full answer");
+            var link = reply.Inlines.OfType<Hyperlink>().Single();
+            Check("the answer contains a clickable hyperlink with its original destination", link.NavigateUri.Host == "support.microsoft.com" &&
+                ((Run)link.Inlines.FirstInline).Text == "Windows 도움말", link.NavigateUri.ToString());
+            var raw = ChatLinks.Inlines("https://example.com/docs_(kr). file:///C:/Windows/a.cmd [bad](javascript:alert(1))", Brushes.CadetBlue).OfType<Hyperlink>().ToArray();
+            Check("only HTTP or HTTPS text is made clickable, excluding trailing punctuation", raw.Length == 1 &&
+                raw[0].NavigateUri.AbsoluteUri == "https://example.com/docs_(kr)", string.Join(",", raw.Select(item => item.NavigateUri)));
+            box.Question = "";
             box.Opacity = 0;
             box.ShowActivated = false;
-            box.ShowReply("먼저 변경 내용을 확인했어요.\n두 모델이 주요 조건에 동의했어요.\n세부 항목 두 곳은 다시 확인해야 해요.\n추가 항목은 다음 메시지에서 답할게요.");
-            box.PlaceBy(new Rect(25, 15, 60, 55), new Rect(0, 0, 640, 480));
+            box.PlaceBy(Rect.Empty, new Rect(0, 0, 1100, 900));
             box.Show();
             PumpDisplay();
-            Check("the speech panel flips below a character near the top and stays within the screen",
-                box.Top >= 70 && box.Left >= 0 && box.Left + box.ActualWidth <= 640 && box.Top + box.ActualHeight <= 480,
+            Check("the standalone chat opens at the reference size and stays inside the screen",
+                box.ActualWidth >= 735 && box.ActualHeight >= 715 && box.Top >= 0 && box.Left >= 0 &&
+                box.Left + box.ActualWidth <= 1100 && box.Top + box.ActualHeight <= 900,
                 $"{box.Left}, {box.Top}, {box.ActualWidth}, {box.ActualHeight}");
             RenderFixture(box, "character-question-panel");
         }
         finally { box.Close(); }
+
+        var shortcut = new WindowsSpaceChord();
+        Check("Space by itself and modified Win+Space pass through", shortcut.Space(true, false, false) == (false, false) &&
+            shortcut.Space(false, false, false) == (false, false) && shortcut.Space(true, true, true) == (false, false) &&
+            shortcut.Space(false, true, false) == (false, false), "pass through");
+        Check("Win+Space opens once and consumes the repeat and matching release", shortcut.Space(true, true, false) == (true, true) &&
+            shortcut.Space(true, true, false) == (true, false) && shortcut.Space(false, false, false) == (true, false) &&
+            shortcut.Space(true, true, false) == (true, true), "Win+Space");
 
         // 캐릭터 누르기
         var vm = PlatformViewModel(4);

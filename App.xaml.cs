@@ -42,7 +42,8 @@ public partial class App : Application
     HostedAccountsSnapshot? _hostedAccounts;
     /// <summary>캐릭터를 눌러 묻는 질문: 캐릭터마다 하나만 기다린다.</summary>
     readonly CharacterAsk _asks = new();
-    CharacterAskWindow? _askWindow;
+    readonly Dictionary<string, CharacterAskWindow> _askWindows = new(StringComparer.Ordinal);
+    MasterChatShortcut? _masterChatShortcut;
     int _exitStarted;
 
     static string InstanceSuffix()
@@ -99,9 +100,10 @@ public partial class App : Application
         if (_hosted)
         {
             _window.Accounts.SetManagedByChatterBox();
-            // 캐릭터를 눌러 지금 열린 ChatterBox 채팅에 묻는다 (답은 그 캐릭터 말풍선으로 한 번)
             _window.AskEnabled = true;
             _window.CharacterClicked += OpenAsk;
+            _masterChatShortcut = new MasterChatShortcut(Dispatcher, () => OpenAsk(CharacterSelection.Orch, Rect.Empty));
+            if (!_masterChatShortcut.IsActive) Log.Write("Master chat shortcut could not be registered.");
         }
 
         WireUp();
@@ -613,40 +615,56 @@ public partial class App : Application
     }
 
     readonly Dictionary<string, string> _askDrafts = new(StringComparer.Ordinal);
-    readonly Dictionary<string, string> _askReplies = new(StringComparer.Ordinal);
+    readonly Dictionary<string, List<CharacterMessage>> _conversations = new(StringComparer.Ordinal);
 
     void OpenAsk(string character, Rect anchor)
     {
-        if (!_hosted || anchor.IsEmpty) return;
-        _askWindow?.Close();
-        var name = character == "orch" ? "마스터" : Tray.CharacterLabels[character];
+        if (!_hosted || _exitStarted != 0) return;
+        if (_askWindows.TryGetValue(character, out var existing))
+        {
+            existing.ActivateConversation();
+            return;
+        }
+        var name = character == CharacterSelection.Orch ? "마스터" : Tray.CharacterLabels[character];
         _askDrafts.Remove(character, out var draft);
-        var window = new CharacterAskWindow(character, name, draft ?? "") { Owner = _window };
+        var window = new CharacterAskWindow(character, name, draft ?? "");
+        _askWindows.Add(character, window);
         window.Submitted += text => SendAsk(character, text);
         window.Closed += (_, _) =>
         {
-            if (_askWindow == window) _askWindow = null;
+            _askWindows.Remove(character);
             if (!string.IsNullOrWhiteSpace(window.Question)) _askDrafts[character] = window.Question;
         };
-        _askWindow = window;
-        if (_asks.IsWaiting(character)) window.SetWaiting();
-        else if (_askReplies.TryGetValue(character, out var reply)) window.ShowReply(reply);
+        if (_conversations.TryGetValue(character, out var messages))
+            foreach (var message in messages) window.AddMessage(message);
+        window.SetWaiting(_asks.IsWaiting(character));
         window.PlaceBy(anchor, _window.WorkArea);
         window.Show();
+        window.ActivateConversation();
     }
 
     void SendAsk(string character, string text)
     {
         if (_asks.Start(character, text, DateTimeOffset.Now) is not { } requestId) return;
+        RecordMessage(character, new CharacterMessage(true, text));
         _window.Stages[CharacterSelection.All.ToList().IndexOf(character)].ExternalThinking = true;
         _hostedProtocol!.CharacterAsk(requestId, character, text);
     }
 
+    void RecordMessage(string character, CharacterMessage message)
+    {
+        if (!_conversations.TryGetValue(character, out var messages))
+            _conversations[character] = messages = [];
+        messages.Add(message);
+        if (messages.Count > 60) messages.RemoveAt(0);
+        if (_askWindows.TryGetValue(character, out var window)) window.AddMessage(message);
+    }
+
     void PresentReply(string character, string text)
     {
-        _askReplies[character] = text;
-        if (_askWindow is { } window && window.Character == character) window.ShowReply(text);
-        else _window.Speak(character, text);
+        RecordMessage(character, new CharacterMessage(false, text));
+        if (_askWindows.TryGetValue(character, out var window)) window.SetWaiting(false);
+        if (window is null || window.WindowState == WindowState.Minimized) _window.Speak(character, text);
     }
 
     void ApplyCharacterReply(CharacterReply reply)
@@ -668,6 +686,8 @@ public partial class App : Application
     {
         if (Interlocked.Exchange(ref _exitStarted, 1) != 0) return;
         try { _hostedInputLifetime?.Cancel(); } catch (ObjectDisposedException) { }
+        _masterChatShortcut?.Dispose();
+        foreach (var chat in _askWindows.Values.ToArray()) chat.Close();
         _window.AllowClose = true;
         _settings.Save();
         _clock?.Stop();
@@ -683,6 +703,7 @@ public partial class App : Application
 
     protected override void OnExit(ExitEventArgs e)
     {
+        _masterChatShortcut?.Dispose();
         try { _mutex?.ReleaseMutex(); } catch { }
         base.OnExit(e);
     }
