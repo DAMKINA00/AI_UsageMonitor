@@ -152,9 +152,14 @@ internal static partial class Program
         {
             window.Show();
             PumpDisplay();
-            Check("all stages speak only on events, and only the master keeps its original facial sprites",
-                window.Stages.All(s => s.EventSpeechOnly && s.UsesParts == (s.Character != "orch")) &&
+            Check("all desktop characters use standing art and speak only on events",
+                window.Stages.All(s => s.EventSpeechOnly && s.FullBodyArt && !s.UsesParts && s.HasArt) &&
                 window.Stages.Select(s => s.Character).SequenceEqual(CharacterSelection.All), string.Join(",", window.Stages.Select(s => s.Character)));
+            var standingBounds = window.Stages.Where(stage => stage.IsVisible).Select(stage =>
+                (stage.ActualHeight, Body: (Rect)PrivateMethod<CharacterStage>("BodyBoundsIn").Invoke(stage, [stage])!)).ToArray();
+            Check("all visible characters have their feet at the bottom of their stage",
+                standingBounds.Length == 3 && standingBounds.All(item => Math.Abs(item.Body.Bottom - item.ActualHeight) < 0.5),
+                string.Join(", ", standingBounds));
             CharacterEvent Evt(string id, string who, string kind = "result") => new(id, who, kind, kind == "result" ? true : null, $"{who} 소식", 1, 5);
             Check("an event for a shown character is spoken once", window.ShowCharacterEvent(Evt("result:5", "gpt")) && window.Gpt.IsSpeaking, "first");
             Check("the same event id is not spoken again", !window.ShowCharacterEvent(Evt("result:5", "gpt")) && window.Gpt.PendingSpeech == 0, "repeat");

@@ -65,10 +65,16 @@ internal static partial class Program
             box.AddMessage(new CharacterMessage(true, "윈도우 단축키를 어디서 확인해요?"));
             box.AddMessage(new CharacterMessage(false, full + "\n[Windows 도움말](https://support.microsoft.com/windows)"));
             box.SetWaiting(false);
-            var messages = (StackPanel)PrivateField<CharacterAskWindow>("_messages").GetValue(box)!;
-            var reply = (TextBlock)((Border)messages.Children[1]).Child;
-            Check("the dedicated chat renders complete multi-line answers and keeps previous turns", messages.Children.Count == 2 &&
+            var transcript = (RichTextBox)PrivateField<CharacterAskWindow>("_scroll").GetValue(box)!;
+            var messages = transcript.Document.Blocks;
+            var reply = (Paragraph)((Section)messages.LastBlock!).Blocks.FirstBlock!;
+            Check("the dedicated chat renders complete multi-line answers and keeps previous turns", messages.Count == 2 &&
                 new TextRange(reply.ContentStart, reply.ContentEnd).Text.Contains("넷째 줄") && box.CanSend, "full answer");
+            transcript.Selection.Select(messages.FirstBlock!.ContentStart, reply.ContentEnd);
+            Check("the read-only personal transcript supports selection across turns and keeps its links enabled",
+                transcript.IsReadOnly && transcript.IsDocumentEnabled && transcript.Selection.Text.Contains("윈도우 단축키") &&
+                transcript.Selection.Text.Contains("Windows 도움말"), transcript.Selection.Text);
+            transcript.Selection.Select(reply.ContentEnd, reply.ContentEnd);
             var link = reply.Inlines.OfType<Hyperlink>().Single();
             Check("the answer contains a clickable hyperlink with its original destination", link.NavigateUri.Host == "support.microsoft.com" &&
                 ((Run)link.Inlines.FirstInline).Text == "Windows 도움말", link.NavigateUri.ToString());
@@ -134,14 +140,14 @@ internal static partial class Program
             }
             finally { masterBox.Close(); }
 
-            var deepSeekPortrait = ((Image)PrivateField<CharacterStage>("_img").GetValue(window.DeepSeek)!).Source;
+            var deepSeekPortrait = CharacterTheme.ConversationPortrait("deepseek");
             var deepSeekBox = new CharacterAskWindow("deepseek", "딥시크", "질문", deepSeekPortrait)
                 { Opacity = 0, ShowActivated = false, ShowInTaskbar = false };
             try
             {
                 deepSeekBox.Show();
                 PumpDisplay();
-                Check("DeepSeek opens using its stage portrait when a standalone portrait is unavailable",
+                Check("DeepSeek opens using its layered portrait independently of the standing sprite",
                     !CharacterTheme.HasFace("deepseek", "neutral") && deepSeekPortrait is not null && deepSeekBox.IsVisible && deepSeekBox.CanSend &&
                     window.ClickCharacter("deepseek") && clicks.Contains("deepseek"), "DeepSeek chat");
             }

@@ -24,16 +24,29 @@ public static partial class ChatRichContent
     [GeneratedRegex(@"(?<!\\)\|")]
     private static partial Regex CellSeparator();
 
-    public static FrameworkElement Create(string text, Brush ink, Brush accent, Brush outline)
+    public static RichTextBox Transcript(Brush ink, Brush selection, Thickness padding)
     {
-        var panel = new StackPanel();
+        var view = new RichTextBox(new FlowDocument { PagePadding = padding, TextAlignment = TextAlignment.Left })
+        {
+            IsReadOnly = true, IsDocumentEnabled = true, IsInactiveSelectionHighlightEnabled = true,
+            Background = Brushes.Transparent, BorderThickness = new Thickness(0), Padding = new Thickness(0),
+            Foreground = ink, SelectionBrush = selection, SelectionOpacity = 0.42,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+        };
+        System.Windows.Automation.AutomationProperties.SetName(view, "대화 내용");
+        return view;
+    }
+
+    public static Section Create(string text, Brush ink, Brush accent, Brush outline)
+    {
+        var section = new Section { Foreground = ink };
         var prose = new List<string>();
         var lines = text.Replace("\r\n", "\n").Split('\n');
         int imageCount = 0;
         bool codeBlock = false;
         void Flush()
         {
-            if (prose.Any(line => !string.IsNullOrWhiteSpace(line))) Add(panel, Body(string.Join('\n', prose), ink, accent));
+            if (prose.Any(line => !string.IsNullOrWhiteSpace(line))) Add(section, Body(string.Join('\n', prose), ink, accent));
             prose.Clear();
         }
 
@@ -60,7 +73,7 @@ public static partial class ChatRichContent
                     rows.Add(row);
                 }
                 index--;
-                Add(panel, Table(rows, delimiters, ink, accent, outline));
+                Add(section, BuildTable(rows, delimiters, ink, accent, outline));
                 continue;
             }
             if (codeBlock || imageCount >= 8) { prose.Add(line); continue; }
@@ -72,23 +85,22 @@ public static partial class ChatRichContent
                     || uri.Scheme is not ("http" or "https") || uri.Host.Length == 0 || uri.UserInfo.Length != 0) continue;
                 if (match.Index > position) prose.Add(line[position..match.Index]);
                 Flush();
-                Add(panel, ImagePreview(uri, match.Groups["alt"].Value, ink, accent, outline));
+                var alt = string.IsNullOrWhiteSpace(match.Groups["alt"].Value) ? "이미지 원본" : match.Groups["alt"].Value;
+                Add(section, new BlockUIContainer(ImagePreview(uri, alt, ink, outline)));
+                Add(section, Body($"[{alt}]({uri.AbsoluteUri})", ink, accent));
                 imageCount++;
                 position = match.Index + match.Length;
             }
             if (position == 0 || position < line.Length) prose.Add(line[position..]);
         }
         Flush();
-        if (panel.Children.Count != 1) return panel;
-        var single = (FrameworkElement)panel.Children[0];
-        panel.Children.Clear();
-        return single;
+        return section;
     }
 
-    static void Add(Panel panel, FrameworkElement block)
+    static void Add(Section section, Block block)
     {
-        if (panel.Children.Count > 0) block.Margin = new Thickness(0, 7, 0, 0);
-        panel.Children.Add(block);
+        block.Margin = new Thickness(0, section.Blocks.Count == 0 ? 0 : 7, 0, 0);
+        section.Blocks.Add(block);
     }
 
     static string[] Cells(string line)
@@ -102,52 +114,47 @@ public static partial class ChatRichContent
         return parts.Select(cell => cell.Trim().Replace(@"\|", "|")).ToArray();
     }
 
-    static TextBlock Body(string text, Brush ink, Brush accent)
+    static Paragraph Body(string text, Brush ink, Brush accent)
     {
-        var body = new TextBlock { Foreground = ink, TextWrapping = TextWrapping.Wrap, LineHeight = 21,
+        var body = new Paragraph { Foreground = ink, Margin = new Thickness(0), LineHeight = 21,
             LineStackingStrategy = LineStackingStrategy.BlockLineHeight };
         foreach (Inline inline in ChatLinks.Inlines(text, accent)) body.Inlines.Add(inline);
         return body;
     }
 
-    static Border Table(List<string[]> rows, string[] delimiters, Brush ink, Brush accent, Brush outline)
+    static Table BuildTable(List<string[]> rows, string[] delimiters, Brush ink, Brush accent, Brush outline)
     {
-        var grid = new Grid();
-        foreach (var _ in delimiters) grid.ColumnDefinitions.Add(new ColumnDefinition { MinWidth = 64 });
+        var table = new Table { CellSpacing = 0, BorderBrush = outline, BorderThickness = new Thickness(1, 1, 0, 0) };
+        foreach (var _ in delimiters) table.Columns.Add(new TableColumn());
+        var group = new TableRowGroup();
+        table.RowGroups.Add(group);
         for (int row = 0; row < rows.Count; row++)
         {
-            grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            var tableRow = new TableRow();
+            group.Rows.Add(tableRow);
             for (int column = 0; column < delimiters.Length; column++)
             {
                 var body = Body(rows[row][column], ink, accent);
                 body.TextAlignment = delimiters[column].EndsWith(':')
                     ? delimiters[column].StartsWith(':') ? TextAlignment.Center : TextAlignment.Right : TextAlignment.Left;
                 if (row == 0) body.FontWeight = FontWeights.SemiBold;
-                var cell = new Border { Padding = new Thickness(8, 5, 8, 5), BorderBrush = outline,
-                    Background = row == 0 ? outline : Brushes.Transparent, BorderThickness = new Thickness(0, 0, 1, 1), Child = body };
-                Grid.SetRow(cell, row);
-                Grid.SetColumn(cell, column);
-                grid.Children.Add(cell);
+                tableRow.Cells.Add(new TableCell(body) { Padding = new Thickness(8, 5, 8, 5), BorderBrush = outline,
+                    Background = row == 0 ? outline : Brushes.Transparent, BorderThickness = new Thickness(0, 0, 1, 1) });
             }
         }
-        var scroll = new ScrollViewer { HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
-            VerticalScrollBarVisibility = ScrollBarVisibility.Disabled, Content = grid };
-        return new Border { BorderThickness = new Thickness(1, 1, 0, 0), BorderBrush = outline, Child = scroll };
+        return table;
     }
 
-    static Border ImagePreview(Uri uri, string description, Brush ink, Brush accent, Brush outline)
+    static Border ImagePreview(Uri uri, string alt, Brush ink, Brush outline)
     {
-        var alt = string.IsNullOrWhiteSpace(description) ? "이미지" : description;
         var panel = new StackPanel();
         var load = new Button { Content = "이미지 보기", HorizontalAlignment = HorizontalAlignment.Left,
             Padding = new Thickness(10, 4, 10, 4), Foreground = ink, Background = outline, BorderBrush = outline, Cursor = System.Windows.Input.Cursors.Hand };
-        var link = Body($"[{alt}]({uri.AbsoluteUri})", ink, accent);
         var preview = new Image { MaxHeight = 350, MaxWidth = 640, Stretch = Stretch.Uniform, Visibility = Visibility.Collapsed,
             HorizontalAlignment = HorizontalAlignment.Left };
         System.Windows.Automation.AutomationProperties.SetName(preview, alt);
         panel.Children.Add(preview);
         panel.Children.Add(load);
-        panel.Children.Add(link);
         load.Click += async (_, _) =>
         {
             load.IsEnabled = false;

@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Documents;
 using System.Windows.Media;
 using AIUsageMonitor.Core;
 using AIUsageMonitor.UI;
@@ -29,17 +30,18 @@ internal static partial class Program
             message = new { id = report.Id, at = time, sender = "deepseek", text = "" } });
         Check("room accepts an empty draft to indicate that the speaker started",
             MeetingEvent.Read(protocol) is { Seq: 7, Message.Text.Length: 0 }, "draft");
-        var content = (StackPanel)ChatRichContent.Create(summary, Brushes.White, Brushes.Aquamarine, Brushes.DimGray);
-        var table = (Grid)((ScrollViewer)((Border)content.Children[1]).Child).Content;
-        var image = (StackPanel)((Border)content.Children[2]).Child;
+        var content = ChatRichContent.Create(summary, Brushes.White, Brushes.Aquamarine, Brushes.DimGray);
+        var blocks = content.Blocks.ToArray();
+        var table = (Table)blocks[1];
+        var image = (StackPanel)((Border)((BlockUIContainer)blocks[2]).Child).Child;
         Check("paragraphs, Markdown table, and image preview render as separate blocks",
-            content.Children[0] is TextBlock && table.RowDefinitions.Count == 3 && table.ColumnDefinitions.Count == 2
+            blocks[0] is Paragraph && table.RowGroups[0].Rows.Count == 3 && table.Columns.Count == 2
             && image.Children[0] is Image && image.Children[1] is Button, "rich content");
         var personal = new CharacterAskWindow("gpt", "지피티") { ShowActivated = false };
         personal.AddMessage(new CharacterMessage(false, summary));
-        var bubbles = (StackPanel)PrivateField<CharacterAskWindow>("_messages").GetValue(personal)!;
+        var personalView = (RichTextBox)PrivateField<CharacterAskWindow>("_scroll").GetValue(personal)!;
         Check("rich content is used in the private conversation as well",
-            ((Border)bubbles.Children[0]).Child is StackPanel { Children.Count: 3 }, "personal rich content");
+            personalView.Document.Blocks.FirstBlock is Section { Blocks.Count: 4 }, "personal rich content");
         personal.Close();
 
         var portraits = new Dictionary<string, ImageSource?>();
@@ -56,12 +58,21 @@ internal static partial class Program
             room.Upsert(new MeetingMessage("call", time, "orch", "@딥시크 · 비교 기준과 근거를 살펴봐 주세요.", "assignment"), false);
             room.Upsert(report with { Text = "" }, true);
             room.Upsert(report, true);
-            var messages = (StackPanel)PrivateField<CharacterMeetingWindow>("_messages").GetValue(room)!;
-            Check("the live draft updates the same chat row", messages.Children.Count == 4, $"rows={messages.Children.Count}");
+            var transcript = (RichTextBox)PrivateField<CharacterMeetingWindow>("_scroll").GetValue(room)!;
+            var messages = transcript.Document.Blocks;
+            var draftRow = messages.LastBlock!;
+            Check("the live draft updates the same chat row", messages.Count == 3 &&
+                new TextRange(draftRow.ContentStart, draftRow.ContentEnd).Text.Contains(report.Text), $"rows={messages.Count}");
             room.Upsert(report, false);
-            Check("the finished message replaces its draft", messages.Children.Count == 4, $"rows={messages.Children.Count}");
+            Check("the finished message replaces its draft", messages.Count == 3 && messages.LastBlock == draftRow, $"rows={messages.Count}");
             room.Upsert(new MeetingMessage("finish", time + 100, "orch", summary, "summary"), false);
             room.Upsert(new MeetingMessage("review", time + 200, "gpt", "두 번째 방안은 자료가 더 필요해요.", "discussion"), true);
+            transcript.Selection.Select(messages.FirstBlock!.ContentStart, messages.LastBlock!.ContentEnd);
+            Check("Boardroom allows selection across messages, including Markdown table cells",
+                transcript.Selection.Text.Contains("장단점을 비교해 줘") &&
+                transcript.Selection.Text.Contains("추가 확인 필요") &&
+                transcript.Selection.Text.Contains("자료가 더 필요해요"), transcript.Selection.Text);
+            transcript.Selection.Select(draftRow.ContentEnd, draftRow.ContentEnd);
             room.SetRoster(["orch", "gpt", "deepseek"], ["gpt"], ["deepseek"]);
             room.SetStatus("참가자들이 내용을 검토하는 중…", true);
             room.Show();
@@ -79,7 +90,7 @@ internal static partial class Program
             room.Show();
             PumpDisplay();
             Check("reopening preserves the size, chat rows and draft",
-                room.Width == 880 && room.Height == 610 && messages.Children.Count == 6 && room.Draft == "작성 중인 후속 질문", "preserved");
+                room.Width == 880 && room.Height == 610 && messages.Count == 5 && room.Draft == "작성 중인 후속 질문", "preserved");
             var settingsFile = Path.Combine(Paths.AppData, "boardroom-size-test.json");
             var settings = AppSettings.Load(settingsFile);
             settings.BoardroomWidth = newSize?.Width;
@@ -97,7 +108,7 @@ internal static partial class Program
             }
             finally { restored.Close(); }
             room.Remove("review");
-            Check("the interrupted draft disappears without removing the completed posts", messages.Children.Count == 5, "withdrawal");
+            Check("the interrupted draft disappears without removing the completed posts", messages.Count == 4, "withdrawal");
         }
         finally { room.Close(); }
     }

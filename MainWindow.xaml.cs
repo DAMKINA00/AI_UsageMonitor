@@ -19,7 +19,7 @@ public partial class MainWindow : Window
     readonly MainViewModel _vm;
     readonly DispatcherTimer _walkTimer;
     readonly DispatcherTimer _dockTimer;
-    static readonly Rect CharacterFootprint = new(32, 112, 66, 66);
+    static readonly Rect CharacterFootprint = new(36, 86, 72, 92);
     readonly Point?[] _positions = new Point?[6];
     readonly Point?[] _destinations = new Point?[6];
     Size _fieldSize;
@@ -283,7 +283,7 @@ public partial class MainWindow : Window
             bodies[i] = CharacterPlacement.At(CharacterFootprint, next);
         }
         var order = _layers.Update(bodies, stages.Select(stage => stage.IsWalking).ToArray());
-        for (int z = 0; z < order.Count; z++) Panel.SetZIndex(stages[order[z]], order[z] == _pressedCharacter ? order.Count : z);
+        for (int z = 0; z < order.Count; z++) Panel.SetZIndex(stages[order[z]], z);
     }
 
     void BeginCharacterDrag(object sender, MouseButtonEventArgs e)
@@ -306,12 +306,11 @@ public partial class MainWindow : Window
     void MoveCharacter(object sender, MouseEventArgs e)
     {
         if (_pressedCharacter < 0 || e.LeftButton != MouseButtonState.Pressed) return;
-        var delta = e.GetPosition(CharacterField) - _pressPoint;
-        if (!_draggingCharacter && Math.Abs(delta.X) < SystemParameters.MinimumHorizontalDragDistance &&
-            Math.Abs(delta.Y) < SystemParameters.MinimumVerticalDragDistance) return;
+        var delta = e.GetPosition(CharacterField).Y - _pressPoint.Y;
+        if (!_draggingCharacter && Math.Abs(delta) < SystemParameters.MinimumVerticalDragDistance) return;
         _draggingCharacter = true;
-        CharacterField.Cursor = Cursors.SizeAll;
-        var origin = CharacterPlacement.Clamp(_pressOrigin + delta, CharacterLimits);
+        CharacterField.Cursor = Cursors.SizeNS;
+        var origin = CharacterPlacement.DragHeight(_pressOrigin, delta, CharacterLimits);
         _positions[_pressedCharacter] = _destinations[_pressedCharacter] = origin;
         AdvanceCharacters(0);
         e.Handled = true;
@@ -320,7 +319,7 @@ public partial class MainWindow : Window
     void EndCharacterDrag(object sender, MouseButtonEventArgs e)
     {
         if (_pressedCharacter < 0) return;
-        FinishCharacterDrag(true);
+        FinishCharacterDrag(Math.Abs(e.GetPosition(CharacterField).X - _pressPoint.X) < SystemParameters.MinimumHorizontalDragDistance);
         CharacterField.ReleaseMouseCapture();
         e.Handled = true;
     }

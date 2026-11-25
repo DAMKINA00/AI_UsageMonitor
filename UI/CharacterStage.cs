@@ -28,6 +28,7 @@ public sealed class CharacterStage : Border
     const double FigureAspect = 150.0 / 318.0;
     // 표정 원화(상반신)의 보이는 높이 (_figure 318 기준)
     const double FaceHeight = 185;
+    const double StandingHeight = 272;
 
     readonly Grid _root = new();
     readonly TranslateTransform _wander = new();
@@ -143,7 +144,14 @@ public sealed class CharacterStage : Border
         }
     }
 
-    string BasePose => UsesParts ? "body" : _faceArt ? "neutral" : "idle";
+    bool _fullBodyArt;
+    public bool FullBodyArt
+    {
+        get => _fullBodyArt;
+        set { if (_fullBodyArt == value) return; _fullBodyArt = value; ApplyCharacter(); }
+    }
+
+    string BasePose => _fullBodyArt ? "standing" : UsesParts ? "body" : _faceArt ? "neutral" : "idle";
 
     /// <summary>파츠 원화(Assets/CharacterActions)가 있으면 body·눈·눈썹·입을 겹쳐 그린다. 없으면 표정 원화로 대신한다.</summary>
     public bool UsesParts => _usesParts;
@@ -247,19 +255,19 @@ public sealed class CharacterStage : Border
         AutomationProperties.SetName(this, theme.DisplayName);
         // 포즈 이미지가 아직 없는 캐릭터는 자리만 비워 둔다 (말풍선·효과도 숨김)
         _partsKey = "";
-        _usesParts = _faceArt && _character != "orch" && CharacterTheme.HasParts(_character);
+        _usesParts = !_fullBodyArt && _faceArt && _character != "orch" && CharacterTheme.HasParts(_character);
         HasArt = _usesParts || HasImage(BasePose);
         _root.Visibility = HasArt ? Visibility.Visible : Visibility.Hidden;
         ApplyPose();
         UpdateRunning();
     }
 
-    bool HasImage(string pose) => UsesParts ? CharacterTheme.Parts.Contains(pose)
+    bool HasImage(string pose) => _fullBodyArt ? CharacterTheme.HasStanding(_character) : UsesParts ? CharacterTheme.Parts.Contains(pose)
         : _faceArt ? CharacterTheme.HasFace(_character, pose) : CharacterTheme.HasAsset(_character, pose);
 
     /// <summary>이 캐릭터의 기본 포즈 이미지가 리소스에 있는지.</summary>
     public bool HasArt { get; private set; }
-    internal ImageSource? Portrait => _img.Source;
+    internal ImageSource? Portrait => _fullBodyArt ? null : _img.Source;
 
     Brush _fxStroke = Ink;
     Color[] _sparkles = [Colors.White];
@@ -647,10 +655,19 @@ public sealed class CharacterStage : Border
     void ShowFrame(int index)
     {
         if (UsesParts) { UpdateParts(); return; }
-        var frames = FramesFor(_mood);
-        index %= frames.Length;
-        var pose = _faceArt && EventSpeechOnly && IsSpeaking ? "speaking"
-            : _faceArt && EventSpeechOnly && IsThinking ? "thinking" : frames[index];
+        string pose;
+        if (_fullBodyArt)
+        {
+            index = 0;
+            pose = BasePose;
+        }
+        else
+        {
+            var frames = FramesFor(_mood);
+            index %= frames.Length;
+            pose = _faceArt && EventSpeechOnly && IsSpeaking ? "speaking"
+                : _faceArt && EventSpeechOnly && IsThinking ? "thinking" : frames[index];
+        }
         if (index == _frame && _pose == pose && _img.Source != null) return;
         _frame = index;
         _frameT = 0;
@@ -661,7 +678,7 @@ public sealed class CharacterStage : Border
         ApplyImageSize();
     }
 
-    string CacheKey(string pose) => $"{(UsesParts ? "part:" : _faceArt ? "face:" : "")}{_character}_{pose}";
+    string CacheKey(string pose) => $"{(_fullBodyArt ? "standing:" : UsesParts ? "part:" : _faceArt ? "face:" : "")}{_character}_{pose}";
 
     BitmapSource? LoadPose(string pose)
     {
@@ -676,7 +693,7 @@ public sealed class CharacterStage : Border
                 {
                     var decoded = new BitmapImage();
                     decoded.BeginInit();
-                    decoded.UriSource = UsesParts ? CharacterTheme.PartUri(_character, pose)
+                    decoded.UriSource = _fullBodyArt ? CharacterTheme.StandingUri(_character) : UsesParts ? CharacterTheme.PartUri(_character, pose)
                         : _faceArt ? CharacterTheme.FaceUri(_character, pose) : CharacterTheme.AssetUri(_character, pose);
                     decoded.CacheOption = BitmapCacheOption.OnLoad;
                     decoded.EndInit();
@@ -734,13 +751,14 @@ public sealed class CharacterStage : Border
         // 모든 자세는 서 있는 몸 높이 기준으로 같은 배율을 쓰고, 실제 발끝과 오른쪽 외곽선을 맞춘다.
         double standingHeight = idle.PixelHeight * _visibleBounds[CacheKey(BasePose)].Height;
         // 표정 원화는 상반신이라 전신 포즈보다 낮게 세운다 (머리 크기가 전신 캐릭터와 비슷해 보이게).
-        double k = (_faceArt ? FaceHeight : 240) / standingHeight;
+        double k = (_fullBodyArt ? StandingHeight : _faceArt ? FaceHeight : 240) / standingHeight;
         // 초기 두 기절 원화는 머리까지 축소돼 있어 대기 자세의 머리 크기에 맞춘다.
         if (!_faceArt && _pose == "collapsed") k *= _character switch { "claude" => 1.25, "codex" => 1.2, _ => 1 };
         _img.Width = b.PixelWidth * k;
         _img.Height = b.PixelHeight * k;
-        Canvas.SetLeft(_img, _figure.Width - 30 - _bodyBounds.Right * _img.Width);
-        Canvas.SetTop(_img, _figure.Height - 12 - _bodyBounds.Bottom * _img.Height);
+        Canvas.SetLeft(_img, _fullBodyArt ? _figure.Width / 2 - (_bodyBounds.Left + _bodyBounds.Width / 2) * _img.Width
+            : _figure.Width - 30 - _bodyBounds.Right * _img.Width);
+        Canvas.SetTop(_img, _figure.Height - (_fullBodyArt ? 0 : 12) - _bodyBounds.Bottom * _img.Height);
     }
 
     void Frame()
@@ -755,7 +773,12 @@ public sealed class CharacterStage : Border
 
         double sx = 1, sy = 1, rot = 0, x = 0, y = 0;
         double t = _t;
-        switch (_mood)
+        if (_fullBodyArt)
+        {
+            // The planted sprite stays still except for a slight talking lean.
+            rot = IsSpeaking && SystemParameters.ClientAreaAnimation ? 1.6 * Math.Sin(t * Math.PI * 2 / 0.75) : 0;
+        }
+        else switch (_mood)
         {
             case Mood.Idle:
                 sy = 1 + 0.015 * Math.Sin(t * 2 * Math.PI / 2.4);
@@ -803,7 +826,7 @@ public sealed class CharacterStage : Border
         }
 
         // 포즈가 바뀐 직후 "뿅" 하고 튀어나오는 연출
-        if (_popT < 0.3)
+        if (!_fullBodyArt && _popT < 0.3)
         {
             var k = _popT / 0.3;
             var s = k < 0.5 ? 0.86 + 0.44 * k : 1.08 - 0.16 * (k - 0.5);
@@ -836,10 +859,10 @@ public sealed class CharacterStage : Border
 
     void GroundFeet()
     {
-        if (!ExternalWalking || _mood == Mood.Happy || _figure.ActualHeight <= 0) return;
+        if (!ExternalWalking || (!_fullBodyArt && _mood == Mood.Happy) || _figure.ActualHeight <= 0) return;
         var body = BodyBoundsIn(_figure);
         // Apply the small walking hop after grounding so foot alignment cannot cancel it.
-        var hop = IsWalking && _mood == Mood.Idle ? 7.5 * Math.Pow(Math.Sin(_walkT * Math.PI / 0.8), 2) : 0;
+        var hop = !_fullBodyArt && IsWalking && _mood == Mood.Idle ? 7.5 * Math.Pow(Math.Sin(_walkT * Math.PI / 0.8), 2) : 0;
         if (!body.IsEmpty) _move.Y += _figure.ActualHeight - body.Bottom - hop;
     }
 

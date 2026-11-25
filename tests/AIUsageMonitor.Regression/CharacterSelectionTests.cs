@@ -134,7 +134,7 @@ internal static partial class Program
             window.Show();
             PumpDisplay();
             string Visible() => string.Join(",", window.Stages.Where(s => s.IsVisible).Select(s => s.Character));
-            Check("only the selected characters stand on the monitor", Visible() == "orch,gpt,grok" && window.Stages.All(s => s.FaceArt),
+            Check("only the selected characters stand on the monitor", Visible() == "orch,gpt,grok" && window.Stages.All(s => s.FullBodyArt),
                 Visible());
             var size = new Rect(window.Left, window.Top, window.Width, window.Height);
             window.ApplyCharacters(CharacterSelection.Set(window.ShownCharacters, "gpt", false));
@@ -148,10 +148,10 @@ internal static partial class Program
             Check("changing characters keeps the window position and size",
                 window.Left == size.Left && window.Top == size.Top && window.Width == size.Width && window.Height == size.Height,
                 $"{size} -> {window.Left},{window.Top},{window.Width},{window.Height}");
+            RenderFixture(window, "character-selection");
             window.ApplyCharacters([]);
             PumpDisplay();
             Check("an empty selection hides every character", Visible() == "" && !window.CharactersShown, Visible());
-            RenderFixture(window, "character-selection");
         }
         finally { window.Close(); }
 

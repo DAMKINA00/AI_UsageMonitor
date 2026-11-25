@@ -1,5 +1,6 @@
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
@@ -16,14 +17,13 @@ public sealed class CharacterMeetingWindow : Window
         Outline = ColorBrush(0x363E4D), Ink = ColorBrush(0xF2F4FA), Muted = ColorBrush(0xB4BDCE),
         Accent = ColorBrush(0xAFC2FF), Mint = ColorBrush(0x96E2CB), Coral = ColorBrush(0xFFB1A7),
         Active = ColorBrush(0x27353D), Conclusion = ColorBrush(0x2D2D43);
-    readonly StackPanel _messages = new() { Margin = new Thickness(16, 10, 16, 10), MaxWidth = 920 };
     readonly List<string> _results = [];
     readonly Dictionary<string, Row> _rows = new();
     readonly Dictionary<string, (Avatar Avatar, TextBlock Note)> _participants = new();
     readonly Dictionary<string, (ImageSource? Neutral, ImageSource? Speaking)> _portraits = new();
     readonly TextBlock _status, _empty, _placeholder, _rosterCount;
     readonly TextBox _input;
-    readonly ScrollViewer _scroll;
+    readonly RichTextBox _scroll;
     readonly Button _send, _stop, _folderButton, _clearFolder, _latestResult, _latestMessage;
     Size _preferredSize, _appliedSize;
     bool _busy, _pickingFolder;
@@ -130,9 +130,11 @@ public sealed class CharacterMeetingWindow : Window
         _empty = Label("안건을 보내면 마스터가 첫 질문을 던지고 참가자들이 차례로 의견을 이어갑니다.", Muted, 14);
         _empty.LineHeight = 24;
         _empty.Margin = new Thickness(18, 26, 20, 6);
-        _messages.Children.Add(_empty);
-        _scroll = new ScrollViewer { Content = _messages, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
+        _empty.IsHitTestVisible = false;
+        _empty.VerticalAlignment = VerticalAlignment.Top;
+        _scroll = ChatRichContent.Transcript(Ink, Accent, new Thickness(16, 10, 16, 10));
         channel.Children.Add(_scroll);
+        channel.Children.Add(_empty);
         body.Children.Add(channel);
 
         var rail = new StackPanel { Margin = new Thickness(13, 16, 11, 12) };
@@ -183,7 +185,8 @@ public sealed class CharacterMeetingWindow : Window
         _latestMessage.Click += (_, _) => _scroll.ScrollToEnd();
         DockPanel.SetDock(_latestMessage, Dock.Right);
         information.Children.Add(_latestMessage);
-        _scroll.ScrollChanged += (_, _) => _latestMessage.Visibility = AtEnd() ? Visibility.Collapsed : Visibility.Visible;
+        _scroll.AddHandler(ScrollViewer.ScrollChangedEvent, new ScrollChangedEventHandler((_, _) =>
+            _latestMessage.Visibility = AtEnd() ? Visibility.Collapsed : Visibility.Visible));
         _status = Label("", Mint, 12);
         _status.VerticalAlignment = VerticalAlignment.Center;
         information.Children.Add(_status);
@@ -322,8 +325,7 @@ public sealed class CharacterMeetingWindow : Window
 
     public void ResetMessages()
     {
-        _messages.Children.Clear();
-        _messages.Children.Add(_empty);
+        _scroll.Document.Blocks.Clear();
         _rows.Clear();
         _results.Clear();
         _latestResult.IsEnabled = false;
@@ -335,46 +337,50 @@ public sealed class CharacterMeetingWindow : Window
         bool scroll = message.Sender == "user" || AtEnd();
         if (!_rows.TryGetValue(message.Id, out var row))
         {
-            var avatar = MakeAvatar(message.Sender, 34);
-            var top = new WrapPanel();
-            top.Children.Add(Label(NameFor(message.Sender), SenderColor(message.Sender), 14, true));
-            var time = Label(DateTimeOffset.FromUnixTimeMilliseconds(message.At).ToLocalTime().ToString("HH:mm"), Muted, 11);
-            time.Margin = new Thickness(8, 3, 0, 0);
-            top.Children.Add(time);
+            var avatar = MakeAvatar(message.Sender, 28);
+            avatar.Surface.IsHitTestVisible = false;
+            var top = new Paragraph { Margin = new Thickness(0, 0, 0, 3) };
+            top.Inlines.Add(new InlineUIContainer(avatar.Surface) { BaselineAlignment = BaselineAlignment.Center });
+            top.Inlines.Add(new Run("  " + NameFor(message.Sender)) { Foreground = SenderColor(message.Sender), FontWeight = FontWeights.SemiBold });
+            var time = DateTimeOffset.FromUnixTimeMilliseconds(message.At).ToLocalTime().ToString("HH:mm");
+            top.Inlines.Add(new Run("  " + time) { Foreground = Muted, FontSize = 11 });
             if (message.Kind is { } kind)
             {
-                var role = Label(kind switch
+                var role = kind switch
                 {
                     "assignment" => "질문", "report" => "발표", "review" => "의견", "discussion" => "발언", "interjection" => "끼어들기",
                     "agreement" => "동의", "objection" => "이의", "evidence" => "근거", "sources" => "웹 출처", "summary" => "결론",
                     _ => kind,
-                }, Accent, 11);
-                top.Children.Add(new Border { Background = Well, CornerRadius = new CornerRadius(4), Margin = new Thickness(8, 1, 0, 0),
-                    Padding = new Thickness(5, 1, 5, 1), Child = role });
+                };
+                top.Inlines.Add(new Run("  " + role) { Foreground = Accent, FontSize = 11 });
             }
-            var content = new ContentControl { Margin = new Thickness(0, 3, 0, 0), HorizontalContentAlignment = HorizontalAlignment.Stretch };
-            var text = new StackPanel { Margin = new Thickness(12, 0, 1, 0) };
-            text.Children.Add(top);
-            text.Children.Add(content);
-            var layout = new DockPanel();
-            layout.Children.Add(avatar.Surface);
-            layout.Children.Add(text);
-            var border = new Border { Padding = new Thickness(9, 6, 9, 7), Margin = new Thickness(0, 0, 0, 3),
-                CornerRadius = new CornerRadius(6), BorderThickness = new Thickness(2, 0, 0, 0), Child = layout };
-            row = new Row(border, content, avatar, Label("", Ink, 14));
-            row.Live.LineHeight = 21;
+            var content = new Section { Margin = new Thickness(36, 0, 0, 0) };
+            var section = new Section { Padding = new Thickness(9, 6, 9, 7), Margin = new Thickness(0, 0, 0, 3),
+                BorderThickness = new Thickness(2, 0, 0, 0), Blocks = { top, content } };
+            var live = new Run();
+            var paragraph = new Paragraph(live) { Margin = new Thickness(0), LineHeight = 21 };
+            paragraph.Inlines.Add(new Run(" ▏") { Foreground = Mint });
+            row = new Row(section, content, avatar, paragraph, live);
             _rows.Add(message.Id, row);
-            _messages.Children.Add(border);
+            _scroll.Document.Blocks.Add(section);
             _empty.Visibility = Visibility.Collapsed;
         }
         if (draft)
         {
-            row.Live.Text = message.Text.Length == 0 ? "…" : message.Text + " ▏";
-            row.Content.Content = row.Live;
+            if (row.Draft.Parent == null)
+            {
+                row.Content.Blocks.Clear();
+                row.Content.Blocks.Add(row.Draft);
+            }
+            if (message.Text.Length > row.Live.Text.Length && message.Text.StartsWith(row.Live.Text, StringComparison.Ordinal))
+                row.Live.ContentEnd.InsertTextInRun(message.Text[row.Live.Text.Length..]);
+            else
+                row.Live.Text = message.Text;
         }
         else
         {
-            row.Content.Content = ChatRichContent.Create(message.Text, Ink, Accent, Outline);
+            row.Content.Blocks.Clear();
+            row.Content.Blocks.Add(ChatRichContent.Create(message.Text, Ink, Accent, Outline));
             if (message.Kind == "summary" && !_results.Contains(message.Id))
             {
                 _results.Add(message.Id);
@@ -384,23 +390,22 @@ public sealed class CharacterMeetingWindow : Window
         row.Surface.Background = message.Kind == "summary" ? Conclusion : draft ? Active : message.Kind is "assignment" or "objection" or "sources" ? Well : Brushes.Transparent;
         row.Surface.BorderBrush = message.Kind == "summary" ? Accent : message.Kind == "objection" ? Coral : draft ? Mint : Brushes.Transparent;
         Animate(row.Avatar, message.Sender, draft);
-        if (scroll) _scroll.ScrollToEnd();
+        if (scroll && (message.Sender == "user" || _scroll.Selection.IsEmpty)) _scroll.ScrollToEnd();
     }
 
     public void Remove(string id)
     {
-        if (_rows.Remove(id, out var row)) _messages.Children.Remove(row.Surface);
+        if (_rows.Remove(id, out var row)) _scroll.Document.Blocks.Remove(row.Surface);
         if (_results.Remove(id)) _latestResult.IsEnabled = _results.Count > 0;
         _empty.Visibility = _rows.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
     }
 
-    bool AtEnd() => _scroll.ScrollableHeight - _scroll.VerticalOffset < 24;
+    bool AtEnd() => _scroll.ExtentHeight - _scroll.ViewportHeight - _scroll.VerticalOffset < 24;
 
     void JumpToResult()
     {
         if (_results.Count == 0 || !_rows.TryGetValue(_results[^1], out var row)) return;
-        double offset = _scroll.VerticalOffset + row.Surface.TranslatePoint(new Point(0, 0), _scroll).Y;
-        _scroll.ScrollToVerticalOffset(offset);
+        row.Surface.BringIntoView();
     }
 
     void RefreshComposer()
@@ -437,7 +442,7 @@ public sealed class CharacterMeetingWindow : Window
         _clearFolder.Visibility = folder == null ? Visibility.Collapsed : Visibility.Visible;
     }
 
-    sealed record Row(Border Surface, ContentControl Content, Avatar Avatar, TextBlock Live);
+    sealed record Row(Section Surface, Section Content, Avatar Avatar, Paragraph Draft, Run Live);
     sealed class Avatar(Border surface, Image image)
     {
         public Border Surface { get; } = surface;

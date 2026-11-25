@@ -153,6 +153,9 @@ internal static partial class Program
         Check("an overlap triggers only the nearest move needed to clear it", (separated - destination).Length == 66, separated.ToString());
         var outside = CharacterPlacement.Clamp(new Point(-30, -500), limits);
         Check("a manual move is kept inside the field", outside == limits.TopLeft, outside.ToString());
+        Check("manual height adjustment preserves the horizontal position and clamps to the floor",
+            CharacterPlacement.DragHeight(destination, 500, limits) == destination &&
+            CharacterPlacement.DragHeight(destination, -37, limits) == new Point(destination.X, destination.Y - 37), "vertical drag");
         var narrow = new Rect(0, -108, 20, 110);
         var above = CharacterPlacement.Separate(new Point(10, 2), body, narrow, [CharacterPlacement.At(body, narrow.BottomLeft)]);
         Check("on a narrow field the characters can separate vertically", above.Y <= -64, above.ToString());

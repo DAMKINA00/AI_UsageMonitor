@@ -24,8 +24,8 @@ public sealed class CharacterAskWindow : Window
     readonly TextBox _input;
     readonly Button _send;
     readonly TextBlock _placeholder, _status;
-    readonly StackPanel _messages = new() { Margin = new Thickness(24, 19, 24, 5) };
-    readonly ScrollViewer _scroll;
+    readonly RichTextBox _scroll;
+    BlockCollection Messages => _scroll.Document.Blocks;
     bool _waiting, _closing;
 
     public string Character { get; }
@@ -76,12 +76,13 @@ public sealed class CharacterAskWindow : Window
         layout.Children.Add(new Border { BorderBrush = Outline, BorderThickness = new Thickness(0, 0, 0, 1), Child = header });
 
         _status = new TextBlock { Foreground = Muted, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(24, 10, 24, 16) };
-        var conversation = new StackPanel();
-        conversation.Children.Add(_messages);
+        _scroll = ChatRichContent.Transcript(Ink, _accent, new Thickness(24, 19, 24, 5));
+        var conversation = new DockPanel();
+        DockPanel.SetDock(_status, Dock.Bottom);
         conversation.Children.Add(_status);
-        _scroll = new ScrollViewer { Content = conversation, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
-        Grid.SetRow(_scroll, 1);
-        layout.Children.Add(_scroll);
+        conversation.Children.Add(_scroll);
+        Grid.SetRow(conversation, 1);
+        layout.Children.Add(conversation);
 
         var field = new Grid();
         _input = new TextBox { MaxLength = CharacterAsk.MaxQuestionLength, AcceptsReturn = true, TextWrapping = TextWrapping.Wrap,
@@ -139,11 +140,11 @@ public sealed class CharacterAskWindow : Window
 
     public void SetWaiting(bool waiting)
     {
-        bool restoreFocus = _waiting && !waiting && IsActive;
+        bool restoreFocus = _waiting && !waiting && IsActive && !_scroll.IsKeyboardFocusWithin;
         _waiting = waiting;
         _input.IsEnabled = !waiting;
         _status.Text = waiting ? Character == "orch" ? "여러 모델의 답을 비교하고 있어요…" : "답변을 작성하고 있어요…"
-            : _messages.Children.Count == 0 ? "무엇이 궁금해요?" : "";
+            : Messages.Count == 0 ? "무엇이 궁금해요?" : "";
         _status.Visibility = _status.Text.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
         UpdateSend();
         if (restoreFocus) _input.Focus();
@@ -152,15 +153,15 @@ public sealed class CharacterAskWindow : Window
 
     public void AddMessage(CharacterMessage message)
     {
-        bool scroll = message.FromUser || _scroll.ScrollableHeight - _scroll.VerticalOffset < 32;
-        var body = ChatRichContent.Create(message.Text, Ink, _accent, BrushOf(0xFF3D3749));
-        var bubble = new Border { Background = message.FromUser ? BrushOf(0xFF3C3549) : Well, CornerRadius = new CornerRadius(14),
-            HorizontalAlignment = message.FromUser ? HorizontalAlignment.Right : HorizontalAlignment.Left, Padding = new Thickness(15, 9, 15, 10),
-            Margin = new Thickness(message.FromUser ? 48 : 0, 0, message.FromUser ? 0 : 48, 12), Child = body };
-        _messages.Children.Add(bubble);
-        if (_messages.Children.Count > 60) _messages.Children.RemoveAt(0);
+        bool scroll = message.FromUser || _scroll.ExtentHeight - _scroll.ViewportHeight - _scroll.VerticalOffset < 32;
+        var bubble = ChatRichContent.Create(message.Text, Ink, _accent, BrushOf(0xFF3D3749));
+        bubble.Background = message.FromUser ? BrushOf(0xFF3C3549) : Well;
+        bubble.Padding = new Thickness(15, 9, 15, 10);
+        bubble.Margin = new Thickness(message.FromUser ? 48 : 0, 0, message.FromUser ? 0 : 48, 12);
+        Messages.Add(bubble);
+        if (Messages.Count > 60 && Messages.FirstBlock is { } oldest) Messages.Remove(oldest);
         if (!_waiting) SetWaiting(false);
-        if (scroll) _scroll.ScrollToEnd();
+        if (scroll && _scroll.Selection.IsEmpty) _scroll.ScrollToEnd();
     }
 
     public void PlaceBy(Rect anchor, Rect workArea)

@@ -7,6 +7,9 @@ public static class CharacterPlacement
     public static Point Clamp(Point point, Rect limits) => new(
         Math.Clamp(point.X, limits.Left, limits.Right), Math.Clamp(point.Y, limits.Top, limits.Bottom));
 
+    public static Point DragHeight(Point origin, double verticalChange, Rect limits) =>
+        new(origin.X, Math.Clamp(origin.Y + verticalChange, limits.Top, limits.Bottom));
+
     public static Rect At(Rect body, Point origin)
     {
         if (body.IsEmpty) return body;
