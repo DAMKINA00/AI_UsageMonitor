@@ -1,47 +1,43 @@
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Media.Imaging;
+using System.Windows.Shapes;
 using AIUsageMonitor.Core;
 
 namespace AIUsageMonitor.UI;
 
-/// <summary>
-/// 캐릭터를 누르면 뜨는 질문 입력창. 보낼 채팅을 먼저 보여 주고, 열린 채팅이 없으면 안내만 하고 보내기를 막는다.
-/// Enter 로 보내고(Shift+Enter 는 줄바꿈), Esc 나 다른 곳을 누르면 닫는다.
-/// </summary>
+/// <summary>A small private question and reply panel anchored to the selected character.</summary>
 public sealed class CharacterAskWindow : Window
 {
-    static readonly Brush Paper = Frozen(Color.FromRgb(0x24, 0x27, 0x2F));
-    static readonly Brush Line = Frozen(Color.FromRgb(0x3B, 0x41, 0x4C));
-    static readonly Brush Muted = Frozen(Color.FromRgb(0xA5, 0xAD, 0xBE));
-    static readonly Brush Ink = Frozen(Color.FromRgb(0xE3, 0xE7, 0xF0));
+    static readonly Brush Paper = BrushOf(0xFF26242D);
+    static readonly Brush Well = BrushOf(0xFF1D1B23);
+    static readonly Brush Ink = BrushOf(0xFFFFF5F5);
+    static readonly Brush Muted = BrushOf(0xFFC3B9CD);
+    static readonly Brush Outline = BrushOf(0xFF575064);
+    const double ReplyWidth = 264;
 
     readonly TextBox _input;
     readonly Button _send;
-    readonly TextBlock _target;
-    bool _closing, _sent;
+    readonly TextBlock _placeholder, _reply;
+    readonly Border _replyBox;
+    readonly Canvas _tailRow;
+    readonly Polygon _tail;
+    readonly Grid _layout;
+    Rect _anchor, _workArea;
+    bool _positioned, _waiting, _closing;
 
     public string Character { get; }
-    /// <summary>호스트가 지금 알려 준 활성 채팅.</summary>
-    public CharacterTarget Target { get; private set; }
-    /// <summary>
-    /// 이 초안이 갈 채팅. 처음 연 채팅으로 고정되고(열 때 채팅이 없었으면 처음 생긴 채팅), 활성 채팅이 바뀌어도 따라가지 않는다.
-    /// </summary>
-    public CharacterTarget DraftTarget { get; private set; }
-    /// <summary>활성 채팅이 초안의 채팅과 달라 보낼 수 없는지 (초안은 그대로 둔다).</summary>
-    public bool TargetChanged => DraftTarget.ChatId != null && Target.ChatId != DraftTarget.ChatId;
+    public event Action<string>? Submitted;
+    public string Question { get => _input.Text; set => _input.Text = value; }
+    public bool CanSend => !_waiting && !string.IsNullOrWhiteSpace(Question);
 
-    /// <summary>보내기를 눌렀을 때: 초안의 채팅 id 와 질문 글.</summary>
-    public event Action<long, string>? Submitted;
-
-    /// <param name="draftTarget">다시 여는 초안의 채팅 (없으면 지금 채팅).</param>
-    /// <param name="draft">다시 여는 초안 글.</param>
-    public CharacterAskWindow(string character, string displayName, CharacterTarget target, CharacterTarget? draftTarget = null, string draft = "")
+    public CharacterAskWindow(string character, string displayName, string draft = "")
     {
         Character = character;
-        Target = target;
-        DraftTarget = draftTarget ?? target;
+        var accent = new SolidColorBrush(CharacterTheme.For(character).Sparkles[0]);
         WindowStyle = WindowStyle.None;
         AllowsTransparency = true;
         Background = Brushes.Transparent;
@@ -49,104 +45,160 @@ public sealed class CharacterAskWindow : Window
         ShowInTaskbar = false;
         Topmost = true;
         SizeToContent = SizeToContent.Height;
-        Width = 300;
+        Width = 310;
         Title = $"{displayName}에게 묻기";
         FontFamily = new FontFamily("Segoe UI, Malgun Gothic");
-        FontSize = 12;
+        FontSize = 13;
+        UseLayoutRounding = true;
 
-        var title = new TextBlock { Text = $"{displayName}에게 묻기", Foreground = Ink, FontWeight = FontWeights.SemiBold };
-        _target = new TextBlock { Foreground = Muted, FontSize = 11, Margin = new Thickness(0, 2, 0, 6), TextTrimming = TextTrimming.CharacterEllipsis };
-        _input = new TextBox
-        {
-            MaxLength = CharacterAsk.MaxQuestionLength, AcceptsReturn = false, TextWrapping = TextWrapping.Wrap, MinHeight = 48, MaxHeight = 120,
-            VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Background = Frozen(Color.FromRgb(0x1A, 0x1C, 0x22)), Foreground = Ink,
-            BorderBrush = Line, CaretBrush = Ink, Padding = new Thickness(4),
-        };
-        AutomationName(_input, "질문");
-        _send = new Button { Content = "보내기", Padding = new Thickness(12, 3, 12, 3), IsDefault = true };
-        var cancel = new Button { Content = "닫기", Padding = new Thickness(12, 3, 12, 3), Margin = new Thickness(6, 0, 0, 0), IsCancel = true };
+        var panel = new StackPanel();
+        var header = new DockPanel { Margin = new Thickness(0, 0, 0, 9) };
+        var close = MakeButton("×", Muted, Brushes.Transparent, 28, 28);
+        AutomationProperties.SetName(close, "닫기");
+        close.Click += (_, _) => Close();
+        DockPanel.SetDock(close, Dock.Right);
+        header.Children.Add(close);
+        var portrait = new Image { Width = 29, Height = 29, Source = new BitmapImage(CharacterTheme.FaceUri(character, "neutral")) };
+        RenderOptions.SetBitmapScalingMode(portrait, BitmapScalingMode.HighQuality);
+        var badge = new Border { Width = 38, Height = 38, CornerRadius = new CornerRadius(15), Background = Well,
+            BorderBrush = accent, BorderThickness = new Thickness(1), Margin = new Thickness(0, 0, 9, 0), Child = portrait };
+        DockPanel.SetDock(badge, Dock.Left);
+        header.Children.Add(badge);
+        var heading = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+        heading.Children.Add(new TextBlock { Text = displayName, Foreground = Ink, FontSize = 14, FontWeight = FontWeights.SemiBold });
+        heading.Children.Add(new TextBlock { Text = character == "orch" ? "모델 의견을 모아 교차검증해요" : "둘만의 짧은 대화", Foreground = Muted, FontSize = 11, Margin = new Thickness(0, 1, 0, 0) });
+        header.Children.Add(heading);
+        panel.Children.Add(header);
+
+        _reply = new TextBlock { Foreground = Ink, FontSize = 12, LineHeight = 17, LineStackingStrategy = LineStackingStrategy.BlockLineHeight };
+        AutomationProperties.SetLiveSetting(_reply, AutomationLiveSetting.Polite);
+        _replyBox = new Border { Background = Well, CornerRadius = new CornerRadius(10), Padding = new Thickness(9, 6, 9, 7),
+            Margin = new Thickness(0, 0, 0, 8), Child = _reply, Visibility = Visibility.Collapsed };
+        panel.Children.Add(_replyBox);
+
+        var field = new Grid();
+        _input = new TextBox { MaxLength = CharacterAsk.MaxQuestionLength, AcceptsReturn = true, TextWrapping = TextWrapping.Wrap,
+            MinHeight = 42, MaxHeight = 58, VerticalScrollBarVisibility = ScrollBarVisibility.Hidden, Background = Brushes.Transparent,
+            Foreground = Ink, BorderThickness = new Thickness(0), CaretBrush = Ink, Padding = new Thickness(3, 4, 3, 2) };
+        AutomationProperties.SetName(_input, "질문");
+        _placeholder = new TextBlock { Text = "무엇이 궁금해요?", Foreground = Muted, IsHitTestVisible = false, Margin = new Thickness(6, 6, 0, 0) };
+        field.Children.Add(_input);
+        field.Children.Add(_placeholder);
+        var inputBox = new Border { Background = Well, BorderBrush = Outline, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(10),
+            Padding = new Thickness(5, 0, 5, 0), Child = field };
+        _input.IsKeyboardFocusWithinChanged += (_, _) => inputBox.BorderBrush = _input.IsKeyboardFocusWithin ? accent : Outline;
+        panel.Children.Add(inputBox);
+
+        _send = MakeButton("보내기", Well, accent, 72, 30);
+        _send.HorizontalAlignment = HorizontalAlignment.Right;
+        _send.Margin = new Thickness(0, 8, 0, 0);
         _send.Click += (_, _) => Send();
-        cancel.Click += (_, _) => Close();
+        panel.Children.Add(_send);
+        var card = new Border { Background = Paper, BorderBrush = Outline, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(17),
+            Padding = new Thickness(12), Child = panel };
+        _layout = new Grid();
+        for (int i = 0; i < 3; i++) _layout.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        Grid.SetRow(card, 1);
+        _layout.Children.Add(card);
+        _tailRow = new Canvas { Height = 9, IsHitTestVisible = false };
+        _tail = new Polygon { Fill = Paper, Stroke = Outline, StrokeThickness = 1 };
+        _tailRow.Children.Add(_tail);
+        _layout.Children.Add(_tailRow);
+        Content = _layout;
+
         _input.TextChanged += (_, _) => UpdateSend();
         _input.PreviewKeyDown += (_, e) =>
         {
-            if (e.Key == Key.Enter && Keyboard.Modifiers.HasFlag(ModifierKeys.Shift))
-            {
-                var at = _input.CaretIndex;
-                _input.Text = _input.Text.Insert(at, "\n");
-                _input.CaretIndex = at + 1;
-                e.Handled = true;
-            }
+            if (e.Key != Key.Enter || Keyboard.Modifiers.HasFlag(ModifierKeys.Shift)) return;
+            Send();
+            e.Handled = true;
         };
-        var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 6, 0, 0) };
-        buttons.Children.Add(_send);
-        buttons.Children.Add(cancel);
-        var panel = new StackPanel();
-        panel.Children.Add(title);
-        panel.Children.Add(_target);
-        panel.Children.Add(_input);
-        panel.Children.Add(buttons);
-        Content = new Border { Background = Paper, BorderBrush = Line, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(8), Padding = new Thickness(10), Child = panel };
-
+        PreviewKeyDown += (_, e) => { if (e.Key == Key.Escape) { Close(); e.Handled = true; } };
         Deactivated += (_, _) => { if (!_closing) Close(); };
         Closing += (_, _) => _closing = true;
-        Loaded += (_, _) => { _input.Focus(); Keyboard.Focus(_input); };
-        _input.Text = draft;
-        SetTarget(target);
-    }
-
-    /// <summary>이 입력창에서 질문을 보냈는지 (보내지 않고 닫으면 초안을 남긴다).</summary>
-    public bool WasSent => _sent;
-
-    /// <summary>보낼 채팅이 바뀌면 바로 보여 준다 (열린 채팅이 없으면 보내기를 막는다).</summary>
-    public void SetTarget(CharacterTarget target)
-    {
-        Target = target;
-        // 열 때 채팅이 없었으면(초안도 쓸 수 없었으니) 처음 생긴 채팅을 초안의 채팅으로 삼는다. 그 뒤로는 바꾸지 않는다.
-        if (DraftTarget.ChatId == null) DraftTarget = target;
-        _target.Text = DraftTarget.ChatId == null ? "ChatterBox에서 채팅을 먼저 열어 주세요."
-            : TargetChanged ? $"보던 채팅이 바뀌었어요. 이 질문은 '{DraftTarget.Title}'에만 보낼 수 있어요. 그 채팅으로 돌아가면 보낼 수 있고, 쓴 글은 남겨 둘게요."
-            : $"보낼 채팅: {DraftTarget.Title}";
-        _target.TextWrapping = TargetChanged ? TextWrapping.Wrap : TextWrapping.NoWrap;
-        _target.ToolTip = _target.Text;
-        // 초안은 지우지 않는다: 채팅이 바뀌어도 글은 남기고 보내기만 막는다
-        _input.IsEnabled = DraftTarget.ChatId != null;
+        Loaded += (_, _) => { if (!_waiting) _input.Focus(); };
+        SizeChanged += (_, _) => { if (_positioned) Reposition(); };
+        Question = draft;
         UpdateSend();
     }
 
-    public bool CanSend => DraftTarget.ChatId != null && !TargetChanged && _input.Text.Trim().Length > 0;
-
-    void UpdateSend() => _send.IsEnabled = CanSend;
-
-    /// <summary>질문 글 (테스트용).</summary>
-    public string Question { get => _input.Text; set => _input.Text = value; }
+    void UpdateSend()
+    {
+        _placeholder.Visibility = Question.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
+        _send.IsEnabled = CanSend;
+    }
 
     public void Send()
     {
-        // 한 입력창에서는 한 번만 보낸다 (Enter 연타·버튼 중복 눌림 방지)
-        if (!CanSend || _sent) return;
-        _sent = true;
-        var text = _input.Text.Trim();
-        _closing = true;
-        Submitted?.Invoke(DraftTarget.ChatId!.Value, text);
-        Close();
+        if (!CanSend) return;
+        var text = Question.Trim();
+        SetWaiting();
+        Question = "";
+        Submitted?.Invoke(text);
     }
 
-    /// <summary>캐릭터 머리 위에 띄운다 (화면 밖으로 나가지 않게).</summary>
-    public void PlaceAbove(Rect anchor, Rect workArea)
+    public void SetWaiting()
     {
-        UpdateLayout();
-        double height = ActualHeight > 0 ? ActualHeight : 150;
-        Left = Math.Clamp(anchor.Left + anchor.Width / 2 - Width / 2, workArea.Left, Math.Max(workArea.Left, workArea.Right - Width));
-        Top = Math.Clamp(anchor.Top - height - 4, workArea.Top, Math.Max(workArea.Top, workArea.Bottom - height));
+        ShowReply(Character == "orch" ? "여러 모델의 답을 비교하고 있어요…" : "생각하고 있어요…", waiting: true);
     }
 
-    static void AutomationName(DependencyObject element, string name) => System.Windows.Automation.AutomationProperties.SetName(element, name);
-
-    static SolidColorBrush Frozen(Color c)
+    public void ShowReply(string text, bool waiting = false)
     {
-        var b = new SolidColorBrush(c);
-        b.Freeze();
-        return b;
+        bool restoreFocus = _waiting && !waiting && IsActive;
+        _waiting = waiting;
+        _input.IsEnabled = !waiting;
+        UpdateSend();
+        var typeface = new Typeface(FontFamily, FontStyles.Normal, FontWeights.Normal, FontStretches.Normal);
+        _reply.Text = SpeechText.Preview(text, ReplyWidth, typeface, _reply.FontSize, VisualTreeHelper.GetDpi(this).PixelsPerDip);
+        _replyBox.Visibility = Visibility.Visible;
+        if (restoreFocus) _input.Focus();
+    }
+
+    public void PlaceBy(Rect anchor, Rect workArea)
+    {
+        _anchor = anchor;
+        _workArea = workArea;
+        _positioned = !anchor.IsEmpty && !workArea.IsEmpty;
+        if (_positioned) Reposition();
+    }
+
+    void Reposition()
+    {
+        double x = _anchor.Left + _anchor.Width / 2;
+        double height = ActualHeight > 0 ? ActualHeight : 164;
+        bool below = _anchor.Top - height - 4 < _workArea.Top && _anchor.Bottom + height + 4 <= _workArea.Bottom;
+        Left = Math.Clamp(x - Width / 2, _workArea.Left, Math.Max(_workArea.Left, _workArea.Right - Width));
+        Top = Math.Clamp(below ? _anchor.Bottom + 4 : _anchor.Top - height - 4, _workArea.Top, Math.Max(_workArea.Top, _workArea.Bottom - height));
+        Grid.SetRow(_tailRow, below ? 0 : 2);
+        Canvas.SetLeft(_tail, Math.Clamp(x - Left - 8, 17, Width - 33));
+        _tail.Points = below ? [new Point(0, 9), new Point(8, 0), new Point(16, 9)]
+            : [new Point(0, 0), new Point(8, 9), new Point(16, 0)];
+    }
+
+    static Button MakeButton(string text, Brush ink, Brush background, double width, double height)
+    {
+        var surface = new FrameworkElementFactory(typeof(Border));
+        surface.SetValue(Border.CornerRadiusProperty, new CornerRadius(9));
+        surface.SetBinding(Border.BackgroundProperty, new System.Windows.Data.Binding("Background") { RelativeSource = System.Windows.Data.RelativeSource.TemplatedParent });
+        var label = new FrameworkElementFactory(typeof(ContentPresenter));
+        label.SetValue(HorizontalAlignmentProperty, HorizontalAlignment.Center);
+        label.SetValue(VerticalAlignmentProperty, VerticalAlignment.Center);
+        surface.AppendChild(label);
+        var template = new ControlTemplate(typeof(Button)) { VisualTree = surface };
+        var disabled = new Trigger { Property = IsEnabledProperty, Value = false };
+        disabled.Setters.Add(new Setter(OpacityProperty, 0.42));
+        template.Triggers.Add(disabled);
+        var hovered = new Trigger { Property = IsMouseOverProperty, Value = true };
+        hovered.Setters.Add(new Setter(OpacityProperty, 0.8));
+        template.Triggers.Add(hovered);
+        return new Button { Content = text, Template = template, Width = width, Height = height, Foreground = ink, Background = background,
+            FontWeight = FontWeights.SemiBold, Cursor = Cursors.Hand };
+    }
+
+    static SolidColorBrush BrushOf(uint rgba)
+    {
+        var brush = new SolidColorBrush(Color.FromArgb((byte)(rgba >> 24), (byte)(rgba >> 16), (byte)(rgba >> 8), (byte)rgba));
+        brush.Freeze();
+        return brush;
     }
 }

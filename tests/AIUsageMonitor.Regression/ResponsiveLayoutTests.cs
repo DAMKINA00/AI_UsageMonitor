@@ -174,7 +174,7 @@ internal static partial class Program
             $"negative={negative}");
     }
 
-    static void RenderFixture(MainWindow window, string name)
+    static void RenderFixture(Window window, string name)
     {
         if (window.Content is not FrameworkElement root) return;
         int width = Math.Max(1, (int)Math.Ceiling(root.ActualWidth));

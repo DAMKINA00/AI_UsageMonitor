@@ -19,8 +19,14 @@ public partial class MainWindow : Window
     readonly MainViewModel _vm;
     readonly DispatcherTimer _walkTimer;
     readonly DispatcherTimer _dockTimer;
-    // 예전 네 캐릭터(claude..grok)는 예전과 같은 산책 씨앗(31~34)을 쓴다.
-    readonly PlatformWalker[] _walkers = Enumerable.Range(0, 6).Select(i => new PlatformWalker(i + 30)).ToArray();
+    static readonly Rect CharacterFootprint = new(32, 112, 66, 66);
+    readonly Point?[] _positions = new Point?[6];
+    readonly Point?[] _destinations = new Point?[6];
+    Size _fieldSize;
+    bool _characterLayoutDirty = true;
+    int _pressedCharacter = -1, _dropPriority = -1;
+    Point _pressPoint, _pressOrigin;
+    bool _draggingCharacter;
     readonly CharacterLayers _layers = new(6);
     readonly CharacterEventDeduper _seenEvents = new();
     IReadOnlyList<string> _characters = [];
@@ -74,15 +80,15 @@ public partial class MainWindow : Window
         if (!_askEnabled || index < 0) return false;
         var stage = Stages[index];
         if (stage.Visibility != Visibility.Visible || !stage.HasArt) return false;
-        CharacterClicked?.Invoke(id, ScreenRect(stage));
+        CharacterClicked?.Invoke(id, ScreenRect(stage, stage.BodyBoundsIn(stage)));
         return true;
     }
 
-    Rect ScreenRect(FrameworkElement element)
+    Rect ScreenRect(FrameworkElement element, Rect bounds)
     {
-        if (PresentationSource.FromVisual(element) is not { CompositionTarget: { } target }) return Rect.Empty;
-        var topLeft = target.TransformFromDevice.Transform(element.PointToScreen(new Point(0, 0)));
-        var bottomRight = target.TransformFromDevice.Transform(element.PointToScreen(new Point(element.ActualWidth, element.ActualHeight)));
+        if (bounds.IsEmpty || PresentationSource.FromVisual(element) is not { CompositionTarget: { } target }) return Rect.Empty;
+        var topLeft = target.TransformFromDevice.Transform(element.PointToScreen(bounds.TopLeft));
+        var bottomRight = target.TransformFromDevice.Transform(element.PointToScreen(bounds.BottomRight));
         return new Rect(topLeft, bottomRight);
     }
 
@@ -123,12 +129,11 @@ public partial class MainWindow : Window
         MinHeight = MinWindowHeight;
         ApplyTopmost(settings.Topmost);
         ApplyCharacters(settings.EnabledCharacters);
-        foreach (var stage in Stages)
-        {
-            stage.ExternalWalking = true;
-            var id = stage.Character;
-            stage.MouseLeftButtonUp += (_, e) => { if (ClickCharacter(id)) e.Handled = true; };
-        }
+        foreach (var stage in Stages) stage.ExternalWalking = true;
+        CharacterField.PreviewMouseLeftButtonDown += BeginCharacterDrag;
+        CharacterField.PreviewMouseMove += MoveCharacter;
+        CharacterField.PreviewMouseLeftButtonUp += EndCharacterDrag;
+        CharacterField.LostMouseCapture += (_, _) => FinishCharacterDrag(false);
         _walkTimer = new DispatcherTimer(DispatcherPriority.Render) { Interval = TimeSpan.FromMilliseconds(66) };
         _walkTimer.Tick += (_, _) => AdvanceCharacters(0.066);
         _dockTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
@@ -226,35 +231,107 @@ public partial class MainWindow : Window
         AdvanceCharacters(0);
     }
 
+    Rect CharacterLimits => new(0, 4 - CharacterFootprint.Top,
+        Math.Max(0, CharacterField.ActualWidth - 144), Math.Max(0, CharacterField.ActualHeight - 178 - (4 - CharacterFootprint.Top)));
+
     public void AdvanceCharacters(double seconds)
     {
-        double extent = Math.Max(0, CharacterField.ActualWidth - 144);
+        var size = CharacterField.RenderSize;
+        if (size.Width <= 0 || size.Height <= 0) return;
         var stages = Stages;
+        var visible = Enumerable.Range(0, stages.Length).Where(i => stages[i].Visibility == Visibility.Visible).ToArray();
+        if (_fieldSize != size || _characterLayoutDirty)
+        {
+            _fieldSize = size;
+            _characterLayoutDirty = false;
+            var limits = CharacterLimits;
+            var occupied = new List<Rect>();
+            foreach (int i in visible.OrderBy(index => index == _dropPriority ? -1 : _destinations[index].HasValue ? 0 : 1))
+            {
+                var initial = new Point(limits.Width * (Array.IndexOf(visible, i) + 0.5) / visible.Length, limits.Bottom);
+                var desired = _destinations[i] ?? initial;
+                var destination = CharacterPlacement.Separate(desired, CharacterFootprint, limits, occupied);
+                _destinations[i] = destination;
+                _positions[i] = _positions[i] is Point current ? CharacterPlacement.Clamp(current, limits) : destination;
+                occupied.Add(CharacterPlacement.At(CharacterFootprint, destination));
+            }
+            _dropPriority = -1;
+        }
         var bodies = new Rect[stages.Length];
-        // 켜진 캐릭터끼리만 자리를 나눈다 (예전 네 캐릭터만 켜면 예전과 같은 자리).
-        var shown = Enumerable.Range(0, stages.Length).Where(i => stages[i].Visibility == Visibility.Visible).ToList();
-        for (int i = 0; i < stages.Length; i++)
+        Array.Fill(bodies, Rect.Empty);
+        foreach (int i in visible)
         {
             var stage = stages[i];
-            int slot = shown.IndexOf(i);
-            if (slot < 0)
-            {
-                bodies[i] = Rect.Empty;
-                stage.IsWalking = false;
-                continue;
-            }
-            bool walking = SystemParameters.ClientAreaAnimation && stage.Mood is Mood.Idle or Mood.Playing or Mood.Happy;
-            var walker = _walkers[i];
-            walker.Advance(seconds, extent, walking, (slot + 0.5) / shown.Count);
-            Canvas.SetLeft(stage, walker.Position);
-            Canvas.SetTop(stage, Math.Max(0, CharacterField.ActualHeight - stage.Height));
-            stage.IsWalking = walker.IsMoving;
-            stage.FacingLeft = walker.FacingLeft;
-            bodies[i] = stage.BodyBoundsIn(stage);
-            if (!bodies[i].IsEmpty) bodies[i].Offset(walker.Position, Canvas.GetTop(stage));
+            var old = _positions[i]!.Value;
+            var destination = _destinations[i]!.Value;
+            var delta = destination - old;
+            double step = 310 * Math.Clamp(seconds, 0, 0.1);
+            var next = !SystemParameters.ClientAreaAnimation || delta.Length <= step ? destination : old + delta * (step / delta.Length);
+            _positions[i] = next;
+            Canvas.SetLeft(stage, next.X);
+            Canvas.SetTop(stage, next.Y);
+            stage.IsWalking = next != old && delta.Length > 0.5 && i != _pressedCharacter;
+            if (stage.IsWalking && delta.X != 0) stage.FacingLeft = delta.X < 0;
+            stage.RepositionSpeech();
+            bodies[i] = CharacterPlacement.At(CharacterFootprint, next);
         }
         var order = _layers.Update(bodies, stages.Select(stage => stage.IsWalking).ToArray());
-        for (int z = 0; z < order.Count; z++) Panel.SetZIndex(stages[order[z]], z);
+        for (int z = 0; z < order.Count; z++) Panel.SetZIndex(stages[order[z]], order[z] == _pressedCharacter ? order.Count : z);
+    }
+
+    void BeginCharacterDrag(object sender, MouseButtonEventArgs e)
+    {
+        var stages = Stages;
+        var pointer = e.GetPosition(CharacterField);
+        var hit = Enumerable.Range(0, stages.Length).OrderByDescending(i => Panel.GetZIndex(stages[i])).FirstOrDefault(i =>
+        {
+            var stage = stages[i];
+            return _positions[i] is Point origin && stage.IsVisible && stage.HasArt &&
+                CharacterPlacement.At(stage.BodyBoundsIn(stage), origin).Contains(pointer);
+        }, -1);
+        if (hit < 0 || !CharacterField.CaptureMouse()) return;
+        _pressedCharacter = hit;
+        _pressPoint = pointer;
+        _pressOrigin = _positions[hit]!.Value;
+        e.Handled = true;
+    }
+
+    void MoveCharacter(object sender, MouseEventArgs e)
+    {
+        if (_pressedCharacter < 0 || e.LeftButton != MouseButtonState.Pressed) return;
+        var delta = e.GetPosition(CharacterField) - _pressPoint;
+        if (!_draggingCharacter && Math.Abs(delta.X) < SystemParameters.MinimumHorizontalDragDistance &&
+            Math.Abs(delta.Y) < SystemParameters.MinimumVerticalDragDistance) return;
+        _draggingCharacter = true;
+        CharacterField.Cursor = Cursors.SizeAll;
+        var origin = CharacterPlacement.Clamp(_pressOrigin + delta, CharacterLimits);
+        _positions[_pressedCharacter] = _destinations[_pressedCharacter] = origin;
+        AdvanceCharacters(0);
+        e.Handled = true;
+    }
+
+    void EndCharacterDrag(object sender, MouseButtonEventArgs e)
+    {
+        if (_pressedCharacter < 0) return;
+        FinishCharacterDrag(true);
+        CharacterField.ReleaseMouseCapture();
+        e.Handled = true;
+    }
+
+    void FinishCharacterDrag(bool click)
+    {
+        int index = _pressedCharacter;
+        if (index < 0) return;
+        _pressedCharacter = -1;
+        CharacterField.ClearValue(CursorProperty);
+        if (_draggingCharacter)
+        {
+            _draggingCharacter = false;
+            _dropPriority = index;
+            _characterLayoutDirty = true;
+            AdvanceCharacters(0);
+        }
+        else if (click) ClickCharacter(Stages[index].Character);
     }
 
     void UpdateStages()
@@ -274,6 +351,7 @@ public partial class MainWindow : Window
     public void ApplyCharacters(IEnumerable<string> characters)
     {
         _characters = CharacterSelection.Normalize(characters);
+        _characterLayoutDirty = true;
         var stages = Stages;
         for (int i = 0; i < stages.Length; i++)
         {

@@ -42,8 +42,6 @@ public partial class App : Application
     HostedAccountsSnapshot? _hostedAccounts;
     /// <summary>캐릭터를 눌러 묻는 질문: 캐릭터마다 하나만 기다린다.</summary>
     readonly CharacterAsk _asks = new();
-    /// <summary>질문을 보낼 채팅 (호스트의 "character-target"). 받기 전에는 열린 채팅 없음.</summary>
-    CharacterTarget _askTarget = new(null, "");
     CharacterAskWindow? _askWindow;
     int _exitStarted;
 
@@ -427,15 +425,6 @@ public partial class App : Application
                     // 실제 이벤트만 그 캐릭터 말풍선에 한 번 (꺼진 캐릭터면 버린다; 알림은 ChatterBox 가 이미 띄운다)
                     _window.ShowCharacterEvent(characterEvent);
                     break;
-                case "character-target":
-                    if (!CharacterTarget.TryParse(command.Data!.Value, out var target, out var targetError))
-                    {
-                        _hostedProtocol?.Error(targetError);
-                        return;
-                    }
-                    _askTarget = target;
-                    _askWindow?.SetTarget(target);
-                    break;
                 case "character-reply":
                     if (!CharacterReply.TryParse(command.Data!.Value, out var reply, out var replyError))
                     {
@@ -483,7 +472,7 @@ public partial class App : Application
             // 표시할 수 있는 캐릭터와 지원하는 캐릭터 기능 (호스트는 이 값이 있을 때만 이벤트·질문을 쓴다)
             characterIds = CharacterSelection.All.ToArray(),
             characterEvents = 1,
-            characterAsk = 1,
+            characterAsk = 2,
             taskbar = _settings.ShowTaskbarUsage,
             startup = _settings.StartWithWindows,
             usageAlerts = _settings.UsageAlerts,
@@ -623,58 +612,48 @@ public partial class App : Application
         }
     }
 
-    /// <summary>보내지 않고 닫은 초안: 캐릭터마다 하나, 쓰던 채팅에 묶어 둔다.</summary>
-    readonly Dictionary<string, (CharacterTarget Target, string Text)> _askDrafts = new(StringComparer.Ordinal);
+    readonly Dictionary<string, string> _askDrafts = new(StringComparer.Ordinal);
+    readonly Dictionary<string, string> _askReplies = new(StringComparer.Ordinal);
 
-    /// <summary>캐릭터를 눌렀을 때: 보낼 채팅을 보여 주는 입력창을 그 캐릭터 위에 띄운다.</summary>
     void OpenAsk(string character, Rect anchor)
     {
-        if (!_hosted) return;
-        if (_asks.IsWaiting(character))
-        {
-            // 같은 캐릭터에 두 번 묻지 않는다 (앞 질문의 답을 기다리는 중)
-            _window.Speak(character, "앞 질문의 답을 기다리고 있어요.");
-            return;
-        }
+        if (!_hosted || anchor.IsEmpty) return;
         _askWindow?.Close();
-        var name = Tray.CharacterLabels.TryGetValue(character, out var label) ? label : character;
-        // 쓰다 만 초안이 있으면 그 초안의 채팅에 묶어서 다시 연다 (지금 채팅이 다르면 안내만 하고 보내기를 막는다)
+        var name = character == "orch" ? "마스터" : Tray.CharacterLabels[character];
         _askDrafts.Remove(character, out var draft);
-        var window = new CharacterAskWindow(character, name, _askTarget, draft.Target, draft.Text ?? "") { Owner = _window };
-        window.Submitted += (chatId, text) => SendAsk(character, chatId, text);
+        var window = new CharacterAskWindow(character, name, draft ?? "") { Owner = _window };
+        window.Submitted += text => SendAsk(character, text);
         window.Closed += (_, _) =>
         {
             if (_askWindow == window) _askWindow = null;
-            if (!window.WasSent && window.DraftTarget.ChatId != null && window.Question.Trim().Length > 0)
-                _askDrafts[character] = (window.DraftTarget, window.Question);
+            if (!string.IsNullOrWhiteSpace(window.Question)) _askDrafts[character] = window.Question;
         };
         _askWindow = window;
+        if (_asks.IsWaiting(character)) window.SetWaiting();
+        else if (_askReplies.TryGetValue(character, out var reply)) window.ShowReply(reply);
+        window.PlaceBy(anchor, _window.WorkArea);
         window.Show();
-        window.PlaceAbove(anchor, _window.WorkArea);
-        window.Activate();
     }
 
-    /// <param name="chatId">입력창에 보여 준, 초안이 묶인 채팅. 지금 활성 채팅과 다르면 보내지 않는다.</param>
-    void SendAsk(string character, long chatId, string text)
+    void SendAsk(string character, string text)
     {
-        if (_askTarget.ChatId != chatId)
-        {
-            _window.Speak(character, _askTarget.ChatId == null ? "ChatterBox에서 채팅을 먼저 열어 주세요." : "보던 채팅이 바뀌었어요. 다시 물어봐 주세요.");
-            return;
-        }
-        if (_asks.Start(character, chatId, text, DateTimeOffset.Now) is not { } requestId) return;
+        if (_asks.Start(character, text, DateTimeOffset.Now) is not { } requestId) return;
         _window.Stages[CharacterSelection.All.ToList().IndexOf(character)].ExternalThinking = true;
-        _hostedProtocol!.CharacterAsk(requestId, character, chatId, text);
+        _hostedProtocol!.CharacterAsk(requestId, character, text);
     }
 
-    /// <summary>
-    /// 기다리던 질문의 답만 그 캐릭터 말풍선에 한 번 띄운다 (모르는·늦은·중복 답은 버린다). 모니터가 숨었으면 말하지 않고 버린다.
-    /// </summary>
+    void PresentReply(string character, string text)
+    {
+        _askReplies[character] = text;
+        if (_askWindow is { } window && window.Character == character) window.ShowReply(text);
+        else _window.Speak(character, text);
+    }
+
     void ApplyCharacterReply(CharacterReply reply)
     {
         if (!_asks.Complete(reply)) return;
         _window.Stages[CharacterSelection.All.ToList().IndexOf(reply.Character)].ExternalThinking = false;
-        _window.Speak(reply.Character, reply.Spoken);
+        PresentReply(reply.Character, reply.Spoken);
     }
 
     void ExpireAsks()
@@ -682,7 +661,7 @@ public partial class App : Application
         foreach (var character in _asks.Expire(DateTimeOffset.Now))
         {
             _window.Stages[CharacterSelection.All.ToList().IndexOf(character)].ExternalThinking = false;
-            _window.Speak(character, "답을 받지 못했어요. 다시 물어봐 주세요.");
+            PresentReply(character, "답을 받지 못했어요. 다시 물어봐 주세요.");
         }
     }
     void ExitApp()

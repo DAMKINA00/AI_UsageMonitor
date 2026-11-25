@@ -30,6 +30,8 @@ internal static partial class Program
         string Brows(CharacterStage s) => s.PartsState.Split('|')[1];
         string Eyes(CharacterStage s) => s.PartsState.Split('|')[0];
 
+        var orch = NewStage("orch");
+        Check("the master uses the original facial sprites", orch.HasArt && !orch.UsesParts, orch.PartsState);
         var gpt = NewStage("gpt");
         Run(gpt, 1);
         var img = (Image)PrivateField<CharacterStage>("_img").GetValue(gpt)!;
@@ -150,7 +152,8 @@ internal static partial class Program
         {
             window.Show();
             PumpDisplay();
-            Check("all monitor stages draw parts and speak only on events", window.Stages.All(s => s.UsesParts && s.EventSpeechOnly) &&
+            Check("all stages speak only on events, and only the master keeps its original facial sprites",
+                window.Stages.All(s => s.EventSpeechOnly && s.UsesParts == (s.Character != "orch")) &&
                 window.Stages.Select(s => s.Character).SequenceEqual(CharacterSelection.All), string.Join(",", window.Stages.Select(s => s.Character)));
             CharacterEvent Evt(string id, string who, string kind = "result") => new(id, who, kind, kind == "result" ? true : null, $"{who} 소식", 1, 5);
             Check("an event for a shown character is spoken once", window.ShowCharacterEvent(Evt("result:5", "gpt")) && window.Gpt.IsSpeaking, "first");

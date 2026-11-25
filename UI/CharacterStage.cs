@@ -197,7 +197,7 @@ public sealed class CharacterStage : Border
     {
         ShowBubble(text);
         _speaking = true;
-        _bubbleShowFor = 3 + Math.Min(5, 0.09 * text.Length);
+        _bubbleShowFor = 3 + Math.Min(5, 0.09 * _bubbleText.Text.Length);
         _announcementUntil = _t + _bubbleShowFor;
     }
 
@@ -247,7 +247,7 @@ public sealed class CharacterStage : Border
         AutomationProperties.SetName(this, theme.DisplayName);
         // 포즈 이미지가 아직 없는 캐릭터는 자리만 비워 둔다 (말풍선·효과도 숨김)
         _partsKey = "";
-        _usesParts = _faceArt && CharacterTheme.HasParts(_character);
+        _usesParts = _faceArt && _character != "orch" && CharacterTheme.HasParts(_character);
         HasArt = _usesParts || HasImage(BasePose);
         _root.Visibility = HasArt ? Visibility.Visible : Visibility.Hidden;
         ApplyPose();
@@ -302,6 +302,7 @@ public sealed class CharacterStage : Border
         }
     }
 
+    static readonly ScaleTransform UpsideDownTail = Freeze(new ScaleTransform(1, -1));
     static readonly Geometry TailDown = Freeze(Geometry.Parse("M0,0 L7,9 L13,0"));
     static readonly Geometry TailRight = Freeze(Geometry.Parse("M0,0 L9,6 L0,12"));
 
@@ -466,57 +467,14 @@ public sealed class CharacterStage : Border
         double Measure(string value, double size) => new FormattedText(value,
             System.Globalization.CultureInfo.CurrentCulture, FlowDirection.LeftToRight, typeface, size, Ink, pixelsPerDip).WidthIncludingTrailingWhitespace;
         var words = _bubbleContent.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
-        double longest = words.Length == 0 ? 0 : words.Max(word => Measure(word, BubbleFontSize));
+        double longest = EventSpeechOnly || words.Length == 0 ? 0 : words.Max(word => Measure(word, BubbleFontSize));
         // 긴 어절은 글자를 줄여 맞추되 10 DIP 아래로는 줄이지 않는다 (그래도 넘치면 글자 단위로 나눈다)
         double fontSize = longest > available ? Math.Max(MinBubbleFontSize, BubbleFontSize * available / longest) : BubbleFontSize;
         _bubbleText.FontSize = fontSize;
-        var lines = new List<string>();
-        foreach (var paragraph in _bubbleContent.Replace("\r", "").Split('\n'))
-        {
-            string line = "";
-            foreach (var word in paragraph.Split(' ', StringSplitOptions.RemoveEmptyEntries))
-            {
-                if (Measure(word, fontSize) > available)
-                {
-                    // 10 DIP 로도 한 줄에 안 들어가는 어절: 앞 줄을 끝내고 글자 단위로 나눈다
-                    if (line.Length > 0) lines.Add(line);
-                    var pieces = SplitToWidth(word, available, w => Measure(w, fontSize));
-                    lines.AddRange(pieces.Take(pieces.Count - 1));
-                    line = pieces[^1];
-                    continue;
-                }
-                string next = line.Length == 0 ? word : line + " " + word;
-                if (line.Length > 0 && Measure(next, fontSize) > available)
-                {
-                    lines.Add(line);
-                    line = word;
-                }
-                else line = next;
-            }
-            lines.Add(line);
-        }
-        _bubbleText.Text = string.Join('\n', lines);
+        _bubbleText.Text = SpeechText.Wrap(_bubbleContent, available, value => Measure(value, fontSize), EventSpeechOnly ? 3 : int.MaxValue);
     }
 
-    /// <summary>한 줄에 들어가지 않는 어절을 글자(문자 요소) 단위로 나눈다.</summary>
-    static List<string> SplitToWidth(string word, double available, Func<string, double> measure)
-    {
-        var pieces = new List<string>();
-        var piece = new System.Text.StringBuilder();
-        var elements = System.Globalization.StringInfo.GetTextElementEnumerator(word);
-        while (elements.MoveNext())
-        {
-            var element = elements.GetTextElement();
-            if (piece.Length > 0 && measure(piece + element) > available)
-            {
-                pieces.Add(piece.ToString());
-                piece.Clear();
-            }
-            piece.Append(element);
-        }
-        pieces.Add(piece.ToString());
-        return pieces;
-    }
+    internal void RepositionSpeech() { if (_bubbleShown) PositionBubble(); }
 
     internal Rect BodyBoundsIn(Visual ancestor) => _img.ActualWidth <= 0 || _img.ActualHeight <= 0
         ? Rect.Empty
@@ -537,7 +495,22 @@ public sealed class CharacterStage : Border
             return;
         }
         // 투명 여백이 많은 졸음/휴식 포즈에서도 말풍선 꼬리가 몸 바로 위에 붙는다.
-        _bubblePosition.Y = body.Top - _root.ActualHeight - 12;
+        double bubbleHeight = _bubble.ActualHeight;
+        double top = body.Top - bubbleHeight - 12;
+        bool below = false;
+        if (EventSpeechOnly && VisualTreeHelper.GetParent(this) is Canvas field)
+        {
+            double stageTop = Canvas.GetTop(this);
+            if (double.IsNaN(stageTop)) stageTop = 0;
+            double min = 3 - stageTop;
+            double max = Math.Max(min, field.ActualHeight - stageTop - bubbleHeight - 3);
+            below = top < min && body.Bottom + 12 <= max;
+            top = Math.Clamp(below ? body.Bottom + 12 : top, min, max);
+        }
+        _tail.VerticalAlignment = below ? VerticalAlignment.Top : VerticalAlignment.Bottom;
+        _tail.Margin = below ? new Thickness(0, -8, 0, 0) : new Thickness(0, 0, 0, -8);
+        _tail.LayoutTransform = below ? UpsideDownTail : Transform.Identity;
+        _bubblePosition.Y = top + bubbleHeight - _root.ActualHeight;
         double room = Math.Max(0, (_root.ActualWidth - _bubble.ActualWidth) / 2 - 2);
         _bubblePosition.X = Math.Clamp(body.Left + body.Width / 2 - _root.ActualWidth / 2, -room, room);
     }
@@ -681,10 +654,11 @@ public sealed class CharacterStage : Border
         if (UsesParts) { UpdateParts(); return; }
         var frames = FramesFor(_mood);
         index %= frames.Length;
-        if (index == _frame && _img.Source != null) return;
+        var pose = _faceArt && EventSpeechOnly && IsSpeaking ? "speaking"
+            : _faceArt && EventSpeechOnly && IsThinking ? "thinking" : frames[index];
+        if (index == _frame && _pose == pose && _img.Source != null) return;
         _frame = index;
         _frameT = 0;
-        var pose = frames[index];
         _pose = pose;
         var bmp = LoadPose(pose);
         _img.Source = bmp ?? _img.Source;
@@ -858,6 +832,7 @@ public sealed class CharacterStage : Border
             UpdateParts();
         }
         UpdateBubble(dt);
+        if (_faceArt && EventSpeechOnly && !UsesParts) ShowFrame(0);
         PositionBubble();
 
         if (_moodT >= _nextSpawn) SpawnForMood();
@@ -1000,7 +975,7 @@ public sealed class CharacterStage : Border
         return b;
     }
 
-    static Geometry Freeze(Geometry g)
+    static T Freeze<T>(T g) where T : Freezable
     {
         g.Freeze();
         return g;

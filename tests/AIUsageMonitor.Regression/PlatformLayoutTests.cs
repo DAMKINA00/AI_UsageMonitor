@@ -10,7 +10,7 @@ internal static partial class Program
 {
     static void TestPlatformLayout()
     {
-        TestPlatformWalker();
+        TestCharacterPlacement();
         TestCharacterLayers();
         TestAnnouncementPresentation();
 
@@ -45,7 +45,11 @@ internal static partial class Program
             var stages = new[] { window.Claude, window.Gpt, window.Gemini, window.Grok };
             window.AdvanceCharacters(.1);
             var extent = Math.Max(0, field.ActualWidth - 144);
-            Check("four character walkers stay within the resized canvas",
+            var initial = stages.Select(stage => new Point(Canvas.GetLeft(stage), Canvas.GetTop(stage))).ToArray();
+            for (int i = 0; i < 250; i++) window.AdvanceCharacters(.1);
+            Check("separated characters stand still over repeated ticks", stages.Select(stage => new Point(Canvas.GetLeft(stage), Canvas.GetTop(stage))).SequenceEqual(initial) &&
+                stages.All(stage => !stage.IsWalking), "fixed positions");
+            Check("four characters stay within the resized canvas",
                 stages.All(stage => Canvas.GetLeft(stage) is var left && double.IsFinite(left) && left >= -0.5 && left <= extent + 0.5 &&
                     Canvas.GetTop(stage) >= -0.5 && Canvas.GetTop(stage) + stage.Height <= field.ActualHeight + 0.5),
                 string.Join(",", stages.Select(stage => $"{stage.Character}:{Canvas.GetLeft(stage):0.#}")));
@@ -137,70 +141,21 @@ internal static partial class Program
             $"held={held}, expired={expired}, normal={normalSeen}, replayed={announcementReplayed}");
     }
 
-    static void TestPlatformWalker()
+    static void TestCharacterPlacement()
     {
-        var first = new PlatformWalker(31);
-        var same = new PlatformWalker(31);
-        var other = new PlatformWalker(32);
-        first.Advance(0, 120, true, .25);
-        same.Advance(0, 120, true, .25);
-        other.Advance(0, 120, true, .25);
-        Check("walker initial positions use independent seeded fractions", first.Position == 30 && same.Position == 30 && other.Position == 30 &&
-            !first.IsMoving && !same.IsMoving, $"positions={first.Position}/{same.Position}/{other.Position}");
-
-        bool sawPause = false, sawMove = false, seedDiverged = false, noLeap = true, bounded = true;
-        for (int i = 0; i < 240; i++)
-        {
-            var before = first.Position;
-            first.Advance(.1, 120, true, .25);
-            same.Advance(.1, 120, true, .25);
-            other.Advance(.1, 120, true, .25);
-            var delta = Math.Abs(first.Position - before);
-            sawPause |= !first.IsMoving;
-            sawMove |= first.IsMoving;
-            seedDiverged |= Math.Abs(first.Position - other.Position) > 0.0001;
-            noLeap &= delta <= 1.101;
-            bounded &= first.Position is >= 0 and <= 120 && same.Position is >= 0 and <= 120 && other.Position is >= 0 and <= 120;
-        }
-        Check("seeded walkers with the same seed agree while different seeds diverge",
-            sawPause && sawMove && seedDiverged && noLeap && bounded,
-            $"pause={sawPause}, move={sawMove}, diverged={seedDiverged}, leap={noLeap}, bounded={bounded}");
-        var stopped = first.Position;
-        first.Advance(.1, 120, false, .25);
-        Check("disabled walking reports paused and keeps its position", !first.IsMoving && first.Position == stopped,
-            $"moving={first.IsMoving}, position={first.Position}/{stopped}");
-
-        foreach (double extent in new[] { 20.0, 120, 2000 })
-        {
-            var walker = new PlatformWalker(31);
-            walker.Advance(0, extent, true, .5);
-            double distance = 0, longest = 0, fastest = 0;
-            int completed = 0;
-            for (int tick = 0; tick < 3000; tick++)
-            {
-                var before = walker.Position;
-                walker.Advance(.1, extent, true, .5);
-                var delta = Math.Abs(walker.Position - before);
-                fastest = Math.Max(fastest, delta / .1);
-                if (walker.IsMoving) distance += delta;
-                else if (distance > 0)
-                {
-                    longest = Math.Max(longest, distance);
-                    completed++;
-                    distance = 0;
-                }
-            }
-            Check($"walker takes short slow trips even on a {extent} DIP platform",
-                completed >= 10 && longest > 15 && longest <= 42.001 && fastest is > 6 and <= 11.001,
-                $"trips={completed}, longest={longest:0.###}, speed={fastest:0.###}");
-        }
-
-        first.Advance(.1, -50, true, .5);
-        Check("negative extents collapse safely to zero", first.Position == 0 && !first.IsMoving, $"position={first.Position}");
-        first.Advance(0, 180, true, .5);
-        first.Advance(.1, 24, true, .5);
-        Check("resizing the stage re-clamps the walker without a leap", first.Position is >= 0 and <= 24,
-            $"position={first.Position}");
+        var body = new Rect(32, 112, 66, 66);
+        var limits = new Rect(0, -108, 220, 110);
+        var destination = new Point(80, 2);
+        Rect obstacle = CharacterPlacement.At(body, destination);
+        var stationary = new Point(8, 2);
+        Check("a character with space stays in place", CharacterPlacement.Separate(stationary, body, limits, [obstacle]) == stationary, "stationary");
+        var separated = CharacterPlacement.Separate(destination, body, limits, [obstacle]);
+        Check("an overlap triggers only the nearest move needed to clear it", (separated - destination).Length == 66, separated.ToString());
+        var outside = CharacterPlacement.Clamp(new Point(-30, -500), limits);
+        Check("a manual move is kept inside the field", outside == limits.TopLeft, outside.ToString());
+        var narrow = new Rect(0, -108, 20, 110);
+        var above = CharacterPlacement.Separate(new Point(10, 2), body, narrow, [CharacterPlacement.At(body, narrow.BottomLeft)]);
+        Check("on a narrow field the characters can separate vertically", above.Y <= -64, above.ToString());
     }
 
     static MainViewModel PlatformViewModel(int count)

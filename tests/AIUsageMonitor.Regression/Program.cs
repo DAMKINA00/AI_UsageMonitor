@@ -76,7 +76,7 @@ internal static partial class Program
         Run("Idle roaming and rare low-quota naps", TestMascotBehavior);
         Run("Per-character selection, migration and restore", TestCharacterSelection);
         Run("Part-layer characters, blinking, event-only speech", TestCharacterParts);
-        Run("Click a character to ask the open chat", TestCharacterAsk);
+        Run("Click a character to have a private conversation", TestCharacterAsk);
     }
 
     static string ReadShared(string path)

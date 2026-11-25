@@ -34,7 +34,7 @@
   <Grid.RowDefinitions><RowDefinition Height="180"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
   <!-- 캐릭터를 눌러 질문한다 (그린 픽셀만 눌린다: 투명한 곳의 클릭은 창 뒤로 지나간다) -->
   <Canvas x:Name="CharacterField" Background="{x:Null}" ClipToBounds="True" IsHitTestVisible="True">
-   <!-- ChatterBox와 같은 여섯 캐릭터(마스터 Orch + 5종). 파츠 원화(Assets/CharacterActions)를 겹쳐 그리고, 없으면 표정 원화로 대신한다.
+   <!-- 마스터는 ChatterBox와 같은 표정 원화로, 나머지는 Assets/CharacterActions의 파츠 원화로 그린다.
         캐릭터마다 따로 켜고 끄며(AppSettings.Characters), 말풍선은 호스트가 보낸 실제 이벤트만 한 번씩 띄운다. -->
    <ui:CharacterStage x:Name="OrchStage" FaceArt="True" EventSpeechOnly="True" Character="orch" Width="144" Height="178" FigureHeight="106"/>
    <ui:CharacterStage x:Name="ClaudeStage" FaceArt="True" EventSpeechOnly="True" Character="claude" Width="144" Height="178" FigureHeight="106"/>

@@ -1,3 +1,4 @@
+using System.Windows.Controls;
 using System.IO;
 using System.Text.Json;
 using System.Windows;
@@ -12,75 +13,67 @@ internal static partial class Program
     {
         static JsonElement Json(string json) => JsonDocument.Parse(json).RootElement.Clone();
 
-        // 보낼 채팅
-        Check("an open chat is a target with its title", CharacterTarget.TryParse(Json("""{"chatId":12,"title":"  모니터 작업 "}"""), out var t, out _) &&
-            t is { ChatId: 12, Title: "모니터 작업" }, "target");
-        Check("no open chat is a target without a chat", CharacterTarget.TryParse(Json("""{"chatId":null}"""), out var none, out _) && none.ChatId == null, "none");
-        Check("invalid targets are refused", !CharacterTarget.TryParse(Json("""{"title":"x"}"""), out _, out _) &&
-            !CharacterTarget.TryParse(Json("""{"chatId":3}"""), out _, out _) &&
-            !CharacterTarget.TryParse(Json($$"""{"chatId":3,"title":"{{new string('a', 81)}}"}"""), out _, out _) &&
-            !CharacterTarget.TryParse(Json("""{"chatId":0,"title":"x"}"""), out _, out _), "bad targets");
-
-        // 답
         var rid = new string('a', 32);
-        Check("an answer parses with its chat", CharacterReply.TryParse(Json($$"""{"requestId":"{{rid}}","character":"gpt","chatId":12,"status":"answer","text":"네, 끝났어요"}"""), out var r, out _) &&
-            r is { Character: "gpt", ChatId: 12, Status: "answer", Spoken: "네, 끝났어요" }, "reply");
-        Check("a note without text gets a default line", CharacterReply.TryParse(Json($$"""{"requestId":"{{rid}}","character":"orch","chatId":1,"status":"no-chat"}"""), out var n, out _) &&
-            n.Spoken.Contains("채팅", StringComparison.Ordinal), "default");
-        string[] badReplies =
-        [
-            $$"""{"requestId":"{{rid}}","character":"gpt","status":"answer","text":"x"}""",
-            $$"""{"requestId":"xyz","character":"gpt","chatId":1,"status":"answer","text":"x"}""",
-            $$"""{"requestId":"{{rid}}","character":"codex","chatId":1,"status":"answer","text":"x"}""",
-            $$"""{"requestId":"{{rid}}","character":"gpt","chatId":1,"status":"answer"}""",
-            $$"""{"requestId":"{{rid}}","character":"gpt","chatId":1,"status":"maybe","text":"x"}""",
-            $$"""{"requestId":"{{rid}}","character":"gpt","chatId":1,"status":"answer","text":"{{new string('가', 201)}}"}""",
-        ];
-        Check("invalid replies are refused", badReplies.All(b => !CharacterReply.TryParse(Json(b), out _, out var e) && e.Length > 0), "bad replies");
-        Check("ask commands are object commands", HostedProtocol.TryParseCommand("""{"command":"character-target","value":{"chatId":null}}""", out var tc, out _) &&
-            tc.Name == "character-target" && HostedProtocol.TryParseCommand($$$"""{"command":"character-reply","value":{"requestId":"{{{rid}}}","character":"gpt","chatId":1,"status":"busy"}}""", out var rc, out _) &&
-            rc.Name == "character-reply", "commands");
+        var full = "첫 줄\n둘째 줄\n셋째 줄\n넷째 줄";
+        var json = JsonSerializer.SerializeToElement(new { requestId = rid, character = "gpt", status = "answer", text = full });
+        Check("private replies carry all lines to the presentation layer", CharacterReply.TryParse(json, out var r, out _) && r.Spoken == full, "reply");
+        var bad = Json($$"""{"requestId":"{{rid}}","character":"gpt","status":"answer"}""");
+        Check("empty answers are refused", !CharacterReply.TryParse(bad, out _, out _), "empty");
+        var status = Json($$"""{"requestId":"{{rid}}","character":"orch","status":"busy"}""");
+        Check("a note without text gets a default line", CharacterReply.TryParse(status, out var n, out _) && n.Spoken.Length > 0, "default");
+        Check("a reply is a hosted command", HostedProtocol.TryParseCommand($$"""{"command":"character-reply","value":{{status.GetRawText()}}}""", out var cmd, out _) &&
+            cmd.Name == "character-reply", "reply command");
 
-        // 질문 하나씩, 맞는 답만 한 번
         var asks = new CharacterAsk();
         var now = DateTimeOffset.Now;
-        var id = asks.Start("gpt", 12, "  지금 뭐 해?  ", now);
+        var id = asks.Start("gpt", "  지금 뭐 해?  ", now);
         Check("a question gets a 32-hex request id", CharacterAsk.IsRequestId(id) && asks.IsWaiting("gpt"), id ?? "null");
-        Check("a character waits for one question at a time", asks.Start("gpt", 12, "또 질문", now) == null && asks.Start("orch", 12, "마스터에게", now) != null, "one each");
-        Check("empty or too long questions are not sent", asks.Start("claude", 1, "   ", now) == null && asks.Start("claude", 1, new string('a', 1001), now) == null, "length");
-        CharacterReply Reply(string requestId, string who, long chat) => new(requestId, who, chat, "answer", "답");
-        Check("a reply for another chat or character is ignored", !asks.Complete(Reply(id!, "gpt", 99)) && !asks.Complete(Reply(id!, "claude", 12)) &&
-            !asks.Complete(Reply(new string('b', 32), "gpt", 12)), "mismatch");
-        Check("the matching reply completes the question once", asks.Complete(Reply(id!, "gpt", 12)) && !asks.IsWaiting("gpt") && !asks.Complete(Reply(id!, "gpt", 12)), "complete");
-        var late = asks.Start("grok", 5, "늦을 질문", now)!;
-        Check("a question gives up after three minutes", asks.Expire(now.AddMinutes(2)).Count == 0 && asks.Expire(now.AddMinutes(3)).Contains("grok") && !asks.IsWaiting("grok"), "expire");
-        Check("a late reply after giving up is ignored", !asks.Complete(Reply(late, "grok", 5)), "late");
+        Check("one question per character can be pending", asks.Start("gpt", "또 질문", now) == null && asks.Start("orch", "마스터에게", now) != null, "one each");
+        Check("empty or too long questions are not sent", asks.Start("claude", "   ", now) == null && asks.Start("claude", new string('a', 1001), now) == null, "length");
+        CharacterReply Reply(string requestId, string who) => new(requestId, who, "answer", "답");
+        Check("the request id and character must match", !asks.Complete(Reply(id!, "claude")) && !asks.Complete(Reply(rid, "gpt")), "mismatch");
+        Check("the matching reply completes the question once", asks.Complete(Reply(id!, "gpt")) && !asks.IsWaiting("gpt") && !asks.Complete(Reply(id!, "gpt")), "complete");
+        var late = asks.Start("grok", "늦을 질문", now)!;
+        Check("a question times out and ignores a late reply", asks.Expire(now.AddMinutes(2)).Count == 0 && asks.Expire(now.AddMinutes(3)).Contains("grok") &&
+            !asks.IsWaiting("grok") && !asks.Complete(Reply(late, "grok")), "expire");
 
-        // 호스트로 보내는 줄
         var output = new StringWriter();
-        new HostedProtocolWriter(output).CharacterAsk(rid, "gpt", 12, "질문");
+        new HostedProtocolWriter(output).CharacterAsk(rid, "gpt", "질문");
         using (var line = JsonDocument.Parse(output.ToString()))
         {
             var root = line.RootElement;
-            Check("the question goes to the host as one character-ask line", root.GetProperty("type").GetString() == "character-ask" &&
+            Check("the host receives a private question without a desktop chat id", root.GetProperty("type").GetString() == "character-ask" &&
                 root.GetProperty("requestId").GetString() == rid && root.GetProperty("character").GetString() == "gpt" &&
-                root.GetProperty("chatId").GetInt64() == 12 && root.GetProperty("text").GetString() == "질문", output.ToString());
+                !root.TryGetProperty("chatId", out _) && root.GetProperty("text").GetString() == "질문", output.ToString());
         }
 
-        // 입력창: 보낼 채팅을 보여 주고, 없으면 안내하며 막는다
-        var box = new CharacterAskWindow("gpt", "지피티", new CharacterTarget(null, ""));
+        var box = new CharacterAskWindow("gpt", "지피티", "  지금 뭐 해?  ");
         try
         {
-            box.Question = "질문";
-            Check("without an open chat the box explains and cannot send", !box.CanSend, "can send");
+            Check("a character can be asked without a desktop chat", box.CanSend, "send");
             var sent = new List<string>();
-            box.Submitted += (chat, q) => sent.Add($"{chat}:{q}");
-            box.SetTarget(new CharacterTarget(12, "모니터 작업"));
-            box.Question = "  지금 뭐 해?  ";
-            Check("with an open chat the box can send", box.CanSend && box.Target.ChatId == 12, "cannot send");
+            box.Submitted += sent.Add;
             box.Send();
+            box.Question = "한 번 더";
             box.Send();
-            Check("sending gives the trimmed question once, with its chat", sent.SequenceEqual(["12:지금 뭐 해?"]) && box.WasSent, string.Join("|", sent));
+            Check("the input waits for the first reply", sent.SequenceEqual(["지금 뭐 해?"]) && !box.CanSend, string.Join("|", sent));
+            box.ShowReply(full);
+            var reply = (TextBlock)PrivateField<CharacterAskWindow>("_reply").GetValue(box)!;
+            Check("four lines display three lines and an ellipsis", reply.Text == "첫 줄\n둘째 줄\n셋째 줄..." && box.CanSend, reply.Text);
+            box.ShowReply(new string('가', 120));
+            Check("one long unbroken line also fits three lines", reply.Text.Split('\n').Length == 3 && reply.Text.EndsWith("..."), reply.Text);
+            box.ShowReply("첫 줄\n둘째 줄\n셋째 줄");
+            Check("three lines fit without an ellipsis", reply.Text == "첫 줄\n둘째 줄\n셋째 줄", reply.Text);
+            box.Opacity = 0;
+            box.ShowActivated = false;
+            box.ShowReply("먼저 변경 내용을 확인했어요.\n두 모델이 주요 조건에 동의했어요.\n세부 항목 두 곳은 다시 확인해야 해요.\n추가 항목은 다음 메시지에서 답할게요.");
+            box.PlaceBy(new Rect(25, 15, 60, 55), new Rect(0, 0, 640, 480));
+            box.Show();
+            PumpDisplay();
+            Check("the speech panel flips below a character near the top and stays within the screen",
+                box.Top >= 70 && box.Left >= 0 && box.Left + box.ActualWidth <= 640 && box.Top + box.ActualHeight <= 480,
+                $"{box.Left}, {box.Top}, {box.ActualWidth}, {box.ActualHeight}");
+            RenderFixture(box, "character-question-panel");
         }
         finally { box.Close(); }
 
@@ -116,6 +109,16 @@ internal static partial class Program
             Check("showing again brings back no old speech", !window.Gpt.IsSpeaking && window.Gpt.PendingSpeech == 0 &&
                 bubble.Visibility != Visibility.Visible && !window.ShowCharacterEvent(Evt("r3")), "reshown");
             Check("a new event after showing again is spoken", window.ShowCharacterEvent(Evt("r4")) && window.Gpt.IsSpeaking, "after show");
+            window.Gpt.StopSpeech();
+            window.Speak("gpt", "첫 번째 이야기\n두 번째 이야기\n세 번째 이야기\n네 번째 이야기");
+            PumpDisplay(200);
+            var field = FindNamed<Canvas>(window, "CharacterField");
+            var bubbleText = (TextBlock)PrivateField<CharacterStage>("_bubbleText").GetValue(window.Gpt)!;
+            var shown = bubble.TransformToAncestor(field).TransformBounds(new Rect(bubble.RenderSize));
+            Check("event bubbles stay inside the field and ellipsize after three lines",
+                shown.Top >= 0 && shown.Bottom <= field.ActualHeight && bubbleText.Text.Split('\n').Length == 3 && bubbleText.Text.EndsWith("..."),
+                $"{shown}: {bubbleText.Text}");
+            RenderFixture(window, "character-speech-bubble");
             window.WindowState = WindowState.Minimized;
             PumpDisplay();
             Check("minimizing stops speech and drops new events", !window.Gpt.IsSpeaking && window.Gpt.PendingSpeech == 0 &&
@@ -123,48 +126,5 @@ internal static partial class Program
             window.WindowState = WindowState.Normal;
         }
         finally { window.Close(); }
-
-        TestCharacterAskDraftPinning();
-    }
-
-    static void TestCharacterAskDraftPinning()
-    {
-        // 초안은 처음 연 채팅에 묶인다: 활성 채팅이 바뀌면 글은 남기고 보내기만 막는다
-        var a = new CharacterTarget(1, "채팅 A");
-        var b = new CharacterTarget(2, "채팅 B");
-        var box = new CharacterAskWindow("gpt", "지피티", a);
-        var sent = new List<string>();
-        box.Submitted += (chat, q) => sent.Add($"{chat}:{q}");
-        try
-        {
-            box.Question = "A에 보낼 초안";
-            box.SetTarget(b);
-            box.Send();
-            Check("a draft for chat A is never sent to chat B", sent.Count == 0 && !box.CanSend && box.TargetChanged &&
-                box.DraftTarget.ChatId == 1 && box.Question == "A에 보낼 초안", $"sent={string.Join("|", sent)}");
-            box.SetTarget(new CharacterTarget(null, ""));
-            Check("closing every chat keeps the draft and its chat", !box.CanSend && box.DraftTarget.ChatId == 1 && box.Question == "A에 보낼 초안", "no chat");
-            box.SetTarget(a);
-            box.Send();
-            Check("back on chat A the draft goes to chat A", sent.SequenceEqual(["1:A에 보낼 초안"]), string.Join("|", sent));
-        }
-        finally { box.Close(); }
-
-        var empty = new CharacterAskWindow("orch", "마스터", new CharacterTarget(null, ""));
-        try
-        {
-            empty.SetTarget(b);
-            empty.Question = "B 질문";
-            Check("a box opened before any chat takes the first chat that opens", empty.DraftTarget.ChatId == 2 && empty.CanSend, "adopt");
-        }
-        finally { empty.Close(); }
-
-        var reopened = new CharacterAskWindow("gpt", "지피티", b, a, "다시 연 초안");
-        try
-        {
-            Check("a reopened draft stays on its own chat and only explains", reopened.Question == "다시 연 초안" && reopened.DraftTarget.ChatId == 1 &&
-                reopened.TargetChanged && !reopened.CanSend, reopened.DraftTarget.ChatId.ToString() ?? "");
-        }
-        finally { reopened.Close(); }
     }
 }
