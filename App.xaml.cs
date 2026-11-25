@@ -102,7 +102,8 @@ public partial class App : Application
             _window.Accounts.SetManagedByChatterBox();
             _window.AskEnabled = true;
             _window.CharacterClicked += OpenAsk;
-            _masterChatShortcut = new MasterChatShortcut(Dispatcher, () => OpenAsk(CharacterSelection.Orch, Rect.Empty));
+            _masterChatShortcut = new MasterChatShortcut(Dispatcher, () =>
+                OpenAsk(CharacterSelection.Orch, _window.CharacterAnchor(CharacterSelection.Orch)));
             if (!_masterChatShortcut.IsActive) Log.Write("Master chat shortcut could not be registered.");
         }
 
@@ -622,12 +623,15 @@ public partial class App : Application
         if (!_hosted || _exitStarted != 0) return;
         if (_askWindows.TryGetValue(character, out var existing))
         {
+            existing.PlaceBy(anchor, _window.WorkArea);
             existing.ActivateConversation();
             return;
         }
         var name = character == CharacterSelection.Orch ? "마스터" : Tray.CharacterLabels[character];
-        _askDrafts.Remove(character, out var draft);
-        var window = new CharacterAskWindow(character, name, draft ?? "");
+        _askDrafts.TryGetValue(character, out var draft);
+        var portrait = _window.Stages.FirstOrDefault(stage => stage.Character == character)?.Portrait;
+        var window = new CharacterAskWindow(character, name, draft ?? "", portrait);
+        _askDrafts.Remove(character);
         _askWindows.Add(character, window);
         window.Submitted += text => SendAsk(character, text);
         window.Closed += (_, _) =>

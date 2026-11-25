@@ -51,6 +51,8 @@ internal static partial class Program
         }
 
         var box = new CharacterAskWindow("gpt", "지피티", "  지금 뭐 해?  ");
+        bool focusClosed = false;
+        box.Closed += (_, _) => focusClosed = true;
         try
         {
             Check("a character can be asked without a desktop chat", box.CanSend, "send");
@@ -84,8 +86,13 @@ internal static partial class Program
                 box.Left + box.ActualWidth <= 1100 && box.Top + box.ActualHeight <= 900,
                 $"{box.Left}, {box.Top}, {box.ActualWidth}, {box.ActualHeight}");
             RenderFixture(box, "character-question-panel");
+            box.Question = "아직 보내지 않은 메시지";
+            PrivateMethod<Window>("OnDeactivated").Invoke(box, [EventArgs.Empty]);
+            PumpDisplay();
+            Check("focus loss closes the character chat with its draft intact",
+                focusClosed && box.Question == "아직 보내지 않은 메시지", $"closed={focusClosed}, draft preserved={box.Question == "아직 보내지 않은 메시지"}");
         }
-        finally { box.Close(); }
+        finally { if (!focusClosed) box.Close(); }
 
         var shortcut = new WindowsSpaceChord();
         Check("Space by itself and modified Win+Space pass through", shortcut.Space(true, false, false) == (false, false) &&
@@ -98,7 +105,7 @@ internal static partial class Program
         // 캐릭터 누르기
         var vm = PlatformViewModel(4);
         var settings = new AppSettings { Topmost = false };
-        settings.SetCharacters(["orch", "gpt"]);
+        settings.SetCharacters(["orch", "gpt", "deepseek"]);
         var window = new MainWindow(vm, settings, _ => { }) { Opacity = 0, ShowActivated = false, ShowInTaskbar = false, AllowClose = true };
         try
         {
@@ -111,6 +118,34 @@ internal static partial class Program
             Check("clicking a shown character opens a question for it", window.ClickCharacter("gpt") && clicks.SequenceEqual(["gpt"]), string.Join(",", clicks));
             Check("hidden characters cannot be clicked", !window.ClickCharacter("claude") && clicks.Count == 1, "hidden");
 
+            var masterAnchor = window.CharacterAnchor("orch");
+            Check("Win+Space can read the rendered master's on-screen anchor", !masterAnchor.IsEmpty && masterAnchor.IntersectsWith(window.WorkArea), masterAnchor.ToString());
+            var masterBox = new CharacterAskWindow("orch", "마스터");
+            try
+            {
+                var workArea = new Rect(0, 0, 1100, 700);
+                var anchor = new Rect(490, 560, 60, 55);
+                masterBox.PlaceBy(anchor, workArea);
+                Check("an anchored master chat fits above the character on a shorter screen",
+                    masterBox.Top >= workArea.Top && masterBox.Top + masterBox.Height <= anchor.Top - 10 &&
+                    masterBox.Left + masterBox.Width / 2 == anchor.Left + anchor.Width / 2,
+                    $"chat={masterBox.Left},{masterBox.Top},{masterBox.Width},{masterBox.Height}; anchor={anchor}");
+            }
+            finally { masterBox.Close(); }
+
+            var deepSeekPortrait = ((Image)PrivateField<CharacterStage>("_img").GetValue(window.DeepSeek)!).Source;
+            var deepSeekBox = new CharacterAskWindow("deepseek", "딥시크", "질문", deepSeekPortrait)
+                { Opacity = 0, ShowActivated = false, ShowInTaskbar = false };
+            try
+            {
+                deepSeekBox.Show();
+                PumpDisplay();
+                Check("DeepSeek opens using its stage portrait when a standalone portrait is unavailable",
+                    !CharacterTheme.HasFace("deepseek", "neutral") && deepSeekPortrait is not null && deepSeekBox.IsVisible && deepSeekBox.CanSend &&
+                    window.ClickCharacter("deepseek") && clicks.Contains("deepseek"), "DeepSeek chat");
+            }
+            finally { deepSeekBox.Close(); }
+
             // 숨김·최소화: 말하던 대사와 줄 선 대사를 버리고, 그동안 온 이벤트도 버린다
             CharacterEvent Evt(string id) => new(id, "gpt", "result", true, $"소식 {id}", 12, 1);
             Check("a shown monitor speaks an event", window.ShowCharacterEvent(Evt("r1")) && window.ShowCharacterEvent(Evt("r2")) &&
@@ -118,6 +153,7 @@ internal static partial class Program
             var bubble = (System.Windows.Controls.Grid)PrivateField<CharacterStage>("_bubble").GetValue(window.Gpt)!;
             window.Hide();
             PumpDisplay();
+            Check("a hidden monitor has no visible shortcut anchor", window.CharacterAnchor("orch").IsEmpty, "hidden master");
             Check("hiding the monitor stops speech and clears the queue", !window.Gpt.IsSpeaking && window.Gpt.PendingSpeech == 0 &&
                 bubble.Visibility != Visibility.Visible, $"speaking={window.Gpt.IsSpeaking}, pending={window.Gpt.PendingSpeech}");
             Check("events while hidden are dropped", !window.ShowCharacterEvent(Evt("r3")) && !window.Speak("gpt", "답") &&

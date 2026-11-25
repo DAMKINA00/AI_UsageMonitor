@@ -259,6 +259,7 @@ public sealed class CharacterStage : Border
 
     /// <summary>이 캐릭터의 기본 포즈 이미지가 리소스에 있는지.</summary>
     public bool HasArt { get; private set; }
+    internal ImageSource? Portrait => _img.Source;
 
     Brush _fxStroke = Ink;
     Color[] _sparkles = [Colors.White];

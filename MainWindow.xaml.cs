@@ -76,12 +76,19 @@ public partial class MainWindow : Window
     /// <summary>캐릭터를 누른 것으로 처리한다 (마우스 이벤트와 테스트가 함께 쓴다).</summary>
     public bool ClickCharacter(string id)
     {
-        int index = CharacterSelection.All.ToList().IndexOf(id);
-        if (!_askEnabled || index < 0) return false;
-        var stage = Stages[index];
-        if (stage.Visibility != Visibility.Visible || !stage.HasArt) return false;
-        CharacterClicked?.Invoke(id, ScreenRect(stage, stage.BodyBoundsIn(stage)));
+        if (!_askEnabled) return false;
+        var anchor = CharacterAnchor(id);
+        if (anchor.IsEmpty) return false;
+        CharacterClicked?.Invoke(id, anchor);
         return true;
+    }
+
+    public Rect CharacterAnchor(string id)
+    {
+        int index = CharacterSelection.All.ToList().IndexOf(id);
+        if (!CanSpeak || index < 0) return Rect.Empty;
+        var stage = Stages[index];
+        return stage.IsVisible && stage.HasArt ? ScreenRect(stage, stage.BodyBoundsIn(stage)) : Rect.Empty;
     }
 
     Rect ScreenRect(FrameworkElement element, Rect bounds)

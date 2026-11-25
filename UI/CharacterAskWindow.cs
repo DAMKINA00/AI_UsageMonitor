@@ -27,14 +27,14 @@ public sealed class CharacterAskWindow : Window
     readonly TextBlock _placeholder, _status;
     readonly StackPanel _messages = new() { Margin = new Thickness(24, 19, 24, 5) };
     readonly ScrollViewer _scroll;
-    bool _waiting;
+    bool _waiting, _closing;
 
     public string Character { get; }
     public event Action<string>? Submitted;
     public string Question { get => _input.Text; set => _input.Text = value; }
     public bool CanSend => !_waiting && !string.IsNullOrWhiteSpace(Question);
 
-    public CharacterAskWindow(string character, string displayName, string draft = "")
+    public CharacterAskWindow(string character, string displayName, string draft = "", ImageSource? stagePortrait = null)
     {
         Character = character;
         _accent = new SolidColorBrush(CharacterTheme.For(character).Sparkles[0]);
@@ -64,13 +64,8 @@ public sealed class CharacterAskWindow : Window
         close.Click += (_, _) => Close();
         DockPanel.SetDock(close, Dock.Right);
         header.Children.Add(close);
-        var minimize = MakeButton("—", Muted, Paper, 31, 31);
-        System.Windows.Automation.AutomationProperties.SetName(minimize, "최소화");
-        minimize.MouseLeftButtonDown += (_, e) => e.Handled = true;
-        minimize.Click += (_, _) => WindowState = WindowState.Minimized;
-        DockPanel.SetDock(minimize, Dock.Right);
-        header.Children.Add(minimize);
-        var portrait = new Image { Width = 35, Height = 35, Source = new BitmapImage(CharacterTheme.FaceUri(character, "neutral")) };
+        var portrait = new Image { Width = 35, Height = 35, Source = CharacterTheme.HasFace(character, "neutral")
+            ? new BitmapImage(CharacterTheme.FaceUri(character, "neutral")) : stagePortrait };
         RenderOptions.SetBitmapScalingMode(portrait, BitmapScalingMode.HighQuality);
         var badge = new Border { Width = 45, Height = 45, CornerRadius = new CornerRadius(16), Background = Well,
             BorderBrush = _accent, BorderThickness = new Thickness(1), Margin = new Thickness(0, 0, 11, 0), Child = portrait };
@@ -120,6 +115,11 @@ public sealed class CharacterAskWindow : Window
             e.Handled = true;
         };
         Loaded += (_, _) => { if (!_waiting) _input.Focus(); _scroll.ScrollToEnd(); };
+        Closing += (_, _) => _closing = true;
+        Deactivated += (_, _) =>
+        {
+            if (!_closing) Dispatcher.BeginInvoke(() => { if (!_closing) Close(); });
+        };
         Question = draft;
         SetWaiting(false);
     }
@@ -173,6 +173,11 @@ public sealed class CharacterAskWindow : Window
         MinHeight = Math.Min(MinHeight, workArea.Height);
         Width = Math.Min(Width, workArea.Width);
         Height = Math.Min(Height, workArea.Height);
+        if (!anchor.IsEmpty)
+        {
+            double roomAbove = Math.Min(workArea.Height, anchor.Top - workArea.Top - 10);
+            if (roomAbove >= MinHeight) Height = Math.Min(Height, roomAbove);
+        }
         double x = anchor.IsEmpty ? workArea.Left + workArea.Width / 2 : anchor.Left + anchor.Width / 2;
         double y = anchor.IsEmpty ? workArea.Top + (workArea.Height - Height) / 2 : anchor.Top - Height - 10;
         Left = Math.Clamp(x - Width / 2, workArea.Left, Math.Max(workArea.Left, workArea.Right - Width));
