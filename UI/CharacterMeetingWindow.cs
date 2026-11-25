@@ -343,7 +343,12 @@ public sealed class CharacterMeetingWindow : Window
             top.Children.Add(time);
             if (message.Kind is { } kind)
             {
-                var role = Label(kind switch { "assignment" => "질문", "report" => "발표", "review" => "의견", "discussion" => "발언", _ => "결론" }, Accent, 11);
+                var role = Label(kind switch
+                {
+                    "assignment" => "질문", "report" => "발표", "review" => "의견", "discussion" => "발언", "interjection" => "끼어들기",
+                    "agreement" => "동의", "objection" => "이의", "evidence" => "근거", "sources" => "웹 출처", "summary" => "결론",
+                    _ => kind,
+                }, Accent, 11);
                 top.Children.Add(new Border { Background = Well, CornerRadius = new CornerRadius(4), Margin = new Thickness(8, 1, 0, 0),
                     Padding = new Thickness(5, 1, 5, 1), Child = role });
             }
@@ -376,8 +381,8 @@ public sealed class CharacterMeetingWindow : Window
                 _latestResult.IsEnabled = true;
             }
         }
-        row.Surface.Background = message.Kind == "summary" ? Conclusion : draft ? Active : message.Kind == "assignment" ? Well : Brushes.Transparent;
-        row.Surface.BorderBrush = message.Kind == "summary" ? Accent : draft ? Mint : Brushes.Transparent;
+        row.Surface.Background = message.Kind == "summary" ? Conclusion : draft ? Active : message.Kind is "assignment" or "objection" or "sources" ? Well : Brushes.Transparent;
+        row.Surface.BorderBrush = message.Kind == "summary" ? Accent : message.Kind == "objection" ? Coral : draft ? Mint : Brushes.Transparent;
         Animate(row.Avatar, message.Sender, draft);
         if (scroll) _scroll.ScrollToEnd();
     }
