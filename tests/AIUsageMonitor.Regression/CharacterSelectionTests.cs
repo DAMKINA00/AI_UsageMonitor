@@ -157,6 +157,43 @@ internal static partial class Program
                 window.Left == size.Left && window.Top == size.Top && window.Width == size.Width && window.Height == size.Height,
                 $"{size} -> {window.Left},{window.Top},{window.Width},{window.Height}");
             RenderFixture(window, "character-selection");
+
+            var frame = PrivateMethod<CharacterStage>("Frame");
+            var pose = PrivateField<CharacterStage>("_pose");
+            foreach (var stage in window.Stages)
+            {
+                stage.SetActive(false);
+                stage.IsWalking = false;
+                for (int i = 0; i < 90; i++) frame.Invoke(stage, null);
+            }
+            window.UpdateLayout();
+            var restingBodies = window.Stages.Select(stage => (Rect)bodyBounds.Invoke(stage, [field])!).ToArray();
+            Check("quiet characters adopt their own resting poses on the floor",
+                window.Stages.All(stage => Equals(pose.GetValue(stage), "resting")) &&
+                restingBodies.All(body => Math.Abs(body.Bottom - field.ActualHeight) < 0.5) &&
+                restingBodies[0].Height < bodies[0].Height - 10 && restingBodies[2].Height < bodies[2].Height - 10 &&
+                lefts.SequenceEqual(window.Stages.Select(Canvas)),
+                string.Join(", ", restingBodies.Select(body => $"{body.Height:F1}/{body.Bottom:F1}")));
+            RenderFixture(window, "character-resting");
+            PrivateMethod<CharacterStage>("SlideBy").Invoke(window.Gpt, [22.0]);
+            frame.Invoke(window.Gpt, null);
+            window.UpdateLayout();
+            Check("dragging a resting character stands it back up on the same floor",
+                Equals(pose.GetValue(window.Gpt), "standing") &&
+                Math.Abs(((Rect)bodyBounds.Invoke(window.Gpt, [field])!).Bottom - field.ActualHeight) < 0.5,
+                pose.GetValue(window.Gpt)?.ToString() ?? "");
+            var lean = (System.Windows.Media.RotateTransform)PrivateField<CharacterStage>("_rot").GetValue(window.Gpt)!;
+            double dragAngle = Math.Abs(lean.Angle);
+            PrivateMethod<CharacterStage>("ReleaseSlide").Invoke(window.Gpt, null);
+            for (int i = 0; i < 12; i++) frame.Invoke(window.Gpt, null);
+            Check("drag momentum fades after release and respects reduced motion",
+                SystemParameters.ClientAreaAnimation ? dragAngle > 2 && Math.Abs(lean.Angle) < 1 :
+                dragAngle == 0 && lean.Angle == 0, $"{dragAngle:F1} to {lean.Angle:F1}");
+            window.Orch.Say("잠깐 들를게요.");
+            frame.Invoke(window.Orch, null);
+            Check("a speaking character stands up without moving its stage",
+                Equals(pose.GetValue(window.Orch), "standing") && Math.Abs(Canvas(window.Orch) - lefts[0]) < 0.01,
+                pose.GetValue(window.Orch)?.ToString() ?? "");
             window.ApplyCharacters([]);
             PumpDisplay();
             Check("an empty selection hides every character", Visible() == "" && !window.CharactersShown, Visible());

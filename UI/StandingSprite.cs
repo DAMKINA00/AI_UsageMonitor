@@ -8,6 +8,7 @@ internal static class StandingSprite
 {
     const int Top = 100, Eyes = 230, Chin = 274, Wrists = 387, Floor = 500;
     const int Width = 440;
+    const double EyeSpacing = 59;
     public const int Height = Floor - Top;
 
     // Pixel landmarks on Assets/Standing/*.png at 315 × 420. The crown excludes
@@ -23,15 +24,24 @@ internal static class StandingSprite
         ["deepseek"] = new(53, 153, 193, 295, 60, 144),
     };
 
-    public static BitmapSource Render(string character, BitmapSource art, Rect visible)
+    // Rest poses use the same face dimensions and the pose's own knee and foot height.
+    readonly record struct RestLandmarks(int Crown, int Chin, int EyeSpacing, int BodyHeight);
+    static readonly Dictionary<string, RestLandmarks> RestArt = new()
     {
-        if (art.PixelWidth != 315 || art.PixelHeight != 420 || !Art.TryGetValue(character, out var reference))
+        ["orch"] = new(80, 208, 47, 160),
+        ["claude"] = new(13, 205, 71, 132),
+        ["gpt"] = new(39, 207, 56, 165),
+        ["gemini"] = new(76, 220, 52, 150),
+        ["grok"] = new(12, 176, 57, 219),
+        ["deepseek"] = new(62, 225, 70, 139),
+    };
+
+    public static BitmapSource Render(string character, BitmapSource art, Rect visible, bool resting)
+    {
+        if (art.PixelHeight != 420 || (!resting && art.PixelWidth != 315) || !Art.TryGetValue(character, out var reference))
             return art;
 
         int sole = (int)Math.Round(visible.Bottom * art.PixelHeight);
-        double headScale = 59.0 / reference.EyeSpacing;
-        double bodyScale = 140.0 / reference.WristWidth;
-        int upper = Top - (int)Math.Round(reference.Crown * (Eyes - Top) / (double)(reference.Eyes - reference.Crown));
         var picture = new DrawingVisual();
         RenderOptions.SetBitmapScalingMode(picture, BitmapScalingMode.HighQuality);
         using (var drawing = picture.RenderOpen())
@@ -43,21 +53,36 @@ internal static class StandingSprite
                 drawing.DrawImage(band, new Rect((Width - width) / 2, top, width, bottom - top));
             }
 
-            Draw(0, reference.Eyes, upper, Eyes, headScale);
-            Draw(reference.Eyes, reference.Chin, Eyes, Chin, headScale);
-
-            // Ease from face width into body width below the chin, where hair and
-            // collars can span both regions.
-            const int Blend = 32, Band = 4;
-            int BodyY(int offset) => Chin + (int)Math.Round(offset * (Wrists - Chin) / (double)(reference.Wrists - reference.Chin));
-            for (int offset = 0; offset < Blend; offset += Band)
+            if (resting)
             {
-                double progress = (offset + Band / 2.0) / Blend;
-                Draw(reference.Chin + offset, reference.Chin + offset + Band, BodyY(offset), BodyY(offset + Band),
-                    headScale + (bodyScale - headScale) * progress);
+                var rest = RestArt[character];
+                double scale = EyeSpacing / rest.EyeSpacing;
+                int chin = Floor - rest.BodyHeight;
+                int top = chin - (int)Math.Round(rest.Chin * (Chin - Top) / (double)(rest.Chin - rest.Crown));
+                Draw(0, rest.Chin, top, chin, scale);
+                Draw(rest.Chin, sole, chin, Floor, scale);
             }
-            Draw(reference.Chin + Blend, reference.Wrists, BodyY(Blend), Wrists, bodyScale);
-            Draw(reference.Wrists, sole, Wrists, Floor, bodyScale);
+            else
+            {
+                double headScale = EyeSpacing / reference.EyeSpacing;
+                double bodyScale = 140.0 / reference.WristWidth;
+                int upper = Top - (int)Math.Round(reference.Crown * (Eyes - Top) / (double)(reference.Eyes - reference.Crown));
+                Draw(0, reference.Eyes, upper, Eyes, headScale);
+                Draw(reference.Eyes, reference.Chin, Eyes, Chin, headScale);
+
+                // Ease from face width into body width below the chin, where hair and
+                // collars can span both regions.
+                const int Blend = 32, Band = 4;
+                int BodyY(int offset) => Chin + (int)Math.Round(offset * (Wrists - Chin) / (double)(reference.Wrists - reference.Chin));
+                for (int offset = 0; offset < Blend; offset += Band)
+                {
+                    double progress = (offset + Band / 2.0) / Blend;
+                    Draw(reference.Chin + offset, reference.Chin + offset + Band, BodyY(offset), BodyY(offset + Band),
+                        headScale + (bodyScale - headScale) * progress);
+                }
+                Draw(reference.Chin + Blend, reference.Wrists, BodyY(Blend), Wrists, bodyScale);
+                Draw(reference.Wrists, sole, Wrists, Floor, bodyScale);
+            }
         }
         var sprite = new RenderTargetBitmap(Width, Floor, 96, 96, PixelFormats.Pbgra32);
         sprite.Render(picture);

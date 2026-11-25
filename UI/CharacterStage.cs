@@ -29,6 +29,7 @@ public sealed class CharacterStage : Border
     // 표정 원화(상반신)의 보이는 높이 (_figure 318 기준)
     const double FaceHeight = 185;
     const double StandingHeight = 272;
+    const string RestPose = "resting";
 
     readonly Grid _root = new();
     readonly TranslateTransform _wander = new();
@@ -52,6 +53,7 @@ public sealed class CharacterStage : Border
     readonly DispatcherTimer _timer;
     readonly List<Particle> _particles = [];
     readonly Random _rng = new();
+    readonly DesktopCharacterMotion _desktopMotion;
     readonly Dictionary<string, BitmapSource?> _poseCache = new();
     readonly Dictionary<string, Rect> _visibleBounds = new();
     Rect _bodyBounds = new(0, 0, 1, 1);
@@ -64,6 +66,7 @@ public sealed class CharacterStage : Border
 
     public CharacterStage()
     {
+        _desktopMotion = new DesktopCharacterMotion(_rng);
         // 배경 없이 창 위에 캐릭터만 선다 (말풍선·효과는 위로 삐져나가도 되게 클립하지 않음)
         Background = Brushes.Transparent;
         Child = _root;
@@ -262,7 +265,7 @@ public sealed class CharacterStage : Border
         UpdateRunning();
     }
 
-    bool HasImage(string pose) => _fullBodyArt ? CharacterTheme.HasStanding(_character) : UsesParts ? CharacterTheme.Parts.Contains(pose)
+    bool HasImage(string pose) => _fullBodyArt ? CharacterTheme.HasStanding(_character, pose == RestPose) : UsesParts ? CharacterTheme.Parts.Contains(pose)
         : _faceArt ? CharacterTheme.HasFace(_character, pose) : CharacterTheme.HasAsset(_character, pose);
 
     /// <summary>이 캐릭터의 기본 포즈 이미지가 리소스에 있는지.</summary>
@@ -319,6 +322,8 @@ public sealed class CharacterStage : Border
     public bool ExternalWalking { get; set; }
     public bool IsWalking { get; set; }
     public bool FacingLeft { get; set; }
+    internal void SlideBy(double distance) => _desktopMotion.SlideBy(distance);
+    internal void ReleaseSlide() => _desktopMotion.Release();
     double _announcementUntil;
 
     /// <summary>Event speech is shown once; regular mood updates cannot replay or cut it short.</summary>
@@ -659,7 +664,7 @@ public sealed class CharacterStage : Border
         if (_fullBodyArt)
         {
             index = 0;
-            pose = BasePose;
+            pose = _desktopMotion.Resting && LoadPose(RestPose) != null ? RestPose : BasePose;
         }
         else
         {
@@ -693,13 +698,13 @@ public sealed class CharacterStage : Border
                 {
                     var decoded = new BitmapImage();
                     decoded.BeginInit();
-                    decoded.UriSource = _fullBodyArt ? CharacterTheme.StandingUri(_character) : UsesParts ? CharacterTheme.PartUri(_character, pose)
+                    decoded.UriSource = _fullBodyArt ? CharacterTheme.StandingUri(_character, pose == RestPose) : UsesParts ? CharacterTheme.PartUri(_character, pose)
                         : _faceArt ? CharacterTheme.FaceUri(_character, pose) : CharacterTheme.AssetUri(_character, pose);
                     decoded.CacheOption = BitmapCacheOption.OnLoad;
                     decoded.EndInit();
                     decoded.Freeze();
                     bmp = ClearTransparentNoise(decoded);
-                    if (_fullBodyArt) bmp = StandingSprite.Render(_character, bmp, VisibleBounds(bmp));
+                    if (_fullBodyArt) bmp = StandingSprite.Render(_character, bmp, VisibleBounds(bmp), pose == RestPose);
                 }
                 catch (Exception ex) when (ex is System.IO.IOException or NotSupportedException or InvalidOperationException or System.IO.FileFormatException)
                 {
@@ -776,8 +781,8 @@ public sealed class CharacterStage : Border
         double t = _t;
         if (_fullBodyArt)
         {
-            // The planted sprite stays still except for a slight talking lean.
-            rot = IsSpeaking && SystemParameters.ClientAreaAnimation ? 1.6 * Math.Sin(t * Math.PI * 2 / 0.75) : 0;
+            (sy, rot) = _desktopMotion.Advance(dt, t, IsWalking, IsSpeaking, SystemParameters.ClientAreaAnimation);
+            ShowFrame(0);
         }
         else switch (_mood)
         {

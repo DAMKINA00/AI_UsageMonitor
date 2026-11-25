@@ -312,6 +312,7 @@ public partial class MainWindow : Window
         _draggingCharacter = true;
         CharacterField.Cursor = Cursors.SizeWE;
         var origin = CharacterPlacement.Drag(_pressOrigin, delta, CharacterLimits);
+        Stages[_pressedCharacter].SlideBy(origin.X - _positions[_pressedCharacter]!.Value.X);
         _positions[_pressedCharacter] = _destinations[_pressedCharacter] = origin;
         AdvanceCharacters(0);
         e.Handled = true;
@@ -336,6 +337,7 @@ public partial class MainWindow : Window
         if (_draggingCharacter)
         {
             _draggingCharacter = false;
+            Stages[index].ReleaseSlide();
             _dropPriority = index;
             _characterLayoutDirty = true;
             AdvanceCharacters(0);
