@@ -108,9 +108,10 @@ public sealed class CharacterTheme
 
     public static bool HasFace(string key, string expression) => HasResource(FacePath(key, expression));
 
-    public static Uri StandingUri(string key, bool resting = false) => PackUri(StandingPath(key, resting));
-    public static bool HasStanding(string key, bool resting = false) => HasResource(StandingPath(key, resting));
-    static string StandingPath(string key, bool resting) => resting ? $"Assets/Standing/Rest/{key}.png" : $"Assets/Standing/{key}.png";
+    public static Uri StandingUri(string key, bool resting = false, int frame = 0) => PackUri(StandingPath(key, resting, frame));
+    public static bool HasStanding(string key, bool resting = false, int frame = 0) => HasResource(StandingPath(key, resting, frame));
+    static string StandingPath(string key, bool resting, int frame) => !resting ? $"Assets/Standing/{key}.png"
+        : frame == 0 ? $"Assets/Standing/Rest/{key}.png" : $"Assets/Standing/Rest/Frames/{key}-{frame}.png";
 
     public static ImageSource? ConversationPortrait(string key, bool speaking = false, ImageSource? stage = null)
     {

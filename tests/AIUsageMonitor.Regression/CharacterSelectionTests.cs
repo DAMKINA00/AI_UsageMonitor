@@ -175,6 +175,23 @@ internal static partial class Program
                 lefts.SequenceEqual(window.Stages.Select(Canvas)),
                 string.Join(", ", restingBodies.Select(body => $"{body.Height:F1}/{body.Bottom:F1}")));
             RenderFixture(window, "character-resting");
+            var shownFrames = new HashSet<int>[window.Stages.Length];
+            var frameIndex = PrivateField<CharacterStage>("_frame");
+            for (int i = 0; i < shownFrames.Length; i++)
+            {
+                var stage = window.Stages[i];
+                shownFrames[i] = [];
+                for (int sample = 0; sample < 125; sample++)
+                {
+                    frame.Invoke(stage, null);
+                    shownFrames[i].Add((int)frameIndex.GetValue(stage)!);
+                }
+            }
+            Check("each resting mascot has three drawn gesture frames and plays a brief gesture",
+                window.Stages.All(stage => Enumerable.Range(1, 3).All(index => CharacterTheme.HasStanding(stage.Character, true, index))) &&
+                shownFrames.All(frames => SystemParameters.ClientAreaAnimation ? frames.Contains(0) && frames.Any(index => index > 0) :
+                    frames.SetEquals([0])),
+                string.Join(" / ", shownFrames.Select(frames => string.Join(",", frames.Order()))));
             PrivateMethod<CharacterStage>("SlideBy").Invoke(window.Gpt, [22.0]);
             frame.Invoke(window.Gpt, null);
             window.UpdateLayout();

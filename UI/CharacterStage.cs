@@ -265,7 +265,7 @@ public sealed class CharacterStage : Border
         UpdateRunning();
     }
 
-    bool HasImage(string pose) => _fullBodyArt ? CharacterTheme.HasStanding(_character, pose == RestPose) : UsesParts ? CharacterTheme.Parts.Contains(pose)
+    bool HasImage(string pose, int frame = 0) => _fullBodyArt ? CharacterTheme.HasStanding(_character, pose == RestPose, frame) : UsesParts ? CharacterTheme.Parts.Contains(pose)
         : _faceArt ? CharacterTheme.HasFace(_character, pose) : CharacterTheme.HasAsset(_character, pose);
 
     /// <summary>이 캐릭터의 기본 포즈 이미지가 리소스에 있는지.</summary>
@@ -663,8 +663,9 @@ public sealed class CharacterStage : Border
         string pose;
         if (_fullBodyArt)
         {
-            index = 0;
             pose = _desktopMotion.Resting && LoadPose(RestPose) != null ? RestPose : BasePose;
+            index = pose == RestPose ? _desktopMotion.RestFrame : 0;
+            if (index != 0 && LoadPose(pose, index) == null) index = 0;
         }
         else
         {
@@ -677,28 +678,29 @@ public sealed class CharacterStage : Border
         _frame = index;
         _frameT = 0;
         _pose = pose;
-        var bmp = LoadPose(pose);
+        int restFrame = _fullBodyArt ? index : 0;
+        var bmp = LoadPose(pose, restFrame);
         _img.Source = bmp ?? _img.Source;
-        if (bmp != null) _bodyBounds = _visibleBounds[CacheKey(pose)];
+        if (bmp != null) _bodyBounds = _visibleBounds[CacheKey(pose, restFrame)];
         ApplyImageSize();
     }
 
-    string CacheKey(string pose) => $"{(_fullBodyArt ? "standing:" : UsesParts ? "part:" : _faceArt ? "face:" : "")}{_character}_{pose}";
+    string CacheKey(string pose, int frame = 0) => $"{(_fullBodyArt ? "standing:" : UsesParts ? "part:" : _faceArt ? "face:" : "")}{_character}_{pose}_{frame}";
 
-    BitmapSource? LoadPose(string pose)
+    BitmapSource? LoadPose(string pose, int frame = 0)
     {
-        var key = CacheKey(pose);
+        var key = CacheKey(pose, frame);
         if (!_poseCache.TryGetValue(key, out var bmp))
         {
             bmp = null;
             // 아직 그리지 않은 포즈는 열지 않는다 (없는 리소스를 열면 예외가 난다)
-            if (HasImage(pose))
+            if (HasImage(pose, frame))
             {
                 try
                 {
                     var decoded = new BitmapImage();
                     decoded.BeginInit();
-                    decoded.UriSource = _fullBodyArt ? CharacterTheme.StandingUri(_character, pose == RestPose) : UsesParts ? CharacterTheme.PartUri(_character, pose)
+                    decoded.UriSource = _fullBodyArt ? CharacterTheme.StandingUri(_character, pose == RestPose, frame) : UsesParts ? CharacterTheme.PartUri(_character, pose)
                         : _faceArt ? CharacterTheme.FaceUri(_character, pose) : CharacterTheme.AssetUri(_character, pose);
                     decoded.CacheOption = BitmapCacheOption.OnLoad;
                     decoded.EndInit();

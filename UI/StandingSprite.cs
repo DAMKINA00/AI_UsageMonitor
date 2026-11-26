@@ -28,12 +28,12 @@ internal static class StandingSprite
     readonly record struct RestLandmarks(int Crown, int Chin, int EyeSpacing, int BodyHeight);
     static readonly Dictionary<string, RestLandmarks> RestArt = new()
     {
-        ["orch"] = new(80, 208, 47, 160),
-        ["claude"] = new(13, 205, 71, 132),
-        ["gpt"] = new(39, 207, 56, 165),
-        ["gemini"] = new(76, 220, 52, 150),
-        ["grok"] = new(12, 176, 57, 219),
-        ["deepseek"] = new(62, 225, 70, 139),
+        ["orch"] = new(80, 218, 50, 160),
+        ["claude"] = new(32, 218, 65, 132),
+        ["gpt"] = new(32, 210, 59, 165),
+        ["gemini"] = new(85, 226, 51, 150),
+        ["grok"] = new(32, 181, 48, 219),
+        ["deepseek"] = new(82, 228, 60, 139),
     };
 
     public static BitmapSource Render(string character, BitmapSource art, Rect visible, bool resting)
