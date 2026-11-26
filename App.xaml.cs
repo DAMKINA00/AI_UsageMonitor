@@ -859,6 +859,7 @@ public partial class App : Application
         if (Interlocked.Exchange(ref _exitStarted, 1) != 0) return;
         try { _hostedInputLifetime?.Cancel(); } catch (ObjectDisposedException) { }
         _boardroomShortcut?.Dispose();
+        _grokBotShortcut.Dispose();
         _boardroomSizeSave?.Stop();
         _meetingWindow?.Close();
         foreach (var chat in _askWindows.Values.ToArray()) chat.Close();
@@ -878,6 +879,7 @@ public partial class App : Application
     protected override void OnExit(ExitEventArgs e)
     {
         _boardroomShortcut?.Dispose();
+        _grokBotShortcut.Dispose();
         try { _mutex?.ReleaseMutex(); } catch { }
         base.OnExit(e);
     }
