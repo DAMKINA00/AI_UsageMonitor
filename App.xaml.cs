@@ -110,7 +110,7 @@ public partial class App : Application
             _window.Accounts.SetManagedByChatterBox();
             _window.AskEnabled = true;
             _window.CharacterClicked += OpenAsk;
-            _boardroomShortcut = new BoardroomShortcut(Dispatcher, ToggleMeeting);
+            _boardroomShortcut = new BoardroomShortcut(Dispatcher, ToggleMeeting, OpenGrokBot);
             if (!_boardroomShortcut.IsActive) Log.Write("Boardroom shortcut could not be registered.");
         }
 
@@ -686,6 +686,17 @@ public partial class App : Application
         if (_meetingWindow?.HideIfOpen() != true) OpenMeeting();
     }
 
+    static void OpenGrokBot()
+    {
+        static void Open(string address) => System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(address) { UseShellExecute = true });
+        try { Open("grokbot://app/v1/prompt?text="); }
+        catch (System.ComponentModel.Win32Exception)
+        {
+            try { Open("https://x.ai/bot#download"); }
+            catch (System.ComponentModel.Win32Exception error) { Log.Write($"Grok Bot could not be opened: {error.Message}"); }
+        }
+    }
+
     void OpenMeeting()
     {
         if (!_hosted || _exitStarted != 0) return;
@@ -776,7 +787,7 @@ public partial class App : Application
         if (index < 0) _meetingPosts.Add((message, draft));
         else _meetingPosts[index] = (message, draft);
         _meetingWindow?.Upsert(message, draft);
-        if (_meetingPosts.Count > 51 && _meetingPosts.FindIndex(post => !post.Draft) is >= 0 and var oldest)
+        if (!draft && _meetingPosts.Count(post => !post.Draft) > 200 && _meetingPosts.FindIndex(post => !post.Draft) is >= 0 and var oldest)
         {
             _meetingWindow?.Remove(_meetingPosts[oldest].Message.Id);
             _meetingPosts.RemoveAt(oldest);

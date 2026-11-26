@@ -3,26 +3,28 @@ using System.Windows.Threading;
 
 namespace AIUsageMonitor.UI;
 
+public enum SpaceAction { None, Boardroom, GrokBot }
+
 public sealed class WindowsSpaceChord
 {
     bool _down, _captured;
 
-    public (bool Suppress, bool Open) Space(bool down, bool windows, bool otherModifier)
+    public (bool Suppress, SpaceAction Action) Space(bool down, bool windows, bool alt, bool otherModifier)
     {
         if (!down)
         {
             var captured = _captured;
             _down = _captured = false;
-            return (captured, false);
+            return (captured, SpaceAction.None);
         }
-        if (_down) return (_captured, false);
+        if (_down) return (_captured, SpaceAction.None);
         _down = true;
-        _captured = windows && !otherModifier;
-        return (_captured, _captured);
+        _captured = windows != alt && !otherModifier;
+        return (_captured, !_captured ? SpaceAction.None : windows ? SpaceAction.Boardroom : SpaceAction.GrokBot);
     }
 }
 
-/// <summary>Handle Win+Space while the hosted monitor runs.</summary>
+/// <summary>Handle the Boardroom and Grok Bot shortcuts while the hosted monitor runs.</summary>
 internal sealed class BoardroomShortcut : IDisposable
 {
     const int LowLevelKeyboard = 13, SpaceKey = 0x20, LeftWindows = 0x5B, RightWindows = 0x5C;
@@ -32,12 +34,14 @@ internal sealed class BoardroomShortcut : IDisposable
     readonly HookProc _callback;
     readonly Dispatcher _dispatcher;
     readonly Action _toggle;
+    readonly Action _openGrokBot;
     IntPtr _hook;
 
-    public BoardroomShortcut(Dispatcher dispatcher, Action toggle)
+    public BoardroomShortcut(Dispatcher dispatcher, Action toggle, Action openGrokBot)
     {
         _dispatcher = dispatcher;
         _toggle = toggle;
+        _openGrokBot = openGrokBot;
         _callback = OnKey;
         _hook = SetWindowsHookEx(LowLevelKeyboard, _callback, GetModuleHandle(null), 0);
     }
@@ -53,8 +57,8 @@ internal sealed class BoardroomShortcut : IDisposable
 
         bool windows = Held(LeftWindows) || Held(RightWindows);
         bool alt = Held(Alt) || (Marshal.ReadInt32(data, 8) & 0x20) != 0;
-        var (suppress, toggle) = _chord.Space(kind is KeyDown or SystemKeyDown, windows, alt || Held(Shift) || Held(Control));
-        if (toggle)
+        var (suppress, action) = _chord.Space(kind is KeyDown or SystemKeyDown, windows, alt, Held(Shift) || Held(Control));
+        if (action == SpaceAction.Boardroom)
         {
             // Mark this Win press as part of a chord so releasing it doesn't open the Start menu.
             // Windows PowerToys uses the same unassigned VK 0xFF release for custom Win chords.
@@ -62,6 +66,8 @@ internal sealed class BoardroomShortcut : IDisposable
             SendInput(1, ref input, Marshal.SizeOf<Input>());
             _dispatcher.BeginInvoke(DispatcherPriority.Input, _toggle);
         }
+        else if (action == SpaceAction.GrokBot)
+            _dispatcher.BeginInvoke(DispatcherPriority.Input, _openGrokBot);
         return suppress ? new IntPtr(1) : CallNextHookEx(_hook, code, message, data);
     }
 

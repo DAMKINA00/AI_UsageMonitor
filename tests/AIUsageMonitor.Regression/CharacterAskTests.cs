@@ -101,13 +101,19 @@ internal static partial class Program
         finally { if (!focusClosed) box.Close(); }
 
         var shortcut = new WindowsSpaceChord();
-        Check("Space, Alt+Space and modified Win+Space pass through", shortcut.Space(true, false, false) == (false, false) &&
-            shortcut.Space(false, false, false) == (false, false) && shortcut.Space(true, false, true) == (false, false) &&
-            shortcut.Space(false, false, false) == (false, false) && shortcut.Space(true, true, true) == (false, false) &&
-            shortcut.Space(false, true, false) == (false, false), "pass through");
-        Check("Win+Space toggles once and consumes the repeat and matching release", shortcut.Space(true, true, false) == (true, true) &&
-            shortcut.Space(true, true, false) == (true, false) && shortcut.Space(false, false, false) == (true, false) &&
-            shortcut.Space(true, true, false) == (true, true), "Win+Space");
+        Check("plain Space and extra modifiers pass through", shortcut.Space(true, false, false, false) == (false, SpaceAction.None) &&
+            shortcut.Space(false, false, false, false) == (false, SpaceAction.None) &&
+            shortcut.Space(true, false, true, true) == (false, SpaceAction.None) &&
+            shortcut.Space(false, false, false, false) == (false, SpaceAction.None) &&
+            shortcut.Space(true, true, true, false) == (false, SpaceAction.None) &&
+            shortcut.Space(false, true, true, false) == (false, SpaceAction.None), "pass through");
+        Check("Win+Space opens Boardroom and Alt+Space opens Grok Bot once per key press",
+            shortcut.Space(true, true, false, false) == (true, SpaceAction.Boardroom) &&
+            shortcut.Space(true, true, false, false) == (true, SpaceAction.None) &&
+            shortcut.Space(false, false, false, false) == (true, SpaceAction.None) &&
+            shortcut.Space(true, false, true, false) == (true, SpaceAction.GrokBot) &&
+            shortcut.Space(true, false, true, false) == (true, SpaceAction.None) &&
+            shortcut.Space(false, false, false, false) == (true, SpaceAction.None), "Win+Space and Alt+Space");
 
         // 캐릭터 누르기
         var vm = PlatformViewModel(4);
