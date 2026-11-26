@@ -172,6 +172,7 @@ internal static partial class Program
                 window.Stages.All(stage => Equals(pose.GetValue(stage), "resting")) &&
                 restingBodies.All(body => Math.Abs(body.Bottom - field.ActualHeight) < 0.5) &&
                 restingBodies[0].Height < bodies[0].Height - 10 && restingBodies[2].Height < bodies[2].Height - 10 &&
+                restingBodies[4].Height < bodies[4].Height - 10 &&
                 lefts.SequenceEqual(window.Stages.Select(Canvas)),
                 string.Join(", ", restingBodies.Select(body => $"{body.Height:F1}/{body.Bottom:F1}")));
             RenderFixture(window, "character-resting");
@@ -181,15 +182,15 @@ internal static partial class Program
             {
                 var stage = window.Stages[i];
                 shownFrames[i] = [];
-                for (int sample = 0; sample < 125; sample++)
+                for (int sample = 0; sample < 750; sample++)
                 {
                     frame.Invoke(stage, null);
                     shownFrames[i].Add((int)frameIndex.GetValue(stage)!);
                 }
             }
-            Check("each resting mascot has three drawn gesture frames and plays a brief gesture",
-                window.Stages.All(stage => Enumerable.Range(1, 3).All(index => CharacterTheme.HasStanding(stage.Character, true, index))) &&
-                shownFrames.All(frames => SystemParameters.ClientAreaAnimation ? frames.Contains(0) && frames.Any(index => index > 0) :
+            Check("all six mascots show every drawn frame of their four gestures while resting",
+                window.Stages.All(stage => Enumerable.Range(1, 8).All(index => CharacterTheme.HasStanding(stage.Character, true, index))) &&
+                shownFrames.All(frames => SystemParameters.ClientAreaAnimation ? frames.SetEquals(Enumerable.Range(0, 9)) :
                     frames.SetEquals([0])),
                 string.Join(" / ", shownFrames.Select(frames => string.Join(",", frames.Order()))));
             PrivateMethod<CharacterStage>("SlideBy").Invoke(window.Gpt, [22.0]);

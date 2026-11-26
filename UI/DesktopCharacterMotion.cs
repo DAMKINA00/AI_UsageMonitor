@@ -2,16 +2,20 @@ namespace AIUsageMonitor.UI;
 
 internal sealed class DesktopCharacterMotion(Random random)
 {
-    static readonly int[] BlinkFrames = [1, 2, 1, 0];
-    static readonly int[] NodFrames = [3, 3, 3, 0];
+    static readonly int[][] Gestures =
+    [
+        [0, 1, 2, 1, 0], // blink
+        [0, 3, 4, 3, 0], // nod
+        [0, 5, 6, 5, 0], // glance sideways
+        [0, 7, 8, 7, 0], // tilt head
+    ];
     readonly Random _random = random;
     readonly double _restDelay = 2.8 + random.NextDouble() * 2.8;
     readonly double _breathPeriod = 3.4 + random.NextDouble() * 2.5;
     readonly double _phase = random.NextDouble() * 2 * Math.PI;
     double _quietTime, _dragDistance, _lean, _settle;
     double _untilGesture = 3.8 + random.NextDouble() * 4;
-    int _gestureStep;
-    int[] _gesture = BlinkFrames;
+    int _gestureStep, _gestureIndex = random.Next(Gestures.Length);
     bool _dragging;
 
     public bool Resting { get; private set; }
@@ -59,10 +63,15 @@ internal sealed class DesktopCharacterMotion(Random random)
             _untilGesture -= seconds;
             if (_untilGesture > 0) return 0;
             _untilGesture = 4.5 + _random.NextDouble() * 7;
-            _gesture = _random.Next(4) == 0 ? NodFrames : BlinkFrames;
         }
-        int frame = _gesture[_gestureStep++];
-        if (_gestureStep == _gesture.Length) _gestureStep = 0;
+        var gesture = Gestures[_gestureIndex];
+        int ticksPerFrame = _gestureIndex == 0 ? 1 : 2;
+        int frame = gesture[_gestureStep++ / ticksPerFrame];
+        if (_gestureStep == gesture.Length * ticksPerFrame)
+        {
+            _gestureStep = 0;
+            _gestureIndex = (_gestureIndex + 1) % Gestures.Length;
+        }
         return frame;
     }
 }

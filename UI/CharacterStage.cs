@@ -764,7 +764,8 @@ public sealed class CharacterStage : Border
         if (!_faceArt && _pose == "collapsed") k *= _character switch { "claude" => 1.25, "codex" => 1.2, _ => 1 };
         _img.Width = b.PixelWidth * k;
         _img.Height = b.PixelHeight * k;
-        Canvas.SetLeft(_img, _fullBodyArt ? _figure.Width / 2 - (_bodyBounds.Left + _bodyBounds.Width / 2) * _img.Width
+        var centerBounds = _pose == RestPose ? _visibleBounds[CacheKey(RestPose)] : _bodyBounds;
+        Canvas.SetLeft(_img, _fullBodyArt ? _figure.Width / 2 - (centerBounds.Left + centerBounds.Width / 2) * _img.Width
             : _figure.Width - 30 - _bodyBounds.Right * _img.Width);
         Canvas.SetTop(_img, _figure.Height - (_fullBodyArt ? 0 : 12) - _bodyBounds.Bottom * _img.Height);
     }

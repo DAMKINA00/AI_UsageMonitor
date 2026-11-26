@@ -32,7 +32,7 @@ internal static class StandingSprite
         ["claude"] = new(32, 218, 65, 132),
         ["gpt"] = new(32, 210, 59, 165),
         ["gemini"] = new(85, 226, 51, 150),
-        ["grok"] = new(32, 181, 48, 219),
+        ["grok"] = new(32, 209, 58, 148),
         ["deepseek"] = new(82, 228, 60, 139),
     };
 
