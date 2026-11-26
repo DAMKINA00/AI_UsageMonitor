@@ -31,6 +31,10 @@ internal static partial class Program
         HostedCheck("removed Gemini CLI commands are rejected", !HostedProtocol.TryParseCommand("{\"command\":\"gemini-plan\",\"value\":\"Google AI Pro\"}", out _, out var planError) &&
             planError.Contains("unknown", StringComparison.Ordinal) && !HostedProtocol.TryParseCommand("{\"command\":\"gemini-unblock\"}", out _, out var unblockError) &&
             unblockError.Contains("unknown", StringComparison.Ordinal));
+        var interruptId = new string('a', 32);
+        HostedCheck("Boardroom interrupt acknowledgement reaches the native composer", HostedProtocol.TryParseCommand(
+            JsonSerializer.Serialize(new { command = "meeting-interrupt-result", value = new { id = interruptId, accepted = true } }), out var reply, out _) &&
+            MeetingEvent.Decode<MeetingInterruptResult>(reply.Data!.Value) is { Accepted: true } result && result.Id == interruptId);
     }
 
     static async Task TestHostedInputLines()

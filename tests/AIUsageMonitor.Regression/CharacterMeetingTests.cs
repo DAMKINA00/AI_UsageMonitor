@@ -75,6 +75,17 @@ internal static partial class Program
             transcript.Selection.Select(draftRow.ContentEnd, draftRow.ContentEnd);
             room.SetRoster(["orch", "gpt", "deepseek"], ["gpt"], ["deepseek"]);
             room.SetStatus("참가자들이 내용을 검토하는 중…", true);
+            string? followup = null;
+            room.Submitted += (text, _) => followup = text;
+            room.RestoreDraft("비용을 먼저 봐 주세요.");
+            PrivateMethod<CharacterMeetingWindow>("Send").Invoke(room, null);
+            Check("the composer submits follow-ups while the Boardroom is busy", followup == "비용을 먼저 봐 주세요." && room.Draft.Length == 0, "follow-up");
+            room.SetStatus("추가 메시지를 보내는 중…", true, true);
+            room.RestoreDraft("전송 중에 작성한 메시지");
+            PrivateMethod<CharacterMeetingWindow>("Send").Invoke(room, null);
+            Check("waiting for the submit receipt keeps a newly typed draft ready", room.Draft == "전송 중에 작성한 메시지", "draft kept");
+            room.RestoreDraft("");
+            room.SetStatus("참가자들이 내용을 검토하는 중…", true);
             room.Show();
             PumpDisplay();
             RenderFixture(room, "boardroom");

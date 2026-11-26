@@ -44,11 +44,13 @@ public partial class App : Application
     readonly CharacterAsk _asks = new();
     readonly Dictionary<string, CharacterAskWindow> _askWindows = new(StringComparer.Ordinal);
     BoardroomShortcut? _boardroomShortcut;
+    readonly GrokBotShortcut _grokBotShortcut = new();
     DispatcherTimer? _boardroomSizeSave;
     CharacterMeetingWindow? _meetingWindow;
     readonly List<(MeetingMessage Message, bool Draft)> _meetingPosts = [];
     string? _meetingActive, _meetingPending, _meetingFolder;
     string _meetingDraft = "", _meetingStatus = "", _submittedAgenda = "";
+    (string Id, string Text)? _meetingInterruptPending;
     string[]? _meetingMembers, _meetingResting;
     long _meetingSequence;
     bool _meetingSnapshotLoaded;
@@ -110,7 +112,7 @@ public partial class App : Application
             _window.Accounts.SetManagedByChatterBox();
             _window.AskEnabled = true;
             _window.CharacterClicked += OpenAsk;
-            _boardroomShortcut = new BoardroomShortcut(Dispatcher, ToggleMeeting, OpenGrokBot);
+            _boardroomShortcut = new BoardroomShortcut(Dispatcher, ToggleMeeting, _grokBotShortcut.Toggle);
             if (!_boardroomShortcut.IsActive) Log.Write("Boardroom shortcut could not be registered.");
         }
 
@@ -430,6 +432,22 @@ public partial class App : Application
                 case "meeting-event":
                     if (MeetingEvent.Read(command.Data!.Value) is { } meeting) ApplyMeeting(meeting);
                     break;
+                case "meeting-interrupt-result":
+                    if (MeetingEvent.Decode<MeetingInterruptResult>(command.Data!.Value) is { } result
+                        && _meetingInterruptPending is { } pending && pending.Id == result.Id)
+                    {
+                        _meetingInterruptPending = null;
+                        if (!result.Accepted)
+                        {
+                            _meetingStatus = "추가 메시지를 보내지 못했어요. 회의 상태를 확인해 주세요.";
+                            var next = _meetingWindow?.Draft ?? _meetingDraft;
+                            var restored = next.Length > 0 ? $"{pending.Text}\n{next}" : pending.Text;
+                            if (_meetingWindow is { } roomWindow) roomWindow.RestoreDraft(restored);
+                            else _meetingDraft = restored;
+                        }
+                        RefreshMeeting();
+                    }
+                    break;
                 case "meeting-reset":
                     if (MeetingEvent.Decode<MeetingReset>(command.Data!.Value) is { } room && room.Seq >= _meetingSequence
                         && room.Status is { Length: <= 500 } && MeetingEvent.IsRoster(room.Connected))
@@ -686,17 +704,6 @@ public partial class App : Application
         if (_meetingWindow?.HideIfOpen() != true) OpenMeeting();
     }
 
-    static void OpenGrokBot()
-    {
-        static void Open(string address) => System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(address) { UseShellExecute = true });
-        try { Open("grokbot://app/v1/prompt?text="); }
-        catch (System.ComponentModel.Win32Exception)
-        {
-            try { Open("https://x.ai/bot#download"); }
-            catch (System.ComponentModel.Win32Exception error) { Log.Write($"Grok Bot could not be opened: {error.Message}"); }
-        }
-    }
-
     void OpenMeeting()
     {
         if (!_hosted || _exitStarted != 0) return;
@@ -707,7 +714,14 @@ public partial class App : Application
         window.UserSizeChanged += RememberBoardroomSize;
         window.Submitted += (text, folder) =>
         {
-            if (_meetingPending != null || _meetingActive != null) return;
+            if (_meetingActive is { } active)
+            {
+                var id = Guid.NewGuid().ToString("N");
+                _meetingInterruptPending = (id, text);
+                RefreshMeeting();
+                _hostedProtocol!.MeetingInterrupt(active, id, text);
+                return;
+            }
             _meetingPending = Guid.NewGuid().ToString("N");
             _submittedAgenda = text;
             _meetingStatus = "회의에 안건을 보내는 중…";
@@ -797,7 +811,8 @@ public partial class App : Application
     void RefreshMeeting()
     {
         _meetingWindow?.SetRoster(_meetingMembers, _meetingPosts.Where(post => post.Draft).Select(post => post.Message.Sender).ToArray(), _meetingResting);
-        _meetingWindow?.SetStatus(_meetingStatus, _meetingPending != null || _meetingActive != null);
+        _meetingWindow?.SetStatus(_meetingStatus, _meetingPending != null || _meetingActive != null,
+            _meetingPending != null || _meetingInterruptPending != null);
     }
 
     void SendAsk(string character, string text)

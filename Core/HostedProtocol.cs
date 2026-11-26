@@ -33,7 +33,7 @@ public static class HostedProtocol
     /// <summary>Commands whose value is a JSON object: ChatterBox account snapshot (see ChatterBoxAccounts) and
     /// one character switched on or off (<c>{"id":"gpt","on":false}</c>, see CharacterSelection).</summary>
     static readonly HashSet<string> ObjectCommands = new(StringComparer.Ordinal) { "chatterbox-accounts", "character", "character-event", "character-reply",
-        "meeting-event", "meeting-reset", "meeting-restore" };
+        "meeting-event", "meeting-reset", "meeting-restore", "meeting-interrupt-result" };
 
     public static bool TryParseCommand(string line, out HostedCommand command, out string error)
     {
@@ -167,6 +167,8 @@ public sealed class HostedProtocolWriter(TextWriter writer)
     }
 
     public void MeetingCancel(string requestId) => Write(new { type = "meeting-cancel", requestId });
+
+    public void MeetingInterrupt(string requestId, string id, string text) => Write(new { type = "meeting-interrupt", requestId, id, text });
 
     public void MeetingSync() => Write(new { type = "meeting-sync" });
 

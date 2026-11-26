@@ -26,7 +26,7 @@ public sealed class CharacterMeetingWindow : Window
     readonly RichTextBox _scroll;
     readonly Button _send, _stop, _folderButton, _clearFolder, _latestResult, _latestMessage;
     Size _preferredSize, _appliedSize;
-    bool _busy, _pickingFolder;
+    bool _sendPending, _pickingFolder;
 
     public event Action<string, string?>? Submitted;
     public event Action? StopRequested;
@@ -299,12 +299,15 @@ public sealed class CharacterMeetingWindow : Window
     static double SavedDimension(double? saved, double fallback) =>
         saved is { } value && double.IsFinite(value) && value > 0 ? value : fallback;
 
-    public void SetStatus(string text, bool busy)
+    public void SetStatus(string text, bool busy, bool sendPending = false)
     {
-        _busy = busy;
+        _sendPending = sendPending;
         _status.Text = text;
         _status.Visibility = text.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
         _stop.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
+        _send.Content = busy ? "끼어들기" : "보내기";
+        _placeholder.Text = busy ? "마스터에게 추가 메시지 보내기" : "회의실에 안건 보내기";
+        _folderButton.IsEnabled = _clearFolder.IsEnabled = !busy;
         RefreshComposer();
     }
 
@@ -410,7 +413,7 @@ public sealed class CharacterMeetingWindow : Window
 
     void RefreshComposer()
     {
-        _send.IsEnabled = !_busy && !string.IsNullOrWhiteSpace(Draft);
+        _send.IsEnabled = !_sendPending && !string.IsNullOrWhiteSpace(Draft);
         _placeholder.Visibility = Draft.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
     }
 

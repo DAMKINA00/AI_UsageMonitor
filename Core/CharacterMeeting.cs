@@ -11,6 +11,7 @@ public sealed record MeetingMessage(string Id, long At, string Sender, string Te
 
 public sealed record MeetingReset(long Seq, string? RequestId, string Status, string[] Connected, string[]? Resting);
 public sealed record MeetingRestore(MeetingMessage Message, bool Draft);
+public sealed record MeetingInterruptResult(string Id, bool Accepted);
 
 public sealed record MeetingEvent(string RequestId, long Seq, string Type, string? Text, MeetingMessage? Message, string[]? Connected, string? Id,
     string[]? Resting)
